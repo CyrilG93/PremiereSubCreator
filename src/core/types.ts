@@ -1,5 +1,5 @@
 // // Define strongly typed structures shared by the panel and host bridge.
-export type SourceMode = "srt" | "transcription";
+export type SourceMode = "srt" | "premiere_caption" | "whisper_local";
 
 // // Support both per-word and per-line animation strategies.
 export type AnimationMode = "word" | "line" | "none";
@@ -37,6 +37,9 @@ export interface CaptionBuildOptions {
   style: CaptionStyleConfig;
   mogrtPath: string;
   mogrtTemplateRelativePath: string;
+  captionSourcePath: string;
+  whisperAudioPath: string;
+  whisperModel: string;
   videoTrackIndex: number;
   audioTrackIndex: number;
 }
@@ -63,4 +66,13 @@ export interface MogrtTemplateItem {
   aspect: string;
   relativePath: string;
   previewClass: string;
+}
+
+// // Describe one existing caption source detected inside the Premiere project.
+export interface CaptionSourceItem {
+  id: string;
+  name: string;
+  mediaPath: string;
+  extension: string;
+  binPath: string;
 }

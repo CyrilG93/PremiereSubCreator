@@ -2,9 +2,15 @@
 import { buildCaptionPlan } from "../core/planner";
 import { STYLE_PRESETS } from "../core/presets";
 import { parseSrt } from "../core/srt";
-import { transcribeActiveSequence } from "../core/transcription";
-import type { AnimationMode, CaptionBuildOptions, HostApplyPayload, MogrtTemplateItem } from "../core/types";
-import { applyCaptionPlan, pingHost } from "./cepBridge";
+import type { AnimationMode, CaptionBuildOptions, CaptionSourceItem, HostApplyPayload, MogrtTemplateItem } from "../core/types";
+import {
+  applyCaptionPlan,
+  listCaptionSources,
+  pickWhisperAudioPath,
+  pingHost,
+  readTextFileFromHost,
+  transcribeWithWhisper
+} from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
 
@@ -19,6 +25,13 @@ const elements = {
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtFile: document.querySelector<HTMLInputElement>("#srtFile"),
+  premiereCaptionField: document.querySelector<HTMLElement>("#premiereCaptionField"),
+  premiereCaptionSelect: document.querySelector<HTMLSelectElement>("#premiereCaptionSelect"),
+  refreshCaptionButton: document.querySelector<HTMLButtonElement>("#refreshCaptionButton"),
+  whisperField: document.querySelector<HTMLElement>("#whisperField"),
+  whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
+  whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
+  whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
   presetSelect: document.querySelector<HTMLSelectElement>("#presetSelect"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
@@ -38,6 +51,8 @@ const elements = {
 let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
 let selectedMogrt: MogrtTemplateItem | null = null;
+let availableCaptionSources: CaptionSourceItem[] = [];
+let selectedCaptionSourcePath = "";
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -82,6 +97,17 @@ async function loadLocale(languageCode: string): Promise<void> {
 
     node.textContent = translate(key);
   });
+
+  document.querySelectorAll<HTMLElement>("[data-i18n-placeholder]").forEach((node) => {
+    const key = node.dataset.i18nPlaceholder;
+    if (!key) {
+      return;
+    }
+
+    if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+      node.placeholder = translate(key);
+    }
+  });
 }
 
 function renderPresetSelect(): void {
@@ -115,13 +141,26 @@ function applyPresetDefaults(presetId: string): void {
   elements.animationMode.value = preset.defaultAnimationMode;
 }
 
+function getSourceMode(): "srt" | "premiere_caption" | "whisper_local" {
+  // // Normalize source mode value from UI select control.
+  return (elements.sourceMode?.value as "srt" | "premiere_caption" | "whisper_local") || "srt";
+}
+
 function toggleSourceFields(): void {
-  // // Show file input only when SRT mode is selected.
-  if (!elements.sourceMode || !elements.srtInputField) {
-    return;
+  // // Show only the source-related controls needed for current workflow.
+  const mode = getSourceMode();
+
+  if (elements.srtInputField) {
+    elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
   }
 
-  elements.srtInputField.style.display = elements.sourceMode.value === "srt" ? "grid" : "none";
+  if (elements.premiereCaptionField) {
+    elements.premiereCaptionField.style.display = mode === "premiere_caption" ? "grid" : "none";
+  }
+
+  if (elements.whisperField) {
+    elements.whisperField.style.display = mode === "whisper_local" ? "grid" : "none";
+  }
 }
 
 async function loadMogrtCatalog(): Promise<void> {
@@ -224,8 +263,70 @@ function renderMogrtGallery(): void {
   updateSelectedMogrtLabel();
 }
 
+function renderCaptionSourceSelect(): void {
+  // // Build dropdown options for existing subtitle assets found in Premiere bins.
+  if (!elements.premiereCaptionSelect) {
+    return;
+  }
+
+  const previous = selectedCaptionSourcePath;
+  elements.premiereCaptionSelect.innerHTML = "";
+
+  if (availableCaptionSources.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = translate("premiere.noneFound");
+    elements.premiereCaptionSelect.appendChild(option);
+    selectedCaptionSourcePath = "";
+    return;
+  }
+
+  availableCaptionSources.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.mediaPath;
+    option.textContent = `${item.name} (${item.binPath || "Project"})`;
+    elements.premiereCaptionSelect?.appendChild(option);
+  });
+
+  const stillAvailable = availableCaptionSources.some((item) => item.mediaPath === previous);
+  selectedCaptionSourcePath = stillAvailable ? previous : availableCaptionSources[0].mediaPath;
+  elements.premiereCaptionSelect.value = selectedCaptionSourcePath;
+}
+
+async function refreshCaptionSources(showStatusInLog = true): Promise<void> {
+  // // Query host for project subtitle sources and keep only supported SRT files.
+  try {
+    const sources = await listCaptionSources();
+    availableCaptionSources = sources.filter((item) => item.extension.toLowerCase() === "srt");
+    renderCaptionSourceSelect();
+
+    if (showStatusInLog) {
+      setLog(`${translate("log.captionSourcesLoaded")} ${availableCaptionSources.length}`);
+    }
+  } catch (error) {
+    availableCaptionSources = [];
+    renderCaptionSourceSelect();
+
+    if (showStatusInLog) {
+      setLog(String(error), true);
+    }
+  }
+}
+
+async function browseWhisperAudio(): Promise<void> {
+  // // Pick local media file from host picker and populate Whisper audio path.
+  if (!elements.whisperAudioPath) {
+    return;
+  }
+
+  const path = await pickWhisperAudioPath();
+  if (path) {
+    elements.whisperAudioPath.value = path;
+  }
+}
+
 async function readSrtFile(fileInput: HTMLInputElement): Promise<string> {
-  // // Read the selected SRT text content from disk.
+  // // Read the selected SRT text content from local browser file input.
   const file = fileInput.files?.[0];
   if (!file) {
     throw new Error(translate("error.missingSrt"));
@@ -246,13 +347,15 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.animationMode ||
     !elements.uppercase ||
     !elements.videoTrackIndex ||
-    !elements.audioTrackIndex
+    !elements.audioTrackIndex ||
+    !elements.whisperAudioPath ||
+    !elements.whisperModel
   ) {
     throw new Error("Panel bindings not initialized.");
   }
 
   return {
-    sourceMode: elements.sourceMode.value as "srt" | "transcription",
+    sourceMode: getSourceMode(),
     languageCode: elements.languageSelect.value,
     style: {
       presetId: elements.presetSelect.value,
@@ -264,36 +367,69 @@ function collectBuildOptions(): CaptionBuildOptions {
     },
     mogrtPath: "",
     mogrtTemplateRelativePath: selectedMogrt?.relativePath ?? "",
+    captionSourcePath: selectedCaptionSourcePath,
+    whisperAudioPath: elements.whisperAudioPath.value.trim(),
+    whisperModel: elements.whisperModel.value,
     videoTrackIndex: Number(elements.videoTrackIndex.value),
     audioTrackIndex: Number(elements.audioTrackIndex.value)
   };
 }
 
-async function generate(): Promise<void> {
-  // // Build the caption plan from selected source and push to Premiere host.
+async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise<ReturnType<typeof parseSrt>> {
+  // // Build cues from the currently selected source mode.
   if (!elements.srtFile) {
     throw new Error("SRT input not initialized.");
   }
 
-  const options = collectBuildOptions();
-  setLog(translate("log.processing"));
-
-  let cues;
   if (options.sourceMode === "srt") {
     const srtText = await readSrtFile(elements.srtFile);
-    cues = parseSrt(srtText);
+    const cues = parseSrt(srtText);
     if (!cues.length) {
       throw new Error(translate("error.emptySrt"));
     }
-  } else {
-    const transcription = await transcribeActiveSequence(options.languageCode);
-    if (!transcription.cues.length) {
-      throw new Error(transcription.warning ?? translate("error.transcriptionUnavailable"));
-    }
-    cues = transcription.cues;
+    return cues;
   }
 
+  if (options.sourceMode === "premiere_caption") {
+    if (!options.captionSourcePath) {
+      throw new Error(translate("error.noPremiereCaption"));
+    }
+
+    const captionText = await readTextFileFromHost(options.captionSourcePath);
+    const cues = parseSrt(captionText);
+    if (!cues.length) {
+      throw new Error(translate("error.invalidPremiereCaption"));
+    }
+    return cues;
+  }
+
+  if (!options.whisperAudioPath) {
+    throw new Error(translate("error.missingWhisperAudio"));
+  }
+
+  const whisperResult = await transcribeWithWhisper({
+    audioPath: options.whisperAudioPath,
+    languageCode: options.languageCode,
+    model: options.whisperModel
+  });
+
+  const cues = parseSrt(whisperResult.srtText);
+  if (!cues.length) {
+    throw new Error(translate("error.emptyWhisper"));
+  }
+
+  setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
+  return cues;
+}
+
+async function generate(): Promise<void> {
+  // // Build the caption plan from selected source and push to Premiere host.
+  const options = collectBuildOptions();
+  setLog(translate("log.processing"));
+
+  const cues = await loadCuesFromSelectedSource(options);
   const plannedCues = buildCaptionPlan(cues, options);
+
   const payload: HostApplyPayload = {
     options,
     cues: plannedCues
@@ -320,10 +456,13 @@ async function initialize(): Promise<void> {
   await loadMogrtCatalog();
   renderMogrtGallery();
 
+  await refreshCaptionSources(false);
+
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
     renderPresetSelect();
     renderMogrtGallery();
+    renderCaptionSourceSelect();
     applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   });
 
@@ -331,7 +470,25 @@ async function initialize(): Promise<void> {
     applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   });
 
-  elements.sourceMode?.addEventListener("change", toggleSourceFields);
+  elements.sourceMode?.addEventListener("change", () => {
+    toggleSourceFields();
+  });
+
+  elements.premiereCaptionSelect?.addEventListener("change", () => {
+    selectedCaptionSourcePath = elements.premiereCaptionSelect?.value ?? "";
+  });
+
+  elements.refreshCaptionButton?.addEventListener("click", async () => {
+    await refreshCaptionSources(true);
+  });
+
+  elements.whisperBrowseButton?.addEventListener("click", async () => {
+    try {
+      await browseWhisperAudio();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
 
   elements.mogrtAspectFilter?.addEventListener("change", () => {
     renderMogrtGallery();

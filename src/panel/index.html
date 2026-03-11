@@ -26,7 +26,8 @@
           <span data-i18n="field.source">Source des sous-titres</span>
           <select id="sourceMode">
             <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-            <option value="transcription" data-i18n="source.transcription">Transcription sequence active</option>
+            <option value="premiere_caption" data-i18n="source.premiereCaption">Captions Premiere (dans projet)</option>
+            <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
           </select>
         </label>
 
@@ -34,6 +35,40 @@
           <span data-i18n="field.srt">Fichier SRT</span>
           <input id="srtFile" type="file" accept=".srt,text/plain" />
         </label>
+
+        <section class="field field--full" id="premiereCaptionField">
+          <span data-i18n="field.premiereCaptionSource">Source captions Premiere</span>
+          <div class="inline-row">
+            <select id="premiereCaptionSelect"></select>
+            <button id="refreshCaptionButton" type="button" class="button button--secondary" data-i18n="action.refreshCaptions">
+              Actualiser
+            </button>
+          </div>
+          <p class="hint" data-i18n="help.premiereCaptionSource">
+            Affiche les fichiers de sous-titres deja importes dans le projet Premiere (.srt).
+          </p>
+        </section>
+
+        <section class="field field--full" id="whisperField">
+          <span data-i18n="field.whisperAudio">Fichier audio/video pour Whisper</span>
+          <div class="inline-row">
+            <input id="whisperAudioPath" type="text" data-i18n-placeholder="placeholder.whisperAudio" placeholder="/Users/.../audio.wav" />
+            <button id="whisperBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
+          </div>
+          <div class="inline-row">
+            <select id="whisperModel">
+              <option value="tiny">tiny</option>
+              <option value="base" selected>base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3</option>
+              <option value="turbo">turbo</option>
+            </select>
+          </div>
+          <p class="hint" data-i18n="help.whisper">
+            Whisper doit etre installe localement et accessible via la commande `whisper`.
+          </p>
+        </section>
 
         <label class="field">
           <span data-i18n="field.preset">Preset style</span>

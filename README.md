@@ -3,7 +3,10 @@
 Sub Creator is a CEP panel extension for Adobe Premiere Pro 2025+ focused on dynamic/design subtitles.
 
 It supports:
-- SRT import workflow.
+- Three source workflows:
+  - SRT import.
+  - Premiere caption files already imported in project bins (select one when multiple exist).
+  - Whisper local transcription from an audio/video file.
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
@@ -21,9 +24,11 @@ MOGRT files placed under `templates/mogrt` are auto-discovered and shown in the 
 Without MOGRT, the panel still works but inserts markers as a safe fallback.
 
 ### Do we need an SRT file?
-Current MVP supports SRT immediately.
+SRT works immediately.
 
-Active-sequence transcription is scaffolded in code (`src/core/transcription.ts`) but still needs a concrete provider implementation (Premiere transcript API bridge if available, or external model integration).
+Whisper local can generate SRT on the fly from an audio/video file.
+
+For Premiere native auto-transcription, CEP scripting still cannot directly trigger/read the Text panel transcript. Current Premiere workflow in this extension is: export/import captions as `.srt`, then select the desired source from the project list.
 
 ## Project structure
 
@@ -43,6 +48,20 @@ Active-sequence transcription is scaffolded in code (`src/core/transcription.ts`
 npm install
 npm run subcreator:verify
 npm run subcreator:install:dev
+```
+
+## Whisper local setup
+
+Install Whisper CLI once on your machine:
+
+```bash
+pip install -U openai-whisper
+```
+
+Then verify:
+
+```bash
+whisper --help
 ```
 
 ## Commands

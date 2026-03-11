@@ -15,6 +15,10 @@ const baseOptions: CaptionBuildOptions = {
     linesPerCaption: 2
   },
   mogrtPath: "",
+  mogrtTemplateRelativePath: "",
+  captionSourcePath: "",
+  whisperAudioPath: "",
+  whisperModel: "base",
   videoTrackIndex: 0,
   audioTrackIndex: 0
 };

@@ -89,6 +89,10 @@ button {
   font-size: 0.82rem;
 }
 
+button {
+  white-space: nowrap;
+}
+
 input[type="checkbox"] {
   width: auto;
 }
@@ -115,6 +119,17 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 8px;
+}
+
+.inline-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-row > :only-child {
+  grid-column: 1 / -1;
 }
 
 .mogrt-card {

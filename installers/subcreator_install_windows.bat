@@ -11,6 +11,7 @@ set "SUBCREATOR_PYTHON_LABEL="
 set "SUBCREATOR_PYTHON_VERSION_LINE="
 set "SUBCREATOR_PYTHON_MAJOR="
 set "SUBCREATOR_PYTHON_MINOR="
+set "SUBCREATOR_PYTHON_SEEN="
 
 REM // Validate build output is present before installing.
 if not exist "%SUBCREATOR_SOURCE_DIR%" (
@@ -29,7 +30,11 @@ echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
 if not defined SUBCREATOR_PYTHON_CMD (
-  echo Whisper setup skipped: Python not found on this machine.
+  if defined SUBCREATOR_PYTHON_SEEN (
+    echo Whisper setup skipped: no supported Python version found ^(need 3.8 to 3.13^). Detected: !SUBCREATOR_PYTHON_SEEN!
+  ) else (
+    echo Whisper setup skipped: Python not found on this machine.
+  )
   echo Whisper source will be hidden in the panel.
   echo If needed, enable CEP debug mode and restart Premiere Pro.
   goto :subcreator_done
@@ -100,19 +105,51 @@ endlocal
 exit /b 0
 
 :subcreator_detect_python
-REM // Prefer py launcher then fallback to python executable.
-for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
-  set "SUBCREATOR_PYTHON_CMD=py -3"
-  set "SUBCREATOR_PYTHON_LABEL=py -3"
-  set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
-  goto :eof
+REM // Prefer explicit supported Python minor versions first to avoid defaulting to unsupported 3.14+.
+for %%m in (13 12 11 10 9 8) do (
+  for /f "tokens=* delims=" %%v in ('py -3.%%m --version 2^>nul') do (
+    set "SUBCREATOR_PYTHON_CMD=py -3.%%m"
+    set "SUBCREATOR_PYTHON_LABEL=py -3.%%m"
+    set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
+    goto :eof
+  )
 )
 
+for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
+  if defined SUBCREATOR_PYTHON_SEEN (
+    set "SUBCREATOR_PYTHON_SEEN=!SUBCREATOR_PYTHON_SEEN!, "
+  )
+  set "SUBCREATOR_PYTHON_SEEN=!SUBCREATOR_PYTHON_SEEN!py -3=%%v"
+)
+
+REM // Fallback to generic python executable if it points to a supported version.
 for /f "tokens=* delims=" %%v in ('python --version 2^>nul') do (
-  set "SUBCREATOR_PYTHON_CMD=python"
-  set "SUBCREATOR_PYTHON_LABEL=python"
   set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
-  goto :eof
+  call :subcreator_parse_python_version "%%v"
+  if defined SUBCREATOR_PYTHON_MAJOR (
+    if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 8 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
+      set "SUBCREATOR_PYTHON_CMD=python"
+      set "SUBCREATOR_PYTHON_LABEL=python"
+      goto :eof
+    )
+  )
+  if defined SUBCREATOR_PYTHON_SEEN (
+    set "SUBCREATOR_PYTHON_SEEN=!SUBCREATOR_PYTHON_SEEN!, "
+  )
+  set "SUBCREATOR_PYTHON_SEEN=!SUBCREATOR_PYTHON_SEEN!python=%%v"
+)
+
+REM // Last fallback to py -3 only when it resolves to a supported version.
+for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
+  set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
+  call :subcreator_parse_python_version "%%v"
+  if defined SUBCREATOR_PYTHON_MAJOR (
+    if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 8 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
+      set "SUBCREATOR_PYTHON_CMD=py -3"
+      set "SUBCREATOR_PYTHON_LABEL=py -3"
+      goto :eof
+    )
+  )
 )
 goto :eof
 

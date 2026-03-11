@@ -7,6 +7,76 @@ SUBCREATOR_PROJECT_DIR="$(cd "${SUBCREATOR_SCRIPT_DIR}/.." && pwd)"
 SUBCREATOR_SOURCE_DIR="${SUBCREATOR_PROJECT_DIR}/dist/com.cyrilg93.subcreator"
 SUBCREATOR_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilg93.subcreator"
 SUBCREATOR_PYTHON_CMD=""
+SUBCREATOR_PYTHON_VERSION=""
+SUBCREATOR_PYTHON_SEEN=""
+
+subcreator_probe_python_version() {
+  # // Return "<major>.<minor>" for a python executable, or empty when not callable.
+  local candidate="$1"
+  "${candidate}" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+}
+
+subcreator_is_supported_python_version() {
+  # // Whisper auto-install targets CPython 3.8 to 3.13 based on package metadata support.
+  local version="$1"
+  local major="${version%%.*}"
+  local minor="${version#*.}"
+  minor="${minor%%.*}"
+
+  if ! [[ "${major}" =~ ^[0-9]+$ ]] || ! [[ "${minor}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  if [ "${major}" -ne 3 ]; then
+    return 1
+  fi
+
+  if [ "${minor}" -lt 8 ] || [ "${minor}" -gt 13 ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+subcreator_select_python_cmd() {
+  # // Prefer explicit minor-version executables before generic python3/python aliases.
+  local candidates=(
+    "python3.13"
+    "python3.12"
+    "python3.11"
+    "python3.10"
+    "python3.9"
+    "python3.8"
+    "python3"
+    "python"
+  )
+
+  local candidate=""
+  local version=""
+  for candidate in "${candidates[@]}"; do
+    if ! command -v "${candidate}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    version="$(subcreator_probe_python_version "${candidate}")"
+    if [ -z "${version}" ]; then
+      continue
+    fi
+
+    if [ -n "${SUBCREATOR_PYTHON_SEEN}" ]; then
+      SUBCREATOR_PYTHON_SEEN="${SUBCREATOR_PYTHON_SEEN}, "
+    fi
+    SUBCREATOR_PYTHON_SEEN="${SUBCREATOR_PYTHON_SEEN}${candidate}=${version}"
+
+    if subcreator_is_supported_python_version "${version}"; then
+      SUBCREATOR_PYTHON_CMD="${candidate}"
+      SUBCREATOR_PYTHON_VERSION="${version}"
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 # // Ensure built extension payload exists before copy.
 if [ ! -d "${SUBCREATOR_SOURCE_DIR}" ]; then
@@ -22,34 +92,13 @@ cp -R "${SUBCREATOR_SOURCE_DIR}" "${SUBCREATOR_DEST_DIR}"
 
 echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
 
-# // Discover local Python runtime; if absent we skip Whisper install as requested.
-if command -v python3 >/dev/null 2>&1; then
-  SUBCREATOR_PYTHON_CMD="python3"
-elif command -v python >/dev/null 2>&1; then
-  SUBCREATOR_PYTHON_CMD="python"
-fi
-
-if [ -z "${SUBCREATOR_PYTHON_CMD}" ]; then
-  echo "Whisper setup skipped: Python not found on this machine."
-  echo "Whisper source will be hidden in the panel."
-  echo "If needed, enable CEP debug mode and restart Premiere Pro."
-  exit 0
-fi
-
-# // Read Python major/minor to avoid unsupported 3.14+ auto-install.
-SUBCREATOR_PYTHON_VERSION="$(${SUBCREATOR_PYTHON_CMD} -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
-SUBCREATOR_PYTHON_MAJOR="${SUBCREATOR_PYTHON_VERSION%%.*}"
-SUBCREATOR_PYTHON_MINOR="${SUBCREATOR_PYTHON_VERSION#*.}"
-SUBCREATOR_PYTHON_MINOR="${SUBCREATOR_PYTHON_MINOR%%.*}"
-
-if ! [[ "${SUBCREATOR_PYTHON_MAJOR}" =~ ^[0-9]+$ ]] || ! [[ "${SUBCREATOR_PYTHON_MINOR}" =~ ^[0-9]+$ ]]; then
-  echo "Whisper setup skipped: unable to parse Python version from '${SUBCREATOR_PYTHON_VERSION}'."
-  echo "If needed, enable CEP debug mode and restart Premiere Pro."
-  exit 0
-fi
-
-if [ "${SUBCREATOR_PYTHON_MAJOR}" -gt 3 ] || { [ "${SUBCREATOR_PYTHON_MAJOR}" -eq 3 ] && [ "${SUBCREATOR_PYTHON_MINOR}" -ge 14 ]; }; then
-  echo "Whisper setup skipped: Python ${SUBCREATOR_PYTHON_VERSION} detected (openai-whisper currently targets Python <= 3.13)."
+# // Discover supported Python runtime; when multiple versions exist we pick the newest supported one.
+if ! subcreator_select_python_cmd; then
+  if [ -z "${SUBCREATOR_PYTHON_SEEN}" ]; then
+    echo "Whisper setup skipped: Python not found on this machine."
+  else
+    echo "Whisper setup skipped: no supported Python version found (need 3.8 to 3.13). Detected: ${SUBCREATOR_PYTHON_SEEN}"
+  fi
   echo "Whisper source will be hidden in the panel."
   echo "If needed, enable CEP debug mode and restart Premiere Pro."
   exit 0

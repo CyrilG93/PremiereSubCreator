@@ -16,7 +16,6 @@ const baseOptions: CaptionBuildOptions = {
   },
   mogrtPath: "",
   mogrtTemplateRelativePath: "",
-  captionSourcePath: "",
   whisperAudioPath: "",
   whisperModel: "base",
   videoTrackIndex: 0,

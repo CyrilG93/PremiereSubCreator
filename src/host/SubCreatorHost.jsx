@@ -39,177 +39,23 @@ function subcreator_quote_cmd(value) {
   return '"' + String(value).replace(/"/g, '""') + '"';
 }
 
-function subcreator_try_set_mogrt_text(trackItem, textValue) {
-  // // Attempt to update known text properties on inserted MOGRT components.
-  if (!trackItem || !textValue || typeof trackItem.getMGTComponent !== "function") {
-    return false;
-  }
-
-  var component = trackItem.getMGTComponent();
-  if (!component || !component.properties || component.properties.numItems < 1) {
-    return false;
-  }
-
-  for (var i = 0; i < component.properties.numItems; i += 1) {
-    var property = component.properties[i];
-    if (!property || !property.displayName || typeof property.setValue !== "function") {
-      continue;
-    }
-
-    var key = String(property.displayName).toLowerCase();
-    if (key.indexOf("source text") !== -1 || key.indexOf("texte source") !== -1 || key === "text") {
-      property.setValue(textValue, true);
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function subcreator_resolve_extension_root() {
-  // // Resolve extension root from current host script location.
-  var scriptFile = new File($.fileName);
-  if (!scriptFile || !scriptFile.exists) {
+function subcreator_read_file_text(fileRef) {
+  // // Read text content from ExtendScript File object.
+  if (!fileRef || !fileRef.exists) {
     return "";
   }
 
-  return scriptFile.parent.parent.fsName;
-}
-
-function subcreator_resolve_mogrt_path(options) {
-  // // Prioritize bundled template path and fallback to manual absolute path.
-  var templateRelativePath = options.mogrtTemplateRelativePath || "";
-  if (templateRelativePath && templateRelativePath.length > 0) {
-    var extensionRoot = subcreator_resolve_extension_root();
-    if (extensionRoot && extensionRoot.length > 0) {
-      var normalizedRelative = String(templateRelativePath).replace(/\\/g, "/");
-      var bundledTemplate = new File(extensionRoot + "/templates/mogrt/" + normalizedRelative);
-      if (bundledTemplate.exists) {
-        return bundledTemplate.fsName;
-      }
-    }
-  }
-
-  var manualPath = options.mogrtPath || "";
-  if (manualPath && manualPath.length > 0) {
-    var manualFile = new File(manualPath);
-    if (manualFile.exists) {
-      return manualFile.fsName;
-    }
-  }
-
-  return "";
-}
-
-function subcreator_get_file_extension(input) {
-  // // Extract file extension in lowercase without leading dot.
-  var value = String(input || "");
-  var dotIndex = value.lastIndexOf(".");
-  if (dotIndex < 0 || dotIndex === value.length - 1) {
+  if (!fileRef.open("r")) {
     return "";
   }
 
-  return value.substring(dotIndex + 1).toLowerCase();
-}
-
-function subcreator_is_caption_extension(extension) {
-  // // Keep only subtitle-related file extensions from project bins.
-  var ext = String(extension || "").toLowerCase();
-  return (
-    ext === "srt" ||
-    ext === "vtt" ||
-    ext === "stl" ||
-    ext === "scc" ||
-    ext === "mcc" ||
-    ext === "itt" ||
-    ext === "dfxp"
-  );
-}
-
-function subcreator_collect_caption_sources(projectItem, currentBinPath, collector) {
-  // // Recursively scan project bins and collect caption file assets.
-  if (!projectItem) {
-    return;
-  }
-
-  var mediaPath = "";
-  if (typeof projectItem.getMediaPath === "function") {
-    try {
-      mediaPath = projectItem.getMediaPath();
-    } catch (error) {
-      mediaPath = "";
-    }
-  }
-
-  var itemName = String(projectItem.name || "");
-  var extension = subcreator_get_file_extension(mediaPath || itemName);
-
-  if (mediaPath && mediaPath !== "0" && subcreator_is_caption_extension(extension)) {
-    collector.push({
-      id: String(projectItem.nodeId || "") || String(collector.length + 1),
-      name: itemName || new File(mediaPath).name,
-      mediaPath: String(mediaPath),
-      extension: extension,
-      binPath: currentBinPath
-    });
-  }
-
-  var children = projectItem.children;
-  if (!children || typeof children.numItems === "undefined") {
-    return;
-  }
-
-  var nextBinPath = currentBinPath;
-  if (itemName && itemName !== "Root") {
-    nextBinPath = currentBinPath ? currentBinPath + "/" + itemName : itemName;
-  }
-
-  for (var i = 0; i < children.numItems; i += 1) {
-    subcreator_collect_caption_sources(children[i], nextBinPath, collector);
-  }
-}
-
-function subcreator_sort_caption_sources(items) {
-  // // Keep source list stable and easy to scan in UI dropdown.
-  items.sort(function (left, right) {
-    var leftName = String(left.name || "").toLowerCase();
-    var rightName = String(right.name || "").toLowerCase();
-    if (leftName < rightName) {
-      return -1;
-    }
-    if (leftName > rightName) {
-      return 1;
-    }
-    var leftPath = String(left.mediaPath || "").toLowerCase();
-    var rightPath = String(right.mediaPath || "").toLowerCase();
-    if (leftPath < rightPath) {
-      return -1;
-    }
-    if (leftPath > rightPath) {
-      return 1;
-    }
-    return 0;
-  });
-}
-
-function subcreator_list_caption_sources() {
-  // // Return caption files currently available in Premiere project bins.
-  try {
-    if (!app || !app.project || !app.project.rootItem) {
-      return subcreator_error("No open project in Premiere.");
-    }
-
-    var sources = [];
-    subcreator_collect_caption_sources(app.project.rootItem, "", sources);
-    subcreator_sort_caption_sources(sources);
-    return subcreator_ok(sources);
-  } catch (error) {
-    return subcreator_error(error);
-  }
+  var content = fileRef.read();
+  fileRef.close();
+  return content;
 }
 
 function subcreator_read_text_file(encodedPath) {
-  // // Read a text file from disk and return UTF-8-ish content to the panel.
+  // // Read a text file from disk and return content to the panel.
   try {
     var filePath = subcreator_decode_payload(encodedPath || "");
     var file = new File(filePath);
@@ -225,6 +71,20 @@ function subcreator_read_text_file(encodedPath) {
     file.close();
 
     return subcreator_ok({ text: text });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
+function subcreator_pick_srt_file() {
+  // // Open native picker restricted to .srt subtitle files.
+  try {
+    var selected = File.openDialog("Select SRT subtitle file", "*.srt");
+    if (!selected) {
+      return subcreator_ok({ path: "" });
+    }
+
+    return subcreator_ok({ path: selected.fsName });
   } catch (error) {
     return subcreator_error(error);
   }
@@ -306,21 +166,6 @@ function subcreator_find_whisper_srt_file(tempFolder, baseName) {
   return null;
 }
 
-function subcreator_read_file_text(fileRef) {
-  // // Read text content from ExtendScript File object.
-  if (!fileRef || !fileRef.exists) {
-    return "";
-  }
-
-  if (!fileRef.open("r")) {
-    return "";
-  }
-
-  var content = fileRef.read();
-  fileRef.close();
-  return content;
-}
-
 function subcreator_transcribe_whisper(payloadEncoded) {
   // // Run local Whisper CLI and return generated SRT text.
   try {
@@ -371,6 +216,285 @@ function subcreator_transcribe_whisper(payloadEncoded) {
   }
 }
 
+function subcreator_to_seconds(value) {
+  // // Convert unknown time objects (Time/ticks/numeric) to seconds.
+  if (value === undefined || value === null) {
+    return NaN;
+  }
+
+  if (typeof value === "number") {
+    return Number(value);
+  }
+
+  if (typeof value === "string") {
+    return Number(value);
+  }
+
+  if (typeof value.seconds !== "undefined") {
+    return Number(value.seconds);
+  }
+
+  if (typeof value.ticks !== "undefined") {
+    return Number(value.ticks) / 254016000000;
+  }
+
+  return NaN;
+}
+
+function subcreator_collection_to_array(collection) {
+  // // Convert ExtendScript collections and JS arrays into simple arrays.
+  var result = [];
+  if (!collection) {
+    return result;
+  }
+
+  if (typeof collection.length === "number") {
+    for (var i = 0; i < collection.length; i += 1) {
+      result.push(collection[i]);
+    }
+    return result;
+  }
+
+  if (typeof collection.numItems === "number") {
+    for (var j = 0; j < collection.numItems; j += 1) {
+      result.push(collection[j]);
+    }
+    return result;
+  }
+
+  return result;
+}
+
+function subcreator_extract_text_from_item(item) {
+  // // Read caption text from known item methods/properties.
+  if (!item) {
+    return "";
+  }
+
+  try {
+    if (typeof item.getCaptionText === "function") {
+      return String(item.getCaptionText() || "");
+    }
+  } catch (error1) {}
+
+  try {
+    if (typeof item.getText === "function") {
+      return String(item.getText() || "");
+    }
+  } catch (error2) {}
+
+  if (typeof item.text !== "undefined") {
+    return String(item.text || "");
+  }
+
+  if (item.projectItem && item.projectItem.name) {
+    return String(item.projectItem.name || "");
+  }
+
+  if (item.name) {
+    return String(item.name || "");
+  }
+
+  return "";
+}
+
+function subcreator_extract_cues_from_items(items) {
+  // // Convert caption-like track items into generic cue payloads.
+  var cues = [];
+
+  for (var i = 0; i < items.length; i += 1) {
+    var item = items[i];
+    var startSeconds = subcreator_to_seconds(item.start || item.inPoint || item.startTime);
+    var endSeconds = subcreator_to_seconds(item.end || item.outPoint || item.endTime);
+    var text = String(subcreator_extract_text_from_item(item) || "").replace(/\s+/g, " ").trim();
+
+    if (isNaN(startSeconds) || isNaN(endSeconds) || endSeconds <= startSeconds || !text) {
+      continue;
+    }
+
+    cues.push({
+      text: text,
+      startSeconds: startSeconds,
+      endSeconds: endSeconds
+    });
+  }
+
+  cues.sort(function (left, right) {
+    if (left.startSeconds < right.startSeconds) {
+      return -1;
+    }
+    if (left.startSeconds > right.startSeconds) {
+      return 1;
+    }
+    return 0;
+  });
+
+  return cues;
+}
+
+function subcreator_extract_active_caption_track() {
+  // // Try to read cues from the active caption track of current sequence.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+
+    if (sequence.captionTracks) {
+      var tracks = subcreator_collection_to_array(sequence.captionTracks);
+      if (tracks.length > 0) {
+        var selectedTrack = tracks[0];
+
+        for (var i = 0; i < tracks.length; i += 1) {
+          var track = tracks[i];
+          try {
+            if (
+              (typeof track.isTargeted === "function" && track.isTargeted()) ||
+              (typeof track.isActive === "function" && track.isActive()) ||
+              track.targeted === true ||
+              track.active === true
+            ) {
+              selectedTrack = track;
+              break;
+            }
+          } catch (trackStateError) {}
+        }
+
+        var trackItems =
+          subcreator_collection_to_array(selectedTrack.clips) ||
+          subcreator_collection_to_array(selectedTrack.items) ||
+          subcreator_collection_to_array(selectedTrack.captions);
+
+        var cues = subcreator_extract_cues_from_items(trackItems);
+        if (cues.length > 0) {
+          return subcreator_ok(cues);
+        }
+      }
+    }
+
+    // // Fallback: try selected timeline items when captionTracks API is unavailable.
+    if (typeof sequence.getSelection === "function") {
+      var selection = subcreator_collection_to_array(sequence.getSelection());
+      var selectionCues = subcreator_extract_cues_from_items(selection);
+      if (selectionCues.length > 0) {
+        return subcreator_ok(selectionCues);
+      }
+    }
+
+    return subcreator_error(
+      "Impossible de lire la piste caption active avec cette API CEP. Si possible, selectionne les clips caption sur la timeline ou utilise la source SRT."
+    );
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
+function subcreator_try_set_mogrt_text(trackItem, textValue) {
+  // // Attempt to update known text properties on inserted MOGRT components.
+  if (!trackItem || !textValue || typeof trackItem.getMGTComponent !== "function") {
+    return false;
+  }
+
+  var component = trackItem.getMGTComponent();
+  if (!component || !component.properties || component.properties.numItems < 1) {
+    return false;
+  }
+
+  for (var i = 0; i < component.properties.numItems; i += 1) {
+    var property = component.properties[i];
+    if (!property || !property.displayName || typeof property.setValue !== "function") {
+      continue;
+    }
+
+    var key = String(property.displayName).toLowerCase();
+    if (key.indexOf("source text") !== -1 || key.indexOf("texte source") !== -1 || key === "text") {
+      property.setValue(textValue, true);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function subcreator_resolve_extension_root() {
+  // // Resolve extension root from current host script location.
+  var scriptFile = new File($.fileName);
+  if (!scriptFile || !scriptFile.exists) {
+    return "";
+  }
+
+  return scriptFile.parent.parent.fsName;
+}
+
+function subcreator_resolve_mogrt_path(options) {
+  // // Prioritize bundled template path and fallback to manual absolute path.
+  var templateRelativePath = options.mogrtTemplateRelativePath || "";
+  if (templateRelativePath && templateRelativePath.length > 0) {
+    var extensionRoot = subcreator_resolve_extension_root();
+    if (extensionRoot && extensionRoot.length > 0) {
+      var normalizedRelative = String(templateRelativePath).replace(/\\/g, "/");
+      var bundledTemplate = new File(extensionRoot + "/templates/mogrt/" + normalizedRelative);
+      if (bundledTemplate.exists) {
+        return bundledTemplate.fsName;
+      }
+    }
+  }
+
+  var manualPath = options.mogrtPath || "";
+  if (manualPath && manualPath.length > 0) {
+    var manualFile = new File(manualPath);
+    if (manualFile.exists) {
+      return manualFile.fsName;
+    }
+  }
+
+  return "";
+}
+
+function subcreator_seconds_to_ticks(seconds) {
+  // // Convert seconds to Premiere ticks for importMGT API.
+  try {
+    var time = new Time();
+    time.seconds = Number(seconds);
+    return String(time.ticks);
+  } catch (error) {
+    return String(Math.round(Number(seconds) * 254016000000));
+  }
+}
+
+function subcreator_get_or_create_top_video_track_index(sequence) {
+  // // Create a new top video track and return its index, with safe fallbacks.
+  var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+
+  try {
+    if (typeof app.enableQE === "function") {
+      app.enableQE();
+      if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
+        var qeSequence = qe.project.getActiveSequence();
+        if (qeSequence && typeof qeSequence.addTracks === "function") {
+          if (currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks - 1, 0);
+            } catch (signatureError) {
+              qeSequence.addTracks(1);
+            }
+          } else {
+            qeSequence.addTracks(1);
+          }
+        }
+      }
+    }
+  } catch (error) {}
+
+  var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  if (updatedTracks > 0) {
+    return updatedTracks - 1;
+  }
+
+  return 0;
+}
+
 function subcreator_apply_captions(payloadEncoded) {
   // // Insert MOGRT instances or fallback timeline markers from generated caption plan.
   try {
@@ -388,15 +512,8 @@ function subcreator_apply_captions(payloadEncoded) {
     var mogrtPath = subcreator_resolve_mogrt_path(options);
     var hasMogrt = mogrtPath && mogrtPath.length > 0;
 
-    var videoTrackIndex = Number(options.videoTrackIndex);
-    if (isNaN(videoTrackIndex)) {
-      videoTrackIndex = 0;
-    }
-
-    var audioTrackIndex = Number(options.audioTrackIndex);
-    if (isNaN(audioTrackIndex)) {
-      audioTrackIndex = 0;
-    }
+    var videoTrackIndex = subcreator_get_or_create_top_video_track_index(sequence);
+    var audioTrackIndex = 0;
 
     var insertedMogrt = 0;
     var insertedMarkers = 0;
@@ -409,7 +526,8 @@ function subcreator_apply_captions(payloadEncoded) {
       var text = cue.text || "";
 
       if (hasMogrt && typeof sequence.importMGT === "function") {
-        var insertedItem = sequence.importMGT(mogrtPath, startSeconds, videoTrackIndex, audioTrackIndex);
+        var startTicks = subcreator_seconds_to_ticks(startSeconds);
+        var insertedItem = sequence.importMGT(mogrtPath, startTicks, videoTrackIndex, audioTrackIndex);
         if (insertedItem) {
           insertedMogrt += 1;
           if (subcreator_try_set_mogrt_text(insertedItem, text)) {
@@ -437,7 +555,9 @@ function subcreator_apply_captions(payloadEncoded) {
       insertedMarkers: insertedMarkers,
       mogrtTextUpdated: updatedText,
       mogrtUsed: hasMogrt,
-      mogrtPathResolved: mogrtPath
+      mogrtPathResolved: mogrtPath,
+      videoTrackUsed: videoTrackIndex,
+      audioTrackUsed: audioTrackIndex
     });
   } catch (error) {
     return JSON.stringify({ ok: false, error: error.toString() });

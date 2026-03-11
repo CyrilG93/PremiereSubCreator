@@ -26,26 +26,23 @@
           <span data-i18n="field.source">Source des sous-titres</span>
           <select id="sourceMode">
             <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-            <option value="premiere_caption" data-i18n="source.premiereCaption">Captions Premiere (dans projet)</option>
+            <option value="premiere_caption" data-i18n="source.premiereCaption">Piste caption active Premiere</option>
             <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
           </select>
         </label>
 
-        <label class="field" id="srtInputField">
+        <section class="field field--full" id="srtInputField">
           <span data-i18n="field.srt">Fichier SRT</span>
-          <input id="srtFile" type="file" accept=".srt,text/plain" />
-        </label>
+          <div class="inline-row">
+            <input id="srtPath" type="text" data-i18n-placeholder="placeholder.srtPath" placeholder="/Users/.../captions.srt" />
+            <button id="srtBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
+          </div>
+        </section>
 
         <section class="field field--full" id="premiereCaptionField">
           <span data-i18n="field.premiereCaptionSource">Source captions Premiere</span>
-          <div class="inline-row">
-            <select id="premiereCaptionSelect"></select>
-            <button id="refreshCaptionButton" type="button" class="button button--secondary" data-i18n="action.refreshCaptions">
-              Actualiser
-            </button>
-          </div>
           <p class="hint" data-i18n="help.premiereCaptionSource">
-            Affiche les fichiers de sous-titres deja importes dans le projet Premiere (.srt).
+            Lit les textes + timings depuis la piste caption active de la sequence.
           </p>
         </section>
 
@@ -120,18 +117,8 @@
           <p id="mogrtSelectedLabel" class="hint"></p>
         </section>
 
-        <label class="field field--inline">
-          <span data-i18n="field.videoTrack">Piste video</span>
-          <input id="videoTrackIndex" type="number" value="0" min="0" max="20" step="1" />
-        </label>
-
-        <label class="field field--inline">
-          <span data-i18n="field.audioTrack">Piste audio</span>
-          <input id="audioTrackIndex" type="number" value="0" min="0" max="20" step="1" />
-        </label>
-
         <p class="hint field--full" data-i18n="help.tracks">
-          Video track = piste de destination du MOGRT (0=V1). Audio track est requis par Premiere pour importMGT (0=A1).
+          Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
         </p>
       </section>
 

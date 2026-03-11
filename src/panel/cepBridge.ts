@@ -1,5 +1,5 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
-import type { CaptionSourceItem, HostApplyPayload } from "../core/types";
+import type { HostApplyPayload, HostCaptionCue } from "../core/types";
 
 declare global {
   interface Window {
@@ -80,16 +80,6 @@ export async function applyCaptionPlan(payload: HostApplyPayload): Promise<strin
   return evalScript(`subcreator_apply_captions("${escapeForJsx(encodedPayload)}")`);
 }
 
-export async function listCaptionSources(): Promise<CaptionSourceItem[]> {
-  // // Ask Premiere host to list subtitle files already imported in project bins.
-  const response = await evalHostJson<CaptionSourceItem[]>("subcreator_list_caption_sources()");
-  if (!response.ok) {
-    throw new Error(response.error ?? "Unable to list caption sources from host.");
-  }
-
-  return Array.isArray(response.data) ? response.data : [];
-}
-
 export async function readTextFileFromHost(filePath: string): Promise<string> {
   // // Read subtitle files through host to avoid browser file access limitations.
   const encoded = encodeURIComponent(filePath);
@@ -102,6 +92,16 @@ export async function readTextFileFromHost(filePath: string): Promise<string> {
   return String(response.data?.text ?? "");
 }
 
+export async function pickSrtPath(): Promise<string> {
+  // // Open host-native picker for selecting an SRT file path.
+  const response = await evalHostJson<{ path: string }>("subcreator_pick_srt_file()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "SRT picker failed.");
+  }
+
+  return String(response.data?.path ?? "");
+}
+
 export async function pickWhisperAudioPath(): Promise<string> {
   // // Open native file picker from host for Whisper transcription input.
   const response = await evalHostJson<{ path: string }>("subcreator_pick_audio_file()");
@@ -110,6 +110,16 @@ export async function pickWhisperAudioPath(): Promise<string> {
   }
 
   return String(response.data?.path ?? "");
+}
+
+export async function readActiveCaptionTrackCues(): Promise<HostCaptionCue[]> {
+  // // Extract caption text/timing directly from the active caption track in Premiere.
+  const response = await evalHostJson<HostCaptionCue[]>("subcreator_extract_active_caption_track()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read active caption track.");
+  }
+
+  return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function transcribeWithWhisper(request: WhisperTranscriptionRequest): Promise<WhisperTranscriptionResult> {

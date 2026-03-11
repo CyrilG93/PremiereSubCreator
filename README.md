@@ -4,8 +4,8 @@ Sub Creator is a CEP panel extension for Adobe Premiere Pro 2025+ focused on dyn
 
 It supports:
 - Three source workflows:
-  - SRT import.
-  - Premiere caption files already imported in project bins (select one when multiple exist).
+  - SRT import via native file picker.
+  - Premiere active caption track extraction (text + timing) when API exposes it.
   - Whisper local transcription from an audio/video file.
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
 - Premiere timeline insertion via ExtendScript:
@@ -28,7 +28,7 @@ SRT works immediately.
 
 Whisper local can generate SRT on the fly from an audio/video file.
 
-For Premiere native auto-transcription, CEP scripting still cannot directly trigger/read the Text panel transcript. Current Premiere workflow in this extension is: export/import captions as `.srt`, then select the desired source from the project list.
+For Premiere native auto-transcription, CEP scripting still has API gaps depending on version; this extension tries to read the active caption track directly and falls back with a clear message if unavailable.
 
 ## Project structure
 
@@ -105,9 +105,9 @@ npm run subcreator:package
 - Host: Premiere Pro `PPRO [25.0,99.9]`
 - Runtime: CSXS 11
 
-Track settings in panel:
-- `Video track`: destination track for inserted MOGRT (`0 = V1`, `1 = V2`, ...).
-- `Audio track`: required by Premiere `importMGT` API even when template has no audio (`0 = A1`, ...).
+Track behavior in panel:
+- MOGRT subtitles are inserted on a new top video track automatically at generation time.
+- Audio track index is handled internally for Premiere `importMGT` compatibility.
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 
@@ -119,6 +119,6 @@ If panel loading is blocked in development, enable CEP debug mode and restart Pr
 
 ## Next recommended milestone
 
-- Implement real active-sequence transcription provider and map words to precise cue timings.
+- Harden active caption-track extraction across Premiere versions using UXP APIs when available.
 - Ship curated MOGRT packs for each preset (`clean`, `punch`, `minimal`).
 - Add per-word visual emphasis controls (scale/color/blur) in UI and MOGRT parameters.

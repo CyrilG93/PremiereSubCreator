@@ -2,12 +2,13 @@
 import { buildCaptionPlan } from "../core/planner";
 import { STYLE_PRESETS } from "../core/presets";
 import { parseSrt } from "../core/srt";
-import type { AnimationMode, CaptionBuildOptions, CaptionSourceItem, HostApplyPayload, MogrtTemplateItem } from "../core/types";
+import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, HostCaptionCue, MogrtTemplateItem } from "../core/types";
 import {
   applyCaptionPlan,
-  listCaptionSources,
+  pickSrtPath,
   pickWhisperAudioPath,
   pingHost,
+  readActiveCaptionTrackCues,
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
@@ -24,10 +25,9 @@ const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
-  srtFile: document.querySelector<HTMLInputElement>("#srtFile"),
+  srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
+  srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
   premiereCaptionField: document.querySelector<HTMLElement>("#premiereCaptionField"),
-  premiereCaptionSelect: document.querySelector<HTMLSelectElement>("#premiereCaptionSelect"),
-  refreshCaptionButton: document.querySelector<HTMLButtonElement>("#refreshCaptionButton"),
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
   whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
   whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
@@ -41,8 +41,6 @@ const elements = {
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
-  videoTrackIndex: document.querySelector<HTMLInputElement>("#videoTrackIndex"),
-  audioTrackIndex: document.querySelector<HTMLInputElement>("#audioTrackIndex"),
   pingButton: document.querySelector<HTMLButtonElement>("#pingButton"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
   logOutput: document.querySelector<HTMLPreElement>("#logOutput")
@@ -51,8 +49,6 @@ const elements = {
 let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
 let selectedMogrt: MogrtTemplateItem | null = null;
-let availableCaptionSources: CaptionSourceItem[] = [];
-let selectedCaptionSourcePath = "";
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -263,53 +259,15 @@ function renderMogrtGallery(): void {
   updateSelectedMogrtLabel();
 }
 
-function renderCaptionSourceSelect(): void {
-  // // Build dropdown options for existing subtitle assets found in Premiere bins.
-  if (!elements.premiereCaptionSelect) {
+async function browseSrtPath(): Promise<void> {
+  // // Pick an SRT file path via host-native file chooser.
+  if (!elements.srtPath) {
     return;
   }
 
-  const previous = selectedCaptionSourcePath;
-  elements.premiereCaptionSelect.innerHTML = "";
-
-  if (availableCaptionSources.length === 0) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = translate("premiere.noneFound");
-    elements.premiereCaptionSelect.appendChild(option);
-    selectedCaptionSourcePath = "";
-    return;
-  }
-
-  availableCaptionSources.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.mediaPath;
-    option.textContent = `${item.name} (${item.binPath || "Project"})`;
-    elements.premiereCaptionSelect?.appendChild(option);
-  });
-
-  const stillAvailable = availableCaptionSources.some((item) => item.mediaPath === previous);
-  selectedCaptionSourcePath = stillAvailable ? previous : availableCaptionSources[0].mediaPath;
-  elements.premiereCaptionSelect.value = selectedCaptionSourcePath;
-}
-
-async function refreshCaptionSources(showStatusInLog = true): Promise<void> {
-  // // Query host for project subtitle sources and keep only supported SRT files.
-  try {
-    const sources = await listCaptionSources();
-    availableCaptionSources = sources.filter((item) => item.extension.toLowerCase() === "srt");
-    renderCaptionSourceSelect();
-
-    if (showStatusInLog) {
-      setLog(`${translate("log.captionSourcesLoaded")} ${availableCaptionSources.length}`);
-    }
-  } catch (error) {
-    availableCaptionSources = [];
-    renderCaptionSourceSelect();
-
-    if (showStatusInLog) {
-      setLog(String(error), true);
-    }
+  const selectedPath = await pickSrtPath();
+  if (selectedPath) {
+    elements.srtPath.value = selectedPath;
   }
 }
 
@@ -325,16 +283,6 @@ async function browseWhisperAudio(): Promise<void> {
   }
 }
 
-async function readSrtFile(fileInput: HTMLInputElement): Promise<string> {
-  // // Read the selected SRT text content from local browser file input.
-  const file = fileInput.files?.[0];
-  if (!file) {
-    throw new Error(translate("error.missingSrt"));
-  }
-
-  return file.text();
-}
-
 function collectBuildOptions(): CaptionBuildOptions {
   // // Collect, normalize, and validate all panel options into a single object.
   if (
@@ -346,8 +294,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.linesPerCaption ||
     !elements.animationMode ||
     !elements.uppercase ||
-    !elements.videoTrackIndex ||
-    !elements.audioTrackIndex ||
     !elements.whisperAudioPath ||
     !elements.whisperModel
   ) {
@@ -367,39 +313,49 @@ function collectBuildOptions(): CaptionBuildOptions {
     },
     mogrtPath: "",
     mogrtTemplateRelativePath: selectedMogrt?.relativePath ?? "",
-    captionSourcePath: selectedCaptionSourcePath,
     whisperAudioPath: elements.whisperAudioPath.value.trim(),
     whisperModel: elements.whisperModel.value,
-    videoTrackIndex: Number(elements.videoTrackIndex.value),
-    audioTrackIndex: Number(elements.audioTrackIndex.value)
+    videoTrackIndex: 0,
+    audioTrackIndex: 0
   };
 }
 
-async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise<ReturnType<typeof parseSrt>> {
-  // // Build cues from the currently selected source mode.
-  if (!elements.srtFile) {
-    throw new Error("SRT input not initialized.");
-  }
+function normalizeHostCaptionCues(hostCues: HostCaptionCue[]): CaptionCue[] {
+  // // Convert host caption cue payload into planner-compatible cue objects.
+  return hostCues.map((cue, index) => {
+    return {
+      id: `host-cue-${index + 1}`,
+      startSeconds: Number(cue.startSeconds),
+      endSeconds: Number(cue.endSeconds),
+      text: String(cue.text || "").trim(),
+      words: []
+    };
+  });
+}
 
+async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise<CaptionCue[]> {
+  // // Build cues from the currently selected source mode.
   if (options.sourceMode === "srt") {
-    const srtText = await readSrtFile(elements.srtFile);
+    if (!elements.srtPath || !elements.srtPath.value.trim()) {
+      throw new Error(translate("error.missingSrtPath"));
+    }
+
+    const srtText = await readTextFileFromHost(elements.srtPath.value.trim());
     const cues = parseSrt(srtText);
     if (!cues.length) {
       throw new Error(translate("error.emptySrt"));
     }
+
     return cues;
   }
 
   if (options.sourceMode === "premiere_caption") {
-    if (!options.captionSourcePath) {
-      throw new Error(translate("error.noPremiereCaption"));
+    const hostCues = await readActiveCaptionTrackCues();
+    const cues = normalizeHostCaptionCues(hostCues).filter((cue) => cue.text.length > 0 && cue.endSeconds > cue.startSeconds);
+    if (!cues.length) {
+      throw new Error(translate("error.noActiveCaptionTrack"));
     }
 
-    const captionText = await readTextFileFromHost(options.captionSourcePath);
-    const cues = parseSrt(captionText);
-    if (!cues.length) {
-      throw new Error(translate("error.invalidPremiereCaption"));
-    }
     return cues;
   }
 
@@ -456,13 +412,10 @@ async function initialize(): Promise<void> {
   await loadMogrtCatalog();
   renderMogrtGallery();
 
-  await refreshCaptionSources(false);
-
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
     renderPresetSelect();
     renderMogrtGallery();
-    renderCaptionSourceSelect();
     applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   });
 
@@ -474,12 +427,12 @@ async function initialize(): Promise<void> {
     toggleSourceFields();
   });
 
-  elements.premiereCaptionSelect?.addEventListener("change", () => {
-    selectedCaptionSourcePath = elements.premiereCaptionSelect?.value ?? "";
-  });
-
-  elements.refreshCaptionButton?.addEventListener("click", async () => {
-    await refreshCaptionSources(true);
+  elements.srtBrowseButton?.addEventListener("click", async () => {
+    try {
+      await browseSrtPath();
+    } catch (error) {
+      setLog(String(error), true);
+    }
   });
 
   elements.whisperBrowseButton?.addEventListener("click", async () => {

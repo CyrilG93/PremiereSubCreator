@@ -37,7 +37,6 @@ export interface CaptionBuildOptions {
   style: CaptionStyleConfig;
   mogrtPath: string;
   mogrtTemplateRelativePath: string;
-  captionSourcePath: string;
   whisperAudioPath: string;
   whisperModel: string;
   videoTrackIndex: number;
@@ -68,11 +67,9 @@ export interface MogrtTemplateItem {
   previewClass: string;
 }
 
-// // Describe one existing caption source detected inside the Premiere project.
-export interface CaptionSourceItem {
-  id: string;
-  name: string;
-  mediaPath: string;
-  extension: string;
-  binPath: string;
+// // Describe one cue extracted from Premiere caption tracks through host APIs.
+export interface HostCaptionCue {
+  text: string;
+  startSeconds: number;
+  endSeconds: number;
 }

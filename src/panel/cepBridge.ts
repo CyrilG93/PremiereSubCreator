@@ -6,6 +6,10 @@ declare global {
     __adobe_cep__?: {
       evalScript: (script: string, callback: (result: string) => void) => void;
     };
+    require?: (moduleName: string) => unknown;
+    cep_node?: {
+      require?: (moduleName: string) => unknown;
+    };
   }
 }
 
@@ -27,6 +31,29 @@ interface WhisperTranscriptionResult {
   model: string;
   audioPath: string;
   commandOutput?: string;
+}
+
+interface CepNodeModules {
+  childProcess: {
+    spawnSync: (
+      command: string,
+      args: string[],
+      options: { encoding: string; shell?: boolean }
+    ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string } };
+  };
+  fs: {
+    existsSync: (path: string) => boolean;
+    mkdirSync: (path: string, options: { recursive: boolean }) => void;
+    readdirSync: (path: string) => string[];
+    readFileSync: (path: string, encoding: string) => string;
+  };
+  os: {
+    tmpdir: () => string;
+  };
+  path: {
+    join: (...parts: string[]) => string;
+    basename: (value: string) => string;
+  };
 }
 
 function escapeForJsx(input: string): string {
@@ -67,6 +94,103 @@ async function evalHostJson<T>(script: string): Promise<HostJsonResponse<T>> {
       error: `Invalid host response: ${String(error)} | raw=${raw}`
     };
   }
+}
+
+function resolveCepNodeModules(): CepNodeModules | null {
+  // // Resolve Node modules from CEP mixed-context runtime when available.
+  const nodeRequire =
+    (window.cep_node && typeof window.cep_node.require === "function" ? window.cep_node.require : null) ||
+    (typeof window.require === "function" ? window.require : null);
+  if (!nodeRequire) {
+    return null;
+  }
+
+  try {
+    return {
+      childProcess: nodeRequire("child_process") as CepNodeModules["childProcess"],
+      fs: nodeRequire("fs") as CepNodeModules["fs"],
+      os: nodeRequire("os") as CepNodeModules["os"],
+      path: nodeRequire("path") as CepNodeModules["path"]
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: string): string[] {
+  // // Build CLI arguments for local Whisper invocation.
+  const model = request.model?.trim() || "base";
+  const args = [request.audioPath, "--model", model, "--output_format", "srt", "--output_dir", outputDir, "--fp16", "False"];
+
+  const language = request.languageCode?.trim();
+  if (language && language.toLowerCase() !== "auto") {
+    args.push("--language", language);
+  }
+
+  return args;
+}
+
+function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
+  // // Resolve Whisper output SRT from expected filename or directory scan fallback.
+  const baseName = modules.path.basename(audioPath).replace(/\.[^/.]+$/, "");
+  const direct = modules.path.join(outputDir, `${baseName}.srt`);
+  if (modules.fs.existsSync(direct)) {
+    return direct;
+  }
+
+  const entries = modules.fs.readdirSync(outputDir);
+  for (const entry of entries) {
+    const lower = String(entry).toLowerCase();
+    if (lower.endsWith(".srt") && lower.startsWith(baseName.toLowerCase())) {
+      return modules.path.join(outputDir, entry);
+    }
+  }
+
+  return "";
+}
+
+function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): WhisperTranscriptionResult | null {
+  // // Run Whisper with CEP Node runtime to avoid ExtendScript `system.callSystem` availability issues.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return null;
+  }
+
+  const outputDir = modules.path.join(modules.os.tmpdir(), "SubCreatorWhisper");
+  if (!modules.fs.existsSync(outputDir)) {
+    modules.fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const run = modules.childProcess.spawnSync("whisper", buildWhisperArgs(request, outputDir), {
+    encoding: "utf8",
+    shell: false
+  });
+
+  if (run.error) {
+    throw new Error(`Unable to execute Whisper CLI: ${String(run.error.message || run.error)}`);
+  }
+
+  const commandOutput = [String(run.stdout || ""), String(run.stderr || "")].filter(Boolean).join("\n").trim();
+  if (typeof run.status === "number" && run.status !== 0) {
+    throw new Error(`Whisper exited with code ${run.status}. ${commandOutput}`);
+  }
+
+  const srtPath = resolveWhisperSrtPath(modules, outputDir, request.audioPath);
+  if (!srtPath) {
+    throw new Error(`Whisper did not produce an SRT file in ${outputDir}. ${commandOutput}`);
+  }
+
+  const srtText = String(modules.fs.readFileSync(srtPath, "utf8") || "");
+  if (!srtText.trim()) {
+    throw new Error(`Whisper produced an empty SRT file: ${srtPath}`);
+  }
+
+  return {
+    srtText,
+    model: request.model?.trim() || "base",
+    audioPath: request.audioPath,
+    commandOutput
+  };
 }
 
 export async function pingHost(): Promise<string> {
@@ -123,7 +247,12 @@ export async function readActiveCaptionTrackCues(): Promise<HostCaptionCue[]> {
 }
 
 export async function transcribeWithWhisper(request: WhisperTranscriptionRequest): Promise<WhisperTranscriptionResult> {
-  // // Trigger local Whisper CLI through ExtendScript host and return generated SRT.
+  // // Prefer CEP Node runtime for Whisper CLI, fallback to host ExtendScript bridge.
+  const nodeResult = transcribeWithWhisperViaCepNode(request);
+  if (nodeResult) {
+    return nodeResult;
+  }
+
   const encodedPayload = encodeURIComponent(JSON.stringify(request));
   const response = await evalHostJson<WhisperTranscriptionResult>(
     `subcreator_transcribe_whisper("${escapeForJsx(encodedPayload)}")`

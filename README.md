@@ -6,7 +6,7 @@ It supports:
 - Three source workflows:
   - SRT import via native file picker.
   - Premiere active caption track extraction (text + timing) when API exposes it.
-  - Whisper local transcription from an audio/video file.
+  - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - Premiere timeline insertion via ExtendScript:
@@ -36,6 +36,7 @@ SRT works immediately.
 Whisper local can generate SRT on the fly from an audio/video file.
 
 For Premiere native auto-transcription, CEP scripting still has API gaps depending on version; this extension tries to read the active caption track directly and falls back with a clear message if unavailable.
+On some Premiere builds, CEP returns only `SyntheticCaption` placeholders for caption clips; in that case, use SRT or Whisper source.
 
 ## Project structure
 
@@ -122,6 +123,7 @@ Caption planning behavior:
 - Long cues are split by contiguous word groups (not arbitrary character cuts).
 - Chunk timing follows word timing boundaries when available, or proportional word distribution otherwise.
 - Boundary rebalancing favors readable punctuation grouping (for example avoids starting a chunk with `time,` when a better split exists).
+- Boundary rebalancing also avoids weak connector endings (for example ending a chunk with `since` when next words can absorb it).
 - Single synthetic placeholders from Premiere APIs (`SyntheticCaption`) are filtered so invalid caption-track reads do not silently generate wrong subtitles.
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.

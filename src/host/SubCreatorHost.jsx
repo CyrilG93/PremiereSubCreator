@@ -200,6 +200,10 @@ function subcreator_transcribe_whisper(payloadEncoded) {
     var model = String(payload.model || "base");
     var languageCode = String(payload.languageCode || "");
     var command = subcreator_build_whisper_command(audioFile.fsName, tempFolder.fsName, model, languageCode);
+    if (typeof system === "undefined" || !system || typeof system.callSystem !== "function") {
+      return subcreator_error("Host system.callSystem indisponible. Active le mode Node CEP pour Whisper local.");
+    }
+
     var commandOutput = system.callSystem(command);
 
     var baseName = String(audioFile.name || "").replace(/\.[^\.]+$/, "");

@@ -151,4 +151,30 @@ describe("buildCaptionPlan", () => {
     const secondChunkText = planned[1].text.replace(/\n/g, " ");
     expect(secondChunkText.toLowerCase().startsWith("time,")).toBe(false);
   });
+
+  it("avoids weak connector words at the end of a chunk when possible", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-6",
+          startSeconds: 0,
+          endSeconds: 8,
+          text: "He gets a response back in record time, since all the details",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 38,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    expect(planned.length).toBeGreaterThan(1);
+    const firstChunkText = planned[0].text.replace(/\n/g, " ").toLowerCase();
+    expect(firstChunkText.endsWith(" since")).toBe(false);
+  });
 });

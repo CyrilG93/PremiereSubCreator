@@ -107,6 +107,44 @@ function wordStartsWithPunctuation(word: string): boolean {
   return /^[,;:!?)\]}]/.test(word.trim());
 }
 
+function normalizeBoundaryWord(word: string): string {
+  // // Strip punctuation around boundary words to evaluate linguistic glue words.
+  return word
+    .trim()
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+/i, "")
+    .replace(/[^a-z0-9]+$/i, "");
+}
+
+function wordIsWeakEnding(word: string): boolean {
+  // // Avoid finishing lines with connectors that read better when attached to next words.
+  const normalized = normalizeBoundaryWord(word);
+  return (
+    normalized === "and" ||
+    normalized === "or" ||
+    normalized === "but" ||
+    normalized === "so" ||
+    normalized === "because" ||
+    normalized === "since" ||
+    normalized === "that" ||
+    normalized === "which" ||
+    normalized === "who" ||
+    normalized === "when" ||
+    normalized === "while" ||
+    normalized === "if" ||
+    normalized === "than" ||
+    normalized === "then" ||
+    normalized === "to" ||
+    normalized === "for" ||
+    normalized === "with" ||
+    normalized === "from" ||
+    normalized === "at" ||
+    normalized === "on" ||
+    normalized === "in" ||
+    normalized === "of"
+  );
+}
+
 function chunkFits(words: string[], range: ChunkRange, maxCharsPerLine: number, linesPerCaption: number): boolean {
   // // Validate whether a chunk range still respects the max-lines wrapping rule.
   if (range.end <= range.start) {
@@ -178,20 +216,56 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
         changed = true;
       }
 
-      // // If the next chunk starts with punctuation-attached words, shift boundary left for better readability.
+      // // Keep punctuation-attached words with the previous phrase when possible.
       const rightFirstWord = words[right.start] ?? "";
-      if ((wordHasBoundaryPunctuation(rightFirstWord) || wordStartsWithPunctuation(rightFirstWord)) && leftSize > 1) {
-        const candidateBoundary = right.start - 1;
-        const candidateLeft = { start: left.start, end: candidateBoundary };
-        const candidateRight = { start: candidateBoundary, end: right.end };
-        const candidateRightSize = candidateRight.end - candidateRight.start;
+      if ((wordHasBoundaryPunctuation(rightFirstWord) || wordStartsWithPunctuation(rightFirstWord)) && rightSize > 1) {
+        const moveRightBoundary = right.start + 1;
+        const leftIfMoveRight = { start: left.start, end: moveRightBoundary };
+        const rightIfMoveRight = { start: moveRightBoundary, end: right.end };
         if (
-          candidateRightSize > 1 &&
-          chunkFits(words, candidateLeft, maxCharsPerLine, linesPerCaption) &&
-          chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)
+          rightIfMoveRight.end - rightIfMoveRight.start > 0 &&
+          chunkFits(words, leftIfMoveRight, maxCharsPerLine, linesPerCaption) &&
+          chunkFits(words, rightIfMoveRight, maxCharsPerLine, linesPerCaption)
         ) {
-          left.end = candidateBoundary;
-          right.start = candidateBoundary;
+          left.end = moveRightBoundary;
+          right.start = moveRightBoundary;
+          leftSize = left.end - left.start;
+          rightSize = right.end - right.start;
+          changed = true;
+        } else if (leftSize > 1) {
+          const moveLeftBoundary = right.start - 1;
+          const leftIfMoveLeft = { start: left.start, end: moveLeftBoundary };
+          const rightIfMoveLeft = { start: moveLeftBoundary, end: right.end };
+          const rightIfMoveLeftSize = rightIfMoveLeft.end - rightIfMoveLeft.start;
+          if (
+            rightIfMoveLeftSize > 1 &&
+            chunkFits(words, leftIfMoveLeft, maxCharsPerLine, linesPerCaption) &&
+            chunkFits(words, rightIfMoveLeft, maxCharsPerLine, linesPerCaption)
+          ) {
+            left.end = moveLeftBoundary;
+            right.start = moveLeftBoundary;
+            leftSize = left.end - left.start;
+            rightSize = right.end - right.start;
+            changed = true;
+          }
+        }
+      }
+
+      // // Avoid ending a chunk with weak connector words when right chunk can absorb them.
+      const leftLastWord = words[left.end - 1] ?? "";
+      if (wordIsWeakEnding(leftLastWord) && leftSize > 1) {
+        const moveWeakEnding = right.start - 1;
+        const leftIfMoveWeak = { start: left.start, end: moveWeakEnding };
+        const rightIfMoveWeak = { start: moveWeakEnding, end: right.end };
+        if (
+          rightIfMoveWeak.end - rightIfMoveWeak.start > 1 &&
+          chunkFits(words, leftIfMoveWeak, maxCharsPerLine, linesPerCaption) &&
+          chunkFits(words, rightIfMoveWeak, maxCharsPerLine, linesPerCaption)
+        ) {
+          left.end = moveWeakEnding;
+          right.start = moveWeakEnding;
+          leftSize = left.end - left.start;
+          rightSize = right.end - right.start;
           changed = true;
         }
       }

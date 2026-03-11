@@ -29,7 +29,7 @@
   "gallery.selectedPrefix": "Template selectionne:",
   "gallery.previewText": "Preview",
   "help.premiereCaptionSource": "Lit les textes + timings depuis la piste caption active de la sequence.",
-  "help.whisper": "Whisper doit etre installe localement et accessible via la commande `whisper`.",
+  "help.whisper": "Whisper doit etre installe localement (commande `whisper` ou module Python `whisper`).",
   "help.tracks": "Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.",
   "placeholder.srtPath": "/Users/.../captions.srt",
   "placeholder.whisperAudio": "/Users/.../audio.wav",

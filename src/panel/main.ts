@@ -5,6 +5,7 @@ import { parseSrt } from "../core/srt";
 import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, HostCaptionCue, MogrtTemplateItem } from "../core/types";
 import {
   applyCaptionPlan,
+  getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
   pingHost,
@@ -531,6 +532,36 @@ function toggleSourceFields(): void {
   }
 }
 
+async function enforceWhisperSourceAvailability(): Promise<void> {
+  // // Hide Whisper source option when local runtime is unavailable on this machine.
+  if (!elements.sourceMode) {
+    return;
+  }
+
+  const whisperOption = elements.sourceMode.querySelector<HTMLOptionElement>('option[value="whisper_local"]');
+  if (!whisperOption) {
+    return;
+  }
+
+  try {
+    const status = await getWhisperRuntimeStatus();
+    if (status.available) {
+      return;
+    }
+
+    whisperOption.remove();
+    if (elements.sourceMode.value === "whisper_local") {
+      elements.sourceMode.value = "srt";
+    }
+
+    if (elements.whisperAudioPath) {
+      elements.whisperAudioPath.value = "";
+    }
+  } catch {
+    // // Keep Whisper visible when detection fails unexpectedly to avoid hiding a usable source.
+  }
+}
+
 async function loadMogrtCatalog(): Promise<void> {
   // // Load generated MOGRT catalog emitted by the build script.
   const response = await fetch("./assets/mogrt-catalog.json");
@@ -837,6 +868,7 @@ async function initialize(): Promise<void> {
   }
 
   await loadLocale(elements.languageSelect?.value ?? "en");
+  await enforceWhisperSourceAvailability();
   renderPresetSelect();
   applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   applyPersistedPanelState(persistedState);

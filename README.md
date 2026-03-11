@@ -35,6 +35,7 @@ SRT works immediately.
 
 Whisper local can generate SRT on the fly from an audio/video file.
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
+If no local Whisper runtime is detected at panel startup, the `Whisper local (audio)` source option is hidden automatically.
 
 For Premiere native auto-transcription, CEP scripting still has API gaps depending on version; this extension tries to read the active caption track directly and falls back with a clear message if unavailable.
 On some Premiere builds, CEP returns only `SyntheticCaption` placeholders for caption clips; in that case, use SRT or Whisper source.
@@ -90,11 +91,23 @@ whisper --help
 ./installers/subcreator_install_mac.sh
 ```
 
+Installer behavior:
+- Installs extension files to CEP.
+- Tries to auto-install `openai-whisper` with local Python when Python is available and version is <= 3.13.
+- Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).
+- Tries to install `ffmpeg` via Homebrew when available.
+
 ### Windows
 
 ```bat
 installers\subcreator_install_windows.bat
 ```
+
+Installer behavior:
+- Installs extension files to CEP.
+- Tries to auto-install `openai-whisper` with `py -3` or `python` when available and version is <= 3.13.
+- Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).
+- Tries to install `ffmpeg` via `winget` when available.
 
 ## Release packaging
 

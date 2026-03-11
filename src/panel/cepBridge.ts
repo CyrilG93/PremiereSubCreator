@@ -33,12 +33,17 @@ interface WhisperTranscriptionResult {
   commandOutput?: string;
 }
 
+export interface WhisperRuntimeStatus {
+  available: boolean;
+  details: string;
+}
+
 interface CepNodeModules {
   childProcess: {
     spawnSync: (
       command: string,
       args: string[],
-      options: { encoding: string; shell?: boolean }
+      options: { encoding: string; shell?: boolean; timeout?: number }
     ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } };
   };
   fs: {
@@ -60,6 +65,12 @@ interface CepNodeModules {
 interface WhisperCommandCandidate {
   command: string;
   args: string[];
+  label: string;
+}
+
+interface PythonLauncherCandidate {
+  command: string;
+  argsPrefix: string[];
   label: string;
 }
 
@@ -213,6 +224,110 @@ function buildWhisperCommandCandidates(
   return candidates;
 }
 
+function buildPythonLauncherCandidates(): PythonLauncherCandidate[] {
+  // // Build Python launcher candidates used to detect `openai-whisper` module availability.
+  const candidates: PythonLauncherCandidate[] = [
+    { command: "python3", argsPrefix: [], label: "python3" },
+    { command: "python", argsPrefix: [], label: "python" }
+  ];
+
+  if (detectWindowsRuntime()) {
+    candidates.unshift({ command: "py", argsPrefix: ["-3"], label: "py -3" });
+    candidates.push({ command: "py", argsPrefix: [], label: "py" });
+  }
+
+  return candidates;
+}
+
+function runSpawn(
+  modules: CepNodeModules,
+  command: string,
+  args: string[]
+): { ok: boolean; status: number; stdout: string; stderr: string; errorCode: string; errorMessage: string } {
+  // // Execute a command synchronously with a safe timeout and normalized result shape.
+  const run = modules.childProcess.spawnSync(command, args, {
+    encoding: "utf8",
+    shell: false,
+    timeout: 12000
+  });
+
+  const status = typeof run.status === "number" ? run.status : -1;
+  const stdout = String(run.stdout || "");
+  const stderr = String(run.stderr || "");
+  const errorCode = String(run.error?.code || "");
+  const errorMessage = String(run.error?.message || "");
+
+  return {
+    ok: !run.error && status === 0,
+    status,
+    stdout,
+    stderr,
+    errorCode,
+    errorMessage
+  };
+}
+
+function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
+  // // Detect local Whisper runtime availability to decide if Whisper source should be shown.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return {
+      available: false,
+      details: "CEP Node runtime unavailable"
+    };
+  }
+
+  const checks: string[] = [];
+
+  const pythonLaunchers = buildPythonLauncherCandidates();
+  for (const launcher of pythonLaunchers) {
+    const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", "import whisper"]);
+    if (probe.ok) {
+      return {
+        available: true,
+        details: `Python module detected via ${launcher.label}`
+      };
+    }
+
+    if (probe.errorCode === "ENOENT") {
+      checks.push(`${launcher.label}: missing`);
+    } else if (probe.errorMessage) {
+      checks.push(`${launcher.label}: ${probe.errorMessage}`);
+    } else if (probe.stderr.trim()) {
+      checks.push(`${launcher.label}: ${probe.stderr.trim().split("\n")[0]}`);
+    } else {
+      checks.push(`${launcher.label}: exit ${probe.status}`);
+    }
+  }
+
+  const userExecutables = discoverUserWhisperExecutables(modules);
+  const cliCandidates = [...userExecutables, "whisper"];
+  for (const command of cliCandidates) {
+    const probe = runSpawn(modules, command, ["--help"]);
+    if (probe.ok) {
+      return {
+        available: true,
+        details: `CLI detected via ${command}`
+      };
+    }
+
+    if (probe.errorCode === "ENOENT") {
+      checks.push(`${command}: missing`);
+    } else if (probe.errorMessage) {
+      checks.push(`${command}: ${probe.errorMessage}`);
+    } else if (probe.stderr.trim()) {
+      checks.push(`${command}: ${probe.stderr.trim().split("\n")[0]}`);
+    } else {
+      checks.push(`${command}: exit ${probe.status}`);
+    }
+  }
+
+  return {
+    available: false,
+    details: checks.join(" | ")
+  };
+}
+
 function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
   // // Resolve Whisper output SRT from expected filename or directory scan fallback.
   const baseName = modules.path.basename(audioPath).replace(/\.[^/.]+$/, "");
@@ -307,6 +422,11 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
   }
 
   return null;
+}
+
+export async function getWhisperRuntimeStatus(): Promise<WhisperRuntimeStatus> {
+  // // Expose runtime detection to UI so unavailable Whisper source can be hidden safely.
+  return detectWhisperAvailabilityViaCepNode();
 }
 
 export async function pingHost(): Promise<string> {

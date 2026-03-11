@@ -29,7 +29,7 @@
   "gallery.selectedPrefix": "Selected template:",
   "gallery.previewText": "Preview",
   "help.premiereCaptionSource": "Reads text + timing from the active caption track in the sequence.",
-  "help.whisper": "Whisper must be installed locally and available via the `whisper` command.",
+  "help.whisper": "Whisper must be installed locally (either `whisper` CLI or Python `whisper` module).",
   "help.tracks": "MOGRT subtitles are automatically inserted on a new top video track.",
   "placeholder.srtPath": "C:/.../captions.srt",
   "placeholder.whisperAudio": "C:/.../audio.wav",

@@ -11,6 +11,7 @@ It supports:
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
+  - Apply text controls recursively (including grouped Essential Graphics properties) and map animation mode to controls like `Highlight Based On`.
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
 - Version label in panel header + automatic GitHub release update banner.

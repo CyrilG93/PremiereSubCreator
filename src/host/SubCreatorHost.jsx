@@ -406,10 +406,10 @@ function subcreator_should_try_text_property(displayName, rawValue) {
   if (
     key.indexOf("source text") !== -1 ||
     key.indexOf("texte source") !== -1 ||
-    key.indexOf("caption") !== -1 ||
-    key.indexOf("subtitle") !== -1 ||
-    key.indexOf("title") !== -1 ||
-    key === "text"
+    key.indexOf("caption text") !== -1 ||
+    key.indexOf("subtitle text") !== -1 ||
+    key === "text" ||
+    key === "texte"
   ) {
     return true;
   }
@@ -468,8 +468,34 @@ function subcreator_try_set_json_text_payload(payload, textValue) {
   return updated;
 }
 
+function subcreator_normalize_caption_text(textValue) {
+  // // Match Premiere text payload conventions by using CR line-breaks.
+  return String(textValue || "").replace(/\r\n/g, "\n").replace(/\n/g, "\r");
+}
+
+function subcreator_try_patch_text_json_string(rawValue, textValue) {
+  // // Patch text fields directly in JSON-like strings when parsing is not supported.
+  var raw = String(rawValue || "");
+  if (raw.length < 1) {
+    return "";
+  }
+
+  var escapedText = JSON.stringify(String(textValue || ""));
+  var patched = raw;
+
+  patched = patched.replace(/"textEditValue"\s*:\s*"([^"\\]|\\.)*"/g, '"textEditValue":' + escapedText);
+  patched = patched.replace(/"mText"\s*:\s*"([^"\\]|\\.)*"/g, '"mText":' + escapedText);
+  patched = patched.replace(/"fontTextRunLength"\s*:\s*\[[^\]]*\]/g, '"fontTextRunLength":[' + String(textValue).length + "]");
+
+  if (patched === raw) {
+    return "";
+  }
+
+  return patched;
+}
+
 function subcreator_try_set_mogrt_text_property(property, textValue) {
-  // // Apply text to a property, supporting both plain strings and JSON-based payloads.
+  // // Apply text to a property, supporting strings, JSON strings, and object payloads.
   var displayName = property.displayName || "";
   var rawValue = "";
 
@@ -485,7 +511,24 @@ function subcreator_try_set_mogrt_text_property(property, textValue) {
     return false;
   }
 
-  var textString = String(textValue || "");
+  var textString = subcreator_normalize_caption_text(textValue);
+
+  if (rawValue && typeof rawValue === "object") {
+    try {
+      var objectCopy = JSON.parse(JSON.stringify(rawValue));
+      if (subcreator_try_set_json_text_payload(objectCopy, textString)) {
+        property.setValue(objectCopy, true);
+        return true;
+      }
+    } catch (objectJsonError) {}
+
+    try {
+      if (subcreator_try_set_json_text_payload(rawValue, textString)) {
+        property.setValue(rawValue, true);
+        return true;
+      }
+    } catch (objectDirectError) {}
+  }
 
   if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
     try {
@@ -495,6 +538,14 @@ function subcreator_try_set_mogrt_text_property(property, textValue) {
         return true;
       }
     } catch (jsonError) {}
+
+    try {
+      var patchedRaw = subcreator_try_patch_text_json_string(rawValue, textString);
+      if (patchedRaw) {
+        property.setValue(patchedRaw, true);
+        return true;
+      }
+    } catch (patchError) {}
   }
 
   try {
@@ -505,10 +556,72 @@ function subcreator_try_set_mogrt_text_property(property, textValue) {
   return false;
 }
 
-function subcreator_try_set_mogrt_text(trackItem, textValue) {
-  // // Attempt to update text properties on inserted MOGRT components (plain and JSON-encoded formats).
+function subcreator_try_set_animation_mode_property(property, animationMode) {
+  // // Drive common MOGRT controls like "Animation" and "Highlight Based On".
+  if (!property || typeof property.setValue !== "function") {
+    return false;
+  }
+
+  var mode = String(animationMode || "").toLowerCase();
+  if (mode !== "word" && mode !== "line" && mode !== "none") {
+    return false;
+  }
+
+  var key = String(property.displayName || "").toLowerCase();
+  if (key.indexOf("highlight based on") !== -1 || key.indexOf("based on") !== -1) {
+    // // Most MOGRT menu controls are 1-based: 1=Words, 2=Lines.
+    var highlightValue = mode === "word" ? 1 : 2;
+    try {
+      property.setValue(highlightValue, true);
+      return true;
+    } catch (highlightError) {}
+  }
+
+  if (key === "animation") {
+    try {
+      property.setValue(mode !== "none", true);
+      return true;
+    } catch (animError) {}
+  }
+
+  return false;
+}
+
+function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, stats) {
+  // // Traverse nested Essential Graphics property groups and apply text/animation updates.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
+    return;
+  }
+
+  for (var i = 0; i < propertyCollection.numItems; i += 1) {
+    var property = propertyCollection[i];
+    if (!property) {
+      continue;
+    }
+
+    if (typeof property.setValue === "function") {
+      if (subcreator_try_set_mogrt_text_property(property, textValue)) {
+        stats.textUpdates += 1;
+      }
+
+      if (subcreator_try_set_animation_mode_property(property, animationMode)) {
+        stats.animationUpdates += 1;
+      }
+    }
+
+    if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, stats);
+    }
+  }
+}
+
+function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode) {
+  // // Update text + animation related controls on inserted MOGRT components.
   if (!trackItem || !textValue) {
-    return 0;
+    return {
+      textUpdates: 0,
+      animationUpdates: 0
+    };
   }
 
   var component = null;
@@ -521,22 +634,18 @@ function subcreator_try_set_mogrt_text(trackItem, textValue) {
   }
 
   if (!component || !component.properties || component.properties.numItems < 1) {
-    return 0;
+    return {
+      textUpdates: 0,
+      animationUpdates: 0
+    };
   }
 
-  var updatedCount = 0;
-  for (var i = 0; i < component.properties.numItems; i += 1) {
-    var property = component.properties[i];
-    if (!property || typeof property.setValue !== "function") {
-      continue;
-    }
-
-    if (subcreator_try_set_mogrt_text_property(property, textValue)) {
-      updatedCount += 1;
-    }
-  }
-
-  return updatedCount;
+  var stats = {
+    textUpdates: 0,
+    animationUpdates: 0
+  };
+  subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, stats);
+  return stats;
 }
 
 function subcreator_resolve_extension_root() {
@@ -750,9 +859,9 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
 }
 
 function subcreator_get_or_create_top_video_track_index(sequence) {
-  // // Create a new top video track and return its index, with safe fallbacks.
+  // // Create a new top video track without reindexing lower tracks when QE supports it.
   var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
-  var insertAfterIndex = currentTracks > 0 ? currentTracks - 1 : 0;
+  var created = false;
 
   try {
     if (typeof app.enableQE === "function") {
@@ -761,26 +870,25 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
         var qeSequence = qe.project.getActiveSequence();
         if (qeSequence && typeof qeSequence.addTracks === "function") {
           try {
-            // // QE signature: addTracks(videoNum, insertAfterVideoIndex, audioNum, insertAfterAudioIndex).
-            qeSequence.addTracks(1, insertAfterIndex, 0, 0);
-          } catch (signatureErrorFull) {
-            try {
-              qeSequence.addTracks(1, insertAfterIndex, 0);
-            } catch (signatureErrorShort) {
-              qeSequence.addTracks(1);
-            }
-          }
+            // // Default addTracks(1) has the safest behavior across Premiere versions.
+            qeSequence.addTracks(1);
+          } catch (signatureErrorDefault) {}
         }
       }
     }
   } catch (error) {}
 
   var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
-  if (updatedTracks > 0) {
-    return updatedTracks - 1;
+  if (updatedTracks > currentTracks) {
+    created = true;
   }
 
-  return 0;
+  return {
+    index: updatedTracks > 0 ? updatedTracks - 1 : 0,
+    created: created,
+    beforeTracks: currentTracks,
+    afterTracks: updatedTracks
+  };
 }
 
 function subcreator_apply_captions(payloadEncoded) {
@@ -801,12 +909,14 @@ function subcreator_apply_captions(payloadEncoded) {
     var pathCandidates = subcreator_build_mogrt_path_candidates(mogrtPath);
     var hasMogrt = pathCandidates.length > 0;
 
-    var videoTrackIndex = subcreator_get_or_create_top_video_track_index(sequence);
+    var videoTrackInfo = subcreator_get_or_create_top_video_track_index(sequence);
+    var videoTrackIndex = videoTrackInfo.index;
     var audioTrackIndex = 0;
 
     var insertedMogrt = 0;
     var insertedMarkers = 0;
     var updatedText = 0;
+    var updatedAnimation = 0;
     var durationAdjusted = 0;
     var mogrtAttempted = 0;
     var lastImportMode = "";
@@ -825,9 +935,16 @@ function subcreator_apply_captions(payloadEncoded) {
           insertedMogrt += 1;
           lastImportMode = importAttempt.usedTimeMode;
           lastImportPath = importAttempt.usedPath;
-          var updatedTextProps = subcreator_try_set_mogrt_text(importAttempt.trackItem, text);
-          if (updatedTextProps > 0) {
-            updatedText += updatedTextProps;
+          var controlStats = subcreator_try_set_mogrt_controls(
+            importAttempt.trackItem,
+            text,
+            options.style ? options.style.animationMode : "line"
+          );
+          if (controlStats.textUpdates > 0) {
+            updatedText += controlStats.textUpdates;
+          }
+          if (controlStats.animationUpdates > 0) {
+            updatedAnimation += controlStats.animationUpdates;
           }
           if (subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
             durationAdjusted += 1;
@@ -853,6 +970,7 @@ function subcreator_apply_captions(payloadEncoded) {
       insertedMogrt: insertedMogrt,
       insertedMarkers: insertedMarkers,
       mogrtTextUpdated: updatedText,
+      mogrtAnimationUpdated: updatedAnimation,
       mogrtDurationAdjusted: durationAdjusted,
       mogrtUsed: hasMogrt,
       mogrtPathResolved: mogrtPath,
@@ -860,6 +978,9 @@ function subcreator_apply_captions(payloadEncoded) {
       mogrtImportAttempts: mogrtAttempted,
       mogrtLastImportMode: lastImportMode,
       mogrtLastImportPath: lastImportPath,
+      videoTrackCreated: videoTrackInfo.created,
+      videoTracksBefore: videoTrackInfo.beforeTracks,
+      videoTracksAfter: videoTrackInfo.afterTracks,
       videoTrackUsed: videoTrackIndex,
       audioTrackUsed: audioTrackIndex
     });

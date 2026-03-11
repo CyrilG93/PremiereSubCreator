@@ -1,5 +1,5 @@
 // // Build the CEP extension payload into dist/com.cyrilg93.subcreator.
-import { mkdir, rm, cp, readdir, writeFile, stat } from "node:fs/promises";
+import { mkdir, rm, cp, readdir, writeFile, stat, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -18,6 +18,21 @@ function subcreatorSlugify(input) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
+}
+
+function subcreatorSanitizeSegment(input) {
+  // // Keep packaged template paths ASCII-safe for cross-platform importMGT.
+  const ascii = String(input)
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]/g, "")
+    .trim();
+
+  const cleaned = ascii
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return cleaned || "template";
 }
 
 function subcreatorDetectPreviewClass(name) {
@@ -106,35 +121,60 @@ async function subcreatorScanMogrt(dir, rootDir, collector) {
     const pathParts = relativePath.split("/");
     const aspect = pathParts.length > 1 ? pathParts[0] : "General";
     const name = path.basename(entry.name, ".mogrt");
-    const id = `${subcreatorSlugify(aspect)}-${subcreatorSlugify(name)}-${collector.length + 1}`;
 
     collector.push({
-      id,
+      sourcePath: fullPath,
       name,
       aspect,
-      relativePath,
       previewClass: subcreatorDetectPreviewClass(name)
     });
   }
 }
 
 async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
-  // // Copy templates into extension bundle and emit catalog consumed by panel UI.
+  // // Copy templates into extension bundle with ASCII-safe paths and emit gallery catalog.
+  const discovered = [];
   const templates = [];
   const templateRootExists = await subcreatorPathExists(templatesRoot);
 
   if (templateRootExists) {
-    await cp(templatesRoot, distTemplatesDir, { recursive: true });
-    await subcreatorScanMogrt(templatesRoot, templatesRoot, templates);
+    await subcreatorScanMogrt(templatesRoot, templatesRoot, discovered);
   }
 
-  templates.sort((left, right) => {
+  discovered.sort((left, right) => {
     const aspectCompare = left.aspect.localeCompare(right.aspect);
     if (aspectCompare !== 0) {
       return aspectCompare;
     }
     return left.name.localeCompare(right.name);
   });
+
+  const dedupe = new Map();
+
+  for (let index = 0; index < discovered.length; index += 1) {
+    const item = discovered[index];
+    const safeAspect = subcreatorSanitizeSegment(item.aspect);
+    const safeName = subcreatorSanitizeSegment(item.name).toLowerCase();
+    const dedupeKey = `${safeAspect}/${safeName}`;
+    const nextCount = (dedupe.get(dedupeKey) ?? 0) + 1;
+    dedupe.set(dedupeKey, nextCount);
+
+    const safeFileName = `${safeName}-${nextCount}.mogrt`;
+    const relativePath = `${safeAspect}/${safeFileName}`;
+    const destDir = path.join(distTemplatesDir, safeAspect);
+    const destPath = path.join(destDir, safeFileName);
+
+    await mkdir(destDir, { recursive: true });
+    await copyFile(item.sourcePath, destPath);
+
+    templates.push({
+      id: `${subcreatorSlugify(item.aspect)}-${subcreatorSlugify(item.name)}-${index + 1}`,
+      name: item.name,
+      aspect: item.aspect,
+      relativePath,
+      previewClass: item.previewClass
+    });
+  }
 
   const catalog = {
     generatedAt: new Date().toISOString(),

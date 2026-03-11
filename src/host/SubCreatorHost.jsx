@@ -54,6 +54,11 @@ function subcreator_read_file_text(fileRef) {
   return content;
 }
 
+function subcreator_trim_string(value) {
+  // // Trim whitespace safely without relying on ES5 String.trim support.
+  return String(value || "").replace(/^\s+|\s+$/g, "");
+}
+
 function subcreator_read_text_file(encodedPath) {
   // // Read a text file from disk and return content to the panel.
   try {
@@ -79,7 +84,12 @@ function subcreator_read_text_file(encodedPath) {
 function subcreator_pick_srt_file() {
   // // Open native picker restricted to .srt subtitle files.
   try {
-    var selected = File.openDialog("Select SRT subtitle file", "*.srt");
+    var selected = File.openDialog("Select SRT subtitle file", function (candidate) {
+      if (candidate instanceof Folder) {
+        return true;
+      }
+      return /\.srt$/i.test(String(candidate.name || ""));
+    });
     if (!selected) {
       return subcreator_ok({ path: "" });
     }
@@ -306,7 +316,7 @@ function subcreator_extract_cues_from_items(items) {
     var item = items[i];
     var startSeconds = subcreator_to_seconds(item.start || item.inPoint || item.startTime);
     var endSeconds = subcreator_to_seconds(item.end || item.outPoint || item.endTime);
-    var text = String(subcreator_extract_text_from_item(item) || "").replace(/\s+/g, " ").trim();
+    var text = subcreator_trim_string(String(subcreator_extract_text_from_item(item) || "").replace(/\s+/g, " "));
 
     if (isNaN(startSeconds) || isNaN(endSeconds) || endSeconds <= startSeconds || !text) {
       continue;
@@ -463,6 +473,75 @@ function subcreator_seconds_to_ticks(seconds) {
   }
 }
 
+function subcreator_push_unique_path(list, value) {
+  // // Keep only distinct non-empty candidate paths for import attempts.
+  if (!value) {
+    return;
+  }
+
+  var normalized = String(value);
+  for (var i = 0; i < list.length; i += 1) {
+    if (list[i] === normalized) {
+      return;
+    }
+  }
+
+  list.push(normalized);
+}
+
+function subcreator_build_mogrt_path_candidates(mogrtPath) {
+  // // Build multiple path formats to maximize importMGT compatibility across OS versions.
+  var candidates = [];
+  if (!mogrtPath) {
+    return candidates;
+  }
+
+  var fileRef = new File(mogrtPath);
+  subcreator_push_unique_path(candidates, fileRef.fsName);
+  subcreator_push_unique_path(candidates, fileRef.fullName);
+  subcreator_push_unique_path(candidates, decodeURI(String(fileRef.fullName || "")));
+  subcreator_push_unique_path(candidates, String(fileRef.fsName || "").replace(/\\/g, "/"));
+  subcreator_push_unique_path(candidates, String(fileRef.fullName || "").replace(/\\/g, "/"));
+  return candidates;
+}
+
+function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, videoTrackIndex, audioTrackIndex) {
+  // // Try importMGT with both tick and second timing modes and multiple path formats.
+  var importResult = {
+    trackItem: null,
+    attempted: 0,
+    usedPath: "",
+    usedTimeMode: ""
+  };
+
+  var startTicks = subcreator_seconds_to_ticks(startSeconds);
+  var timeModes = [
+    { mode: "ticks", value: startTicks },
+    { mode: "seconds", value: Number(startSeconds) }
+  ];
+
+  for (var pathIndex = 0; pathIndex < pathCandidates.length; pathIndex += 1) {
+    var pathCandidate = pathCandidates[pathIndex];
+
+    for (var timeIndex = 0; timeIndex < timeModes.length; timeIndex += 1) {
+      var timeMode = timeModes[timeIndex];
+      importResult.attempted += 1;
+
+      try {
+        var insertedItem = sequence.importMGT(pathCandidate, timeMode.value, videoTrackIndex, audioTrackIndex);
+        if (insertedItem) {
+          importResult.trackItem = insertedItem;
+          importResult.usedPath = pathCandidate;
+          importResult.usedTimeMode = timeMode.mode;
+          return importResult;
+        }
+      } catch (importError) {}
+    }
+  }
+
+  return importResult;
+}
+
 function subcreator_get_or_create_top_video_track_index(sequence) {
   // // Create a new top video track and return its index, with safe fallbacks.
   var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
@@ -510,7 +589,8 @@ function subcreator_apply_captions(payloadEncoded) {
     var cues = payload.cues || [];
 
     var mogrtPath = subcreator_resolve_mogrt_path(options);
-    var hasMogrt = mogrtPath && mogrtPath.length > 0;
+    var pathCandidates = subcreator_build_mogrt_path_candidates(mogrtPath);
+    var hasMogrt = pathCandidates.length > 0;
 
     var videoTrackIndex = subcreator_get_or_create_top_video_track_index(sequence);
     var audioTrackIndex = 0;
@@ -518,6 +598,9 @@ function subcreator_apply_captions(payloadEncoded) {
     var insertedMogrt = 0;
     var insertedMarkers = 0;
     var updatedText = 0;
+    var mogrtAttempted = 0;
+    var lastImportMode = "";
+    var lastImportPath = "";
 
     for (var i = 0; i < cues.length; i += 1) {
       var cue = cues[i];
@@ -526,11 +609,13 @@ function subcreator_apply_captions(payloadEncoded) {
       var text = cue.text || "";
 
       if (hasMogrt && typeof sequence.importMGT === "function") {
-        var startTicks = subcreator_seconds_to_ticks(startSeconds);
-        var insertedItem = sequence.importMGT(mogrtPath, startTicks, videoTrackIndex, audioTrackIndex);
-        if (insertedItem) {
+        var importAttempt = subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, videoTrackIndex, audioTrackIndex);
+        mogrtAttempted += importAttempt.attempted;
+        if (importAttempt.trackItem) {
           insertedMogrt += 1;
-          if (subcreator_try_set_mogrt_text(insertedItem, text)) {
+          lastImportMode = importAttempt.usedTimeMode;
+          lastImportPath = importAttempt.usedPath;
+          if (subcreator_try_set_mogrt_text(importAttempt.trackItem, text)) {
             updatedText += 1;
           }
           continue;
@@ -556,6 +641,10 @@ function subcreator_apply_captions(payloadEncoded) {
       mogrtTextUpdated: updatedText,
       mogrtUsed: hasMogrt,
       mogrtPathResolved: mogrtPath,
+      mogrtPathCandidates: pathCandidates,
+      mogrtImportAttempts: mogrtAttempted,
+      mogrtLastImportMode: lastImportMode,
+      mogrtLastImportPath: lastImportPath,
       videoTrackUsed: videoTrackIndex,
       audioTrackUsed: audioTrackIndex
     });

@@ -92,6 +92,91 @@ function findChunkEndIndex(words: string[], startIndex: number, maxCharsPerLine:
   return bestEnd;
 }
 
+interface ChunkRange {
+  start: number;
+  end: number;
+}
+
+function chunkFits(words: string[], range: ChunkRange, maxCharsPerLine: number, linesPerCaption: number): boolean {
+  // // Validate whether a chunk range still respects the max-lines wrapping rule.
+  if (range.end <= range.start) {
+    return false;
+  }
+
+  const wrapped = wrapWordsByChars(words.slice(range.start, range.end), maxCharsPerLine);
+  return wrapped.length <= linesPerCaption;
+}
+
+function buildInitialChunkRanges(words: string[], maxCharsPerLine: number, linesPerCaption: number): ChunkRange[] {
+  // // Build first-pass chunk ranges using the widest valid contiguous groups.
+  const ranges: ChunkRange[] = [];
+  let cursor = 0;
+
+  while (cursor < words.length) {
+    const chunkEnd = findChunkEndIndex(words, cursor, maxCharsPerLine, linesPerCaption);
+    const safeEnd = Math.max(cursor + 1, chunkEnd);
+    ranges.push({ start: cursor, end: safeEnd });
+    cursor = safeEnd;
+  }
+
+  return ranges;
+}
+
+function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPerLine: number, linesPerCaption: number): ChunkRange[] {
+  // // Rebalance neighbor chunks to avoid tiny trailing chunks like a single-word caption.
+  if (ranges.length < 2) {
+    return ranges;
+  }
+
+  const balanced = ranges.map((range) => ({ ...range }));
+  let pass = 0;
+  while (pass < 8) {
+    let changed = false;
+    pass += 1;
+
+    for (let index = 0; index < balanced.length - 1; index += 1) {
+      const left = balanced[index];
+      const right = balanced[index + 1];
+      let leftSize = left.end - left.start;
+      let rightSize = right.end - right.start;
+
+      while (rightSize < 2 && leftSize > 1) {
+        const candidateBoundary = right.start - 1;
+        const candidateRight = { start: candidateBoundary, end: right.end };
+        if (!chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)) {
+          break;
+        }
+
+        left.end = candidateBoundary;
+        right.start = candidateBoundary;
+        leftSize -= 1;
+        rightSize += 1;
+        changed = true;
+      }
+
+      while (leftSize - rightSize > 2 && leftSize > 1) {
+        const candidateBoundary = right.start - 1;
+        const candidateRight = { start: candidateBoundary, end: right.end };
+        if (!chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)) {
+          break;
+        }
+
+        left.end = candidateBoundary;
+        right.start = candidateBoundary;
+        leftSize -= 1;
+        rightSize += 1;
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  return balanced;
+}
+
 function uppercaseIfNeeded(text: string, forceUppercase: boolean): string {
   // // Optionally convert text to uppercase for aggressive social-media subtitle styles.
   return forceUppercase ? text.toUpperCase() : text;
@@ -158,21 +243,20 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
       continue;
     }
 
-    let cursor = 0;
-    let chunkIndex = 0;
-    while (cursor < normalizedWords.length) {
-      const chunkEnd = findChunkEndIndex(
-        normalizedWords.map((word) => word.text),
-        cursor,
-        maxCharsPerLine,
-        linesPerCaption
-      );
-      const safeEnd = Math.max(cursor + 1, chunkEnd);
-      const chunkWords = normalizedWords.slice(cursor, safeEnd);
+    const cueWordTexts = normalizedWords.map((word) => word.text);
+    const chunkRanges = rebalanceChunkRanges(
+      buildInitialChunkRanges(cueWordTexts, maxCharsPerLine, linesPerCaption),
+      cueWordTexts,
+      maxCharsPerLine,
+      linesPerCaption
+    );
+
+    chunkRanges.forEach((range, chunkIndex) => {
+      const chunkWords = normalizedWords.slice(range.start, range.end);
       const firstWord = chunkWords[0];
       const lastWord = chunkWords[chunkWords.length - 1];
       const startSeconds = chunkIndex === 0 ? cue.startSeconds : firstWord.startSeconds;
-      const endSeconds = safeEnd >= normalizedWords.length ? cue.endSeconds : lastWord.endSeconds;
+      const endSeconds = range.end >= normalizedWords.length ? cue.endSeconds : lastWord.endSeconds;
 
       plannedCues.push({
         id: `${cue.id}-part-${chunkIndex + 1}`,
@@ -181,9 +265,7 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
         text: renderChunkText(chunkWords, maxCharsPerLine),
         words: chunkWords
       });
-      cursor = safeEnd;
-      chunkIndex += 1;
-    }
+    });
   }
 
   return plannedCues;

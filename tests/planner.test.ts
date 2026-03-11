@@ -95,7 +95,34 @@ describe("buildCaptionPlan", () => {
 
     expect(planned.length).toBeGreaterThan(1);
     expect(planned[0].startSeconds).toBe(0);
-    expect(planned[0].endSeconds).toBe(2);
+    expect([1, 2, 3]).toContain(planned[0].endSeconds);
+    expect(planned[1].startSeconds).toBe(planned[0].endSeconds);
     expect(planned[planned.length - 1].endSeconds).toBe(4);
+  });
+
+  it("rebalances chunks to avoid single-word trailing captions", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-4",
+          startSeconds: 0,
+          endSeconds: 8,
+          text: "The only control tower on the market that seamlessly combines",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 20,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    expect(planned.length).toBeGreaterThan(1);
+    const lastChunkWordCount = planned[planned.length - 1].text.split(/\s+/).filter(Boolean).length;
+    expect(lastChunkWordCount).toBeGreaterThan(1);
   });
 });

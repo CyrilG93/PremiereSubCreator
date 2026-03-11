@@ -34,6 +34,22 @@ interface UpdateState {
   downloadUrl: string;
 }
 
+interface PanelStateSnapshot {
+  languageCode: string;
+  sourceMode: "srt" | "premiere_caption" | "whisper_local";
+  srtPath: string;
+  whisperAudioPath: string;
+  whisperModel: string;
+  presetId: string;
+  animationMode: AnimationMode;
+  maxCharsPerLine: number;
+  linesPerCaption: number;
+  fontSize: number;
+  uppercase: boolean;
+  mogrtAspectFilter: string;
+  selectedMogrtId: string;
+}
+
 const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
   appVersion: document.querySelector<HTMLSpanElement>("#appVersion"),
@@ -77,6 +93,8 @@ const updateState: UpdateState = {
   latestVersion: "",
   downloadUrl: ""
 };
+const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
+let pendingSelectedMogrtId = "";
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -101,6 +119,127 @@ function translateTemplate(key: string, values: Record<string, string>): string 
     const matcher = new RegExp(`\\{${token}\\}`, "g");
     return output.replace(matcher, values[token]);
   }, base);
+}
+
+function hasSelectOption(select: HTMLSelectElement | null | undefined, value: string): boolean {
+  // // Validate that a select option exists before restoring persisted values.
+  if (!select || !value) {
+    return false;
+  }
+
+  return Array.from(select.options).some((option) => option.value === value);
+}
+
+function readPersistedPanelState(): Partial<PanelStateSnapshot> {
+  // // Restore the previous panel configuration from localStorage when available.
+  try {
+    const raw = window.localStorage.getItem(PANEL_STATE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PanelStateSnapshot>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistPanelState(): void {
+  // // Persist current panel configuration so reopening keeps user preferences.
+  if (
+    !elements.languageSelect ||
+    !elements.sourceMode ||
+    !elements.srtPath ||
+    !elements.whisperAudioPath ||
+    !elements.whisperModel ||
+    !elements.presetSelect ||
+    !elements.animationMode ||
+    !elements.maxChars ||
+    !elements.linesPerCaption ||
+    !elements.fontSize ||
+    !elements.uppercase ||
+    !elements.mogrtAspectFilter
+  ) {
+    return;
+  }
+
+  const snapshot: PanelStateSnapshot = {
+    languageCode: elements.languageSelect.value || "en",
+    sourceMode: getSourceMode(),
+    srtPath: elements.srtPath.value || "",
+    whisperAudioPath: elements.whisperAudioPath.value || "",
+    whisperModel: elements.whisperModel.value || "base",
+    presetId: elements.presetSelect.value || STYLE_PRESETS[0].id,
+    animationMode: (elements.animationMode.value as AnimationMode) || "line",
+    maxCharsPerLine: Number(elements.maxChars.value),
+    linesPerCaption: Number(elements.linesPerCaption.value),
+    fontSize: Number(elements.fontSize.value),
+    uppercase: elements.uppercase.checked,
+    mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
+    selectedMogrtId: selectedMogrt?.id || ""
+  };
+
+  try {
+    window.localStorage.setItem(PANEL_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // // Ignore storage errors to keep panel usable in restricted environments.
+  }
+}
+
+function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
+  // // Apply persisted values on startup with safe option validation.
+  if (!snapshot || typeof snapshot !== "object") {
+    return;
+  }
+
+  if (elements.sourceMode && snapshot.sourceMode && hasSelectOption(elements.sourceMode, snapshot.sourceMode)) {
+    elements.sourceMode.value = snapshot.sourceMode;
+  }
+
+  if (elements.srtPath && typeof snapshot.srtPath === "string") {
+    elements.srtPath.value = snapshot.srtPath;
+  }
+
+  if (elements.whisperAudioPath && typeof snapshot.whisperAudioPath === "string") {
+    elements.whisperAudioPath.value = snapshot.whisperAudioPath;
+  }
+
+  if (elements.whisperModel && snapshot.whisperModel && hasSelectOption(elements.whisperModel, snapshot.whisperModel)) {
+    elements.whisperModel.value = snapshot.whisperModel;
+  }
+
+  if (elements.presetSelect && snapshot.presetId && hasSelectOption(elements.presetSelect, snapshot.presetId)) {
+    elements.presetSelect.value = snapshot.presetId;
+  }
+
+  if (elements.animationMode && snapshot.animationMode && hasSelectOption(elements.animationMode, snapshot.animationMode)) {
+    elements.animationMode.value = snapshot.animationMode;
+  }
+
+  if (elements.maxChars && Number.isFinite(Number(snapshot.maxCharsPerLine))) {
+    elements.maxChars.value = String(snapshot.maxCharsPerLine);
+  }
+
+  if (elements.linesPerCaption && Number.isFinite(Number(snapshot.linesPerCaption))) {
+    elements.linesPerCaption.value = String(snapshot.linesPerCaption);
+  }
+
+  if (elements.fontSize && Number.isFinite(Number(snapshot.fontSize))) {
+    elements.fontSize.value = String(snapshot.fontSize);
+  }
+
+  if (elements.uppercase && typeof snapshot.uppercase === "boolean") {
+    elements.uppercase.checked = snapshot.uppercase;
+  }
+
+  if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter && hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
+    elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
+  }
+
+  if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
+    pendingSelectedMogrtId = snapshot.selectedMogrtId;
+  }
 }
 
 function panelAssetPath(relativeOrAbsolute: string): string {
@@ -430,6 +569,7 @@ function selectMogrt(templateId: string): void {
 
   selectedMogrt = found;
   renderMogrtGallery();
+  persistPanelState();
 }
 
 function renderMogrtGallery(): void {
@@ -522,6 +662,7 @@ async function browseSrtPath(): Promise<void> {
   const selectedPath = await pickSrtPath();
   if (selectedPath) {
     elements.srtPath.value = selectedPath;
+    persistPanelState();
   }
 }
 
@@ -534,6 +675,7 @@ async function browseWhisperAudio(): Promise<void> {
   const path = await pickWhisperAudioPath();
   if (path) {
     elements.whisperAudioPath.value = path;
+    persistPanelState();
   }
 }
 
@@ -682,34 +824,51 @@ async function initialize(): Promise<void> {
   assertDomBindings();
   await loadPanelMeta();
   refreshVersionLabel();
+  const persistedState = readPersistedPanelState();
 
-  const defaultLanguage = navigator.language?.startsWith("fr") ? "fr" : "en";
+  const defaultLanguage =
+    typeof persistedState.languageCode === "string" && persistedState.languageCode.length > 0
+      ? persistedState.languageCode
+      : navigator.language?.startsWith("fr")
+        ? "fr"
+        : "en";
   if (elements.languageSelect) {
-    elements.languageSelect.value = defaultLanguage;
+    elements.languageSelect.value = hasSelectOption(elements.languageSelect, defaultLanguage) ? defaultLanguage : "en";
   }
 
-  await loadLocale(defaultLanguage);
+  await loadLocale(elements.languageSelect?.value ?? "en");
   renderPresetSelect();
-  applyPresetDefaults(STYLE_PRESETS[0].id);
+  applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
+  applyPersistedPanelState(persistedState);
   toggleSourceFields();
 
   await loadMogrtCatalog();
+  if (pendingSelectedMogrtId) {
+    const restoredTemplate = availableMogrts.find((template) => template.id === pendingSelectedMogrtId);
+    if (restoredTemplate) {
+      selectedMogrt = restoredTemplate;
+    }
+    pendingSelectedMogrtId = "";
+  }
   renderMogrtGallery();
+  persistPanelState();
   await checkForUpdates();
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
     renderPresetSelect();
     renderMogrtGallery();
-    applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
+    persistPanelState();
   });
 
   elements.presetSelect?.addEventListener("change", () => {
     applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
+    persistPanelState();
   });
 
   elements.sourceMode?.addEventListener("change", () => {
     toggleSourceFields();
+    persistPanelState();
   });
 
   elements.srtBrowseButton?.addEventListener("click", async () => {
@@ -730,6 +889,32 @@ async function initialize(): Promise<void> {
 
   elements.mogrtAspectFilter?.addEventListener("change", () => {
     renderMogrtGallery();
+    persistPanelState();
+  });
+
+  elements.animationMode?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.maxChars?.addEventListener("input", () => {
+    persistPanelState();
+  });
+  elements.linesPerCaption?.addEventListener("input", () => {
+    persistPanelState();
+  });
+  elements.fontSize?.addEventListener("input", () => {
+    persistPanelState();
+  });
+  elements.uppercase?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.srtPath?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.whisperAudioPath?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.whisperModel?.addEventListener("change", () => {
+    persistPanelState();
   });
 
   elements.pingButton?.addEventListener("click", async () => {
@@ -743,6 +928,7 @@ async function initialize(): Promise<void> {
 
   elements.generateButton?.addEventListener("click", async () => {
     try {
+      persistPanelState();
       await generate();
     } catch (error) {
       setLog(String(error), true);

@@ -363,6 +363,8 @@ function subcreator_extract_text_from_component_properties(propertyCollection) {
     return "";
   }
 
+  var syntheticFallback = "";
+
   for (var i = 0; i < propertyCollection.numItems; i += 1) {
     var property = propertyCollection[i];
     if (!property) {
@@ -375,8 +377,14 @@ function subcreator_extract_text_from_component_properties(propertyCollection) {
         if (subcreator_should_try_text_property(property.displayName || "", rawValue)) {
           var extracted = subcreator_extract_text_from_property_value(rawValue);
           var normalized = subcreator_trim_string(String(extracted || "").replace(/\r/g, "\n"));
-          if (normalized && !subcreator_is_default_caption_label(normalized)) {
-            return normalized;
+          if (normalized) {
+            if (!subcreator_is_default_caption_label(normalized)) {
+              return normalized;
+            }
+
+            if (!syntheticFallback) {
+              syntheticFallback = normalized;
+            }
           }
         }
       } catch (propertyValueError) {}
@@ -390,7 +398,7 @@ function subcreator_extract_text_from_component_properties(propertyCollection) {
     }
   }
 
-  return "";
+  return syntheticFallback;
 }
 
 function subcreator_extract_text_from_item_components(item) {
@@ -423,14 +431,21 @@ function subcreator_extract_text_from_item(item) {
     return "";
   }
 
+  var syntheticFallback = "";
   var methodNames = ["getCaptionText", "getText", "getSourceText", "getFormattedText", "getTranscriptText"];
   for (var methodIndex = 0; methodIndex < methodNames.length; methodIndex += 1) {
     var methodName = methodNames[methodIndex];
     try {
       if (typeof item[methodName] === "function") {
         var methodText = subcreator_trim_string(String(item[methodName]() || "").replace(/\r/g, "\n"));
-        if (methodText && !subcreator_is_default_caption_label(methodText)) {
-          return methodText;
+        if (methodText) {
+          if (!subcreator_is_default_caption_label(methodText)) {
+            return methodText;
+          }
+
+          if (!syntheticFallback) {
+            syntheticFallback = methodText;
+          }
         }
       }
     } catch (methodError) {}
@@ -438,7 +453,13 @@ function subcreator_extract_text_from_item(item) {
 
   var componentText = subcreator_extract_text_from_item_components(item);
   if (componentText) {
-    return componentText;
+    if (!subcreator_is_default_caption_label(componentText)) {
+      return componentText;
+    }
+
+    if (!syntheticFallback) {
+      syntheticFallback = componentText;
+    }
   }
 
   var propNames = ["captionText", "sourceText", "subtitleText", "text", "value"];
@@ -447,8 +468,14 @@ function subcreator_extract_text_from_item(item) {
     try {
       if (typeof item[propName] !== "undefined") {
         var propText = subcreator_trim_string(String(item[propName] || "").replace(/\r/g, "\n"));
-        if (propText && !subcreator_is_default_caption_label(propText)) {
-          return propText;
+        if (propText) {
+          if (!subcreator_is_default_caption_label(propText)) {
+            return propText;
+          }
+
+          if (!syntheticFallback) {
+            syntheticFallback = propText;
+          }
         }
       }
     } catch (propError) {}
@@ -468,19 +495,31 @@ function subcreator_extract_text_from_item(item) {
 
   if (item.projectItem && item.projectItem.name) {
     var projectItemName = subcreator_trim_string(String(item.projectItem.name || ""));
-    if (projectItemName && !subcreator_is_default_caption_label(projectItemName)) {
-      return projectItemName;
+    if (projectItemName) {
+      if (!subcreator_is_default_caption_label(projectItemName)) {
+        return projectItemName;
+      }
+
+      if (!syntheticFallback) {
+        syntheticFallback = projectItemName;
+      }
     }
   }
 
   if (item.name) {
     var itemName = subcreator_trim_string(String(item.name || ""));
-    if (itemName && !subcreator_is_default_caption_label(itemName)) {
-      return itemName;
+    if (itemName) {
+      if (!subcreator_is_default_caption_label(itemName)) {
+        return itemName;
+      }
+
+      if (!syntheticFallback) {
+        syntheticFallback = itemName;
+      }
     }
   }
 
-  return "";
+  return syntheticFallback;
 }
 
 function subcreator_collect_track_items(track) {
@@ -1105,6 +1144,28 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
   var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
   var beforeSignatures = [];
 
+  function resolveTopUsableTrackIndex(trackCollection) {
+    // // Prefer an empty top track; otherwise use the current top-most track.
+    if (!trackCollection || typeof trackCollection.numTracks !== "number") {
+      return 0;
+    }
+
+    var totalTracks = Number(trackCollection.numTracks || 0);
+    if (totalTracks < 1) {
+      return 0;
+    }
+
+    for (var topIndex = totalTracks - 1; topIndex >= 0; topIndex -= 1) {
+      var track = trackCollection[topIndex];
+      var clipCount = track && track.clips ? Number(track.clips.numItems || 0) : 0;
+      if (clipCount < 1) {
+        return topIndex;
+      }
+    }
+
+    return totalTracks - 1;
+  }
+
   function captureTrackSignatures(trackCollection) {
     var signatures = [];
     if (!trackCollection || typeof trackCollection.numTracks !== "number") {
@@ -1172,32 +1233,41 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
         if (qeSequence && typeof qeSequence.addTracks === "function") {
           var inserted = false;
 
+          if (!inserted && currentTracks > 0) {
+            try {
+              // // Most reliable append signature from QE docs/community examples.
+              qeSequence.addTracks(1, currentTracks - 1, 0, 0, 0);
+              inserted = true;
+            } catch (signatureErrorAppendFull) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks - 1, 0, 0);
+              inserted = true;
+            } catch (signatureErrorAppendShort) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks - 1, 0);
+              inserted = true;
+            } catch (signatureErrorAppendMinimal) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks - 1);
+              inserted = true;
+            } catch (signatureErrorAppendTwoArgs) {}
+          }
+
           try {
-            // // Try insertion above all tracks first to avoid shifting existing media tracks.
-            qeSequence.addTracks(1, -1, 0, -1);
-            inserted = true;
-          } catch (signatureErrorMinusOneFull) {}
-
-          if (!inserted) {
-            try {
-              qeSequence.addTracks(1, -1, 0);
-              inserted = true;
-            } catch (signatureErrorMinusOneShort) {}
-          }
-
-          if (!inserted) {
-            try {
-              qeSequence.addTracks(1, -1);
-              inserted = true;
-            } catch (signatureErrorMinusOneMinimal) {}
-          }
-
-          if (!inserted && currentTracks < 1) {
-            try {
+            if (!inserted && currentTracks < 1) {
               qeSequence.addTracks(1);
               inserted = true;
-            } catch (signatureErrorEmptySequence) {}
-          }
+            }
+          } catch (signatureErrorEmptySequence) {}
         }
       }
     }
@@ -1209,13 +1279,15 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
   if (updatedTracks > currentTracks) {
     created = true;
     createdIndex = detectInsertedTrackIndex(beforeSignatures, afterSignatures);
-    if (createdIndex < 0) {
-      createdIndex = 0;
+    if (createdIndex < 0 || createdIndex > updatedTracks - 1) {
+      createdIndex = updatedTracks - 1;
     }
   }
 
+  var fallbackIndex = resolveTopUsableTrackIndex(sequence.videoTracks);
+
   return {
-    index: created ? createdIndex : 0,
+    index: created ? createdIndex : fallbackIndex,
     created: created,
     beforeTracks: currentTracks,
     afterTracks: updatedTracks

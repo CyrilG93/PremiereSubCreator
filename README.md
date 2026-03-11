@@ -16,6 +16,7 @@ It supports:
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
 - Version label in panel header + automatic GitHub release update banner.
+- Persisted panel settings (source, style, limits, language, and selected MOGRT).
 - Mac + Windows installers.
 
 ## Important product choices

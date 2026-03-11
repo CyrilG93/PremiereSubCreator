@@ -437,11 +437,42 @@ function subcreator_resolve_extension_root() {
   return scriptFile.parent.parent.fsName;
 }
 
+function subcreator_find_first_mogrt_in_folder(folderRef) {
+  // // Recursively return first .mogrt file path found under a folder.
+  if (!folderRef || !folderRef.exists) {
+    return "";
+  }
+
+  var entries = folderRef.getFiles();
+  if (!entries || entries.length < 1) {
+    return "";
+  }
+
+  for (var i = 0; i < entries.length; i += 1) {
+    var entry = entries[i];
+    if (entry instanceof File) {
+      if (/\.mogrt$/i.test(String(entry.name || ""))) {
+        return String(entry.fsName || "");
+      }
+      continue;
+    }
+
+    if (entry instanceof Folder) {
+      var nested = subcreator_find_first_mogrt_in_folder(entry);
+      if (nested && nested.length > 0) {
+        return nested;
+      }
+    }
+  }
+
+  return "";
+}
+
 function subcreator_resolve_mogrt_path(options) {
   // // Prioritize bundled template path and fallback to manual absolute path.
+  var extensionRoot = subcreator_resolve_extension_root();
   var templateRelativePath = options.mogrtTemplateRelativePath || "";
   if (templateRelativePath && templateRelativePath.length > 0) {
-    var extensionRoot = subcreator_resolve_extension_root();
     if (extensionRoot && extensionRoot.length > 0) {
       var normalizedRelative = String(templateRelativePath).replace(/\\/g, "/");
       var bundledTemplate = new File(extensionRoot + "/templates/mogrt/" + normalizedRelative);
@@ -456,6 +487,15 @@ function subcreator_resolve_mogrt_path(options) {
     var manualFile = new File(manualPath);
     if (manualFile.exists) {
       return manualFile.fsName;
+    }
+  }
+
+  if (extensionRoot && extensionRoot.length > 0) {
+    // // Hard fallback when UI does not pass template path: take first bundled template.
+    var templateFolder = new Folder(extensionRoot + "/templates/mogrt");
+    var discoveredTemplate = subcreator_find_first_mogrt_in_folder(templateFolder);
+    if (discoveredTemplate && discoveredTemplate.length > 0) {
+      return discoveredTemplate;
     }
   }
 

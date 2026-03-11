@@ -300,6 +300,10 @@ function collectBuildOptions(): CaptionBuildOptions {
     throw new Error("Panel bindings not initialized.");
   }
 
+  if (!selectedMogrt && availableMogrts.length > 0) {
+    selectedMogrt = availableMogrts[0];
+  }
+
   return {
     sourceMode: getSourceMode(),
     languageCode: elements.languageSelect.value,

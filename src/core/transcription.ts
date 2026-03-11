@@ -12,6 +12,6 @@ export async function transcribeActiveSequence(languageCode: string): Promise<Tr
   return {
     cues: [],
     provider: "premiere",
-    warning: `Transcription active sequence indisponible en mode script pour l'instant (langue demandee: ${languageCode}).`
+    warning: `Transcription active indisponible pour le moment (langue demandee: ${languageCode}). Utilise la source SRT pour generer maintenant.`
   };
 }

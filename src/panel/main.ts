@@ -3,10 +3,16 @@ import { buildCaptionPlan } from "../core/planner";
 import { STYLE_PRESETS } from "../core/presets";
 import { parseSrt } from "../core/srt";
 import { transcribeActiveSequence } from "../core/transcription";
-import type { AnimationMode, CaptionBuildOptions, HostApplyPayload } from "../core/types";
+import type { AnimationMode, CaptionBuildOptions, HostApplyPayload, MogrtTemplateItem } from "../core/types";
 import { applyCaptionPlan, pingHost } from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
+
+interface MogrtCatalog {
+  generatedAt: string;
+  templateCount: number;
+  templates: MogrtTemplateItem[];
+}
 
 const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
@@ -19,7 +25,9 @@ const elements = {
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
   fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
   uppercase: document.querySelector<HTMLInputElement>("#uppercase"),
-  mogrtPath: document.querySelector<HTMLInputElement>("#mogrtPath"),
+  mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
+  mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
+  mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   videoTrackIndex: document.querySelector<HTMLInputElement>("#videoTrackIndex"),
   audioTrackIndex: document.querySelector<HTMLInputElement>("#audioTrackIndex"),
   pingButton: document.querySelector<HTMLButtonElement>("#pingButton"),
@@ -28,6 +36,8 @@ const elements = {
 };
 
 let currentLocale: LocaleMap = {};
+let availableMogrts: MogrtTemplateItem[] = [];
+let selectedMogrt: MogrtTemplateItem | null = null;
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -70,13 +80,7 @@ async function loadLocale(languageCode: string): Promise<void> {
       return;
     }
 
-    const translated = translate(key);
-    if (node.tagName === "OPTION") {
-      node.textContent = translated;
-      return;
-    }
-
-    node.textContent = translated;
+    node.textContent = translate(key);
   });
 }
 
@@ -86,13 +90,17 @@ function renderPresetSelect(): void {
     return;
   }
 
+  const selectedId = elements.presetSelect.value;
   elements.presetSelect.innerHTML = "";
+
   STYLE_PRESETS.forEach((preset) => {
     const option = document.createElement("option");
     option.value = preset.id;
     option.textContent = translate(preset.labelKey);
     elements.presetSelect?.appendChild(option);
   });
+
+  elements.presetSelect.value = selectedId || STYLE_PRESETS[0].id;
 }
 
 function applyPresetDefaults(presetId: string): void {
@@ -116,6 +124,106 @@ function toggleSourceFields(): void {
   elements.srtInputField.style.display = elements.sourceMode.value === "srt" ? "grid" : "none";
 }
 
+async function loadMogrtCatalog(): Promise<void> {
+  // // Load generated MOGRT catalog emitted by the build script.
+  const response = await fetch("./assets/mogrt-catalog.json");
+  if (!response.ok) {
+    throw new Error(translate("error.mogrtCatalogMissing"));
+  }
+
+  const catalog = (await response.json()) as MogrtCatalog;
+  availableMogrts = Array.isArray(catalog.templates) ? catalog.templates : [];
+
+  if (!selectedMogrt && availableMogrts.length > 0) {
+    selectedMogrt = availableMogrts[0];
+  }
+}
+
+function updateSelectedMogrtLabel(): void {
+  // // Keep current template selection visible to user before generation.
+  if (!elements.mogrtSelectedLabel) {
+    return;
+  }
+
+  if (!selectedMogrt) {
+    elements.mogrtSelectedLabel.textContent = translate("gallery.noneSelected");
+    return;
+  }
+
+  elements.mogrtSelectedLabel.textContent = `${translate("gallery.selectedPrefix")} ${selectedMogrt.name} (${selectedMogrt.aspect})`;
+}
+
+function selectMogrt(templateId: string): void {
+  // // Save selected template and rerender cards to reflect active state.
+  const found = availableMogrts.find((template) => template.id === templateId);
+  if (!found) {
+    return;
+  }
+
+  selectedMogrt = found;
+  renderMogrtGallery();
+}
+
+function renderMogrtGallery(): void {
+  // // Render gallery cards with lightweight visual previews and aspect filtering.
+  if (!elements.mogrtGallery || !elements.mogrtAspectFilter) {
+    return;
+  }
+
+  const selectedAspect = elements.mogrtAspectFilter.value;
+  const filtered = availableMogrts.filter((template) => {
+    return selectedAspect === "all" || template.aspect === selectedAspect;
+  });
+
+  if (!selectedMogrt && filtered.length > 0) {
+    selectedMogrt = filtered[0];
+  }
+
+  if (selectedMogrt && filtered.length > 0 && !filtered.some((item) => item.id === selectedMogrt?.id)) {
+    selectedMogrt = filtered[0];
+  }
+
+  elements.mogrtGallery.innerHTML = "";
+
+  if (filtered.length === 0) {
+    elements.mogrtGallery.textContent = translate("gallery.empty");
+    updateSelectedMogrtLabel();
+    return;
+  }
+
+  for (const template of filtered) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "mogrt-card";
+    card.dataset.templateId = template.id;
+    if (selectedMogrt?.id === template.id) {
+      card.classList.add("is-active");
+    }
+
+    const preview = document.createElement("div");
+    preview.className = "mogrt-card__preview";
+    preview.dataset.preview = template.previewClass;
+    preview.textContent = translate("gallery.previewText");
+
+    const name = document.createElement("div");
+    name.className = "mogrt-card__name";
+    name.textContent = template.name;
+
+    const meta = document.createElement("div");
+    meta.className = "mogrt-card__meta";
+    meta.textContent = `${template.aspect}`;
+
+    card.append(preview, name, meta);
+    card.addEventListener("click", () => {
+      selectMogrt(template.id);
+    });
+
+    elements.mogrtGallery.appendChild(card);
+  }
+
+  updateSelectedMogrtLabel();
+}
+
 async function readSrtFile(fileInput: HTMLInputElement): Promise<string> {
   // // Read the selected SRT text content from disk.
   const file = fileInput.files?.[0];
@@ -137,7 +245,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.linesPerCaption ||
     !elements.animationMode ||
     !elements.uppercase ||
-    !elements.mogrtPath ||
     !elements.videoTrackIndex ||
     !elements.audioTrackIndex
   ) {
@@ -155,7 +262,8 @@ function collectBuildOptions(): CaptionBuildOptions {
       uppercase: elements.uppercase.checked,
       linesPerCaption: Number(elements.linesPerCaption.value)
     },
-    mogrtPath: elements.mogrtPath.value.trim(),
+    mogrtPath: "",
+    mogrtTemplateRelativePath: selectedMogrt?.relativePath ?? "",
     videoTrackIndex: Number(elements.videoTrackIndex.value),
     audioTrackIndex: Number(elements.audioTrackIndex.value)
   };
@@ -174,10 +282,13 @@ async function generate(): Promise<void> {
   if (options.sourceMode === "srt") {
     const srtText = await readSrtFile(elements.srtFile);
     cues = parseSrt(srtText);
+    if (!cues.length) {
+      throw new Error(translate("error.emptySrt"));
+    }
   } else {
     const transcription = await transcribeActiveSequence(options.languageCode);
-    if (transcription.warning) {
-      setLog(transcription.warning, true);
+    if (!transcription.cues.length) {
+      throw new Error(transcription.warning ?? translate("error.transcriptionUnavailable"));
     }
     cues = transcription.cues;
   }
@@ -206,9 +317,13 @@ async function initialize(): Promise<void> {
   applyPresetDefaults(STYLE_PRESETS[0].id);
   toggleSourceFields();
 
+  await loadMogrtCatalog();
+  renderMogrtGallery();
+
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
     renderPresetSelect();
+    renderMogrtGallery();
     applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   });
 
@@ -217,6 +332,10 @@ async function initialize(): Promise<void> {
   });
 
   elements.sourceMode?.addEventListener("change", toggleSourceFields);
+
+  elements.mogrtAspectFilter?.addEventListener("change", () => {
+    renderMogrtGallery();
+  });
 
   elements.pingButton?.addEventListener("click", async () => {
     try {

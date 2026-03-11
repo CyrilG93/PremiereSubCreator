@@ -36,6 +36,7 @@ export interface CaptionBuildOptions {
   languageCode: string;
   style: CaptionStyleConfig;
   mogrtPath: string;
+  mogrtTemplateRelativePath: string;
   videoTrackIndex: number;
   audioTrackIndex: number;
 }
@@ -53,4 +54,13 @@ export interface StylePreset {
   defaultFontSize: number;
   defaultMaxCharsPerLine: number;
   defaultAnimationMode: AnimationMode;
+}
+
+// // Describe one discoverable MOGRT template displayed in the gallery.
+export interface MogrtTemplateItem {
+  id: string;
+  name: string;
+  aspect: string;
+  relativePath: string;
+  previewClass: string;
 }

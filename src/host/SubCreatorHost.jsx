@@ -41,6 +41,41 @@ function subcreator_try_set_mogrt_text(trackItem, textValue) {
   return false;
 }
 
+function subcreator_resolve_extension_root() {
+  // // Resolve extension root from current host script location.
+  var scriptFile = new File($.fileName);
+  if (!scriptFile || !scriptFile.exists) {
+    return "";
+  }
+
+  return scriptFile.parent.parent.fsName;
+}
+
+function subcreator_resolve_mogrt_path(options) {
+  // // Prioritize bundled template path and fallback to manual absolute path.
+  var templateRelativePath = options.mogrtTemplateRelativePath || "";
+  if (templateRelativePath && templateRelativePath.length > 0) {
+    var extensionRoot = subcreator_resolve_extension_root();
+    if (extensionRoot && extensionRoot.length > 0) {
+      var normalizedRelative = String(templateRelativePath).replace(/\\/g, "/");
+      var bundledTemplate = new File(extensionRoot + "/templates/mogrt/" + normalizedRelative);
+      if (bundledTemplate.exists) {
+        return bundledTemplate.fsName;
+      }
+    }
+  }
+
+  var manualPath = options.mogrtPath || "";
+  if (manualPath && manualPath.length > 0) {
+    var manualFile = new File(manualPath);
+    if (manualFile.exists) {
+      return manualFile.fsName;
+    }
+  }
+
+  return "";
+}
+
 function subcreator_apply_captions(payloadEncoded) {
   // // Insert MOGRT instances or fallback timeline markers from generated caption plan.
   try {
@@ -55,12 +90,8 @@ function subcreator_apply_captions(payloadEncoded) {
     var options = payload.options || {};
     var cues = payload.cues || [];
 
-    var mogrtPath = options.mogrtPath || "";
-    var hasMogrt = false;
-    if (mogrtPath && mogrtPath.length > 0) {
-      var mogrtFile = new File(mogrtPath);
-      hasMogrt = mogrtFile.exists;
-    }
+    var mogrtPath = subcreator_resolve_mogrt_path(options);
+    var hasMogrt = mogrtPath && mogrtPath.length > 0;
 
     var videoTrackIndex = Number(options.videoTrackIndex);
     if (isNaN(videoTrackIndex)) {
@@ -110,7 +141,8 @@ function subcreator_apply_captions(payloadEncoded) {
       insertedMogrt: insertedMogrt,
       insertedMarkers: insertedMarkers,
       mogrtTextUpdated: updatedText,
-      mogrtUsed: hasMogrt
+      mogrtUsed: hasMogrt,
+      mogrtPathResolved: mogrtPath
     });
   } catch (error) {
     return JSON.stringify({ ok: false, error: error.toString() });

@@ -70,9 +70,20 @@
         </label>
 
         <label class="field">
-          <span data-i18n="field.mogrtPath">Chemin MOGRT (optionnel)</span>
-          <input id="mogrtPath" type="text" placeholder="/Users/.../SubCreatorPunch.mogrt" />
+          <span data-i18n="field.mogrtFormat">Format galerie</span>
+          <select id="mogrtAspectFilter">
+            <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
+            <option value="Landscape">Landscape (16:9)</option>
+            <option value="Portrait">Portrait (9:16)</option>
+            <option value="Square">Square (1:1)</option>
+          </select>
         </label>
+
+        <section class="field field--full" id="mogrtGalleryField">
+          <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
+          <div id="mogrtGallery" class="mogrt-gallery" role="listbox" aria-label="MOGRT gallery"></div>
+          <p id="mogrtSelectedLabel" class="hint"></p>
+        </section>
 
         <label class="field field--inline">
           <span data-i18n="field.videoTrack">Piste video</span>
@@ -83,6 +94,10 @@
           <span data-i18n="field.audioTrack">Piste audio</span>
           <input id="audioTrackIndex" type="number" value="0" min="0" max="20" step="1" />
         </label>
+
+        <p class="hint field--full" data-i18n="help.tracks">
+          Video track = piste de destination du MOGRT (0=V1). Audio track est requis par Premiere pour importMGT (0=A1).
+        </p>
       </section>
 
       <footer class="panel__footer">

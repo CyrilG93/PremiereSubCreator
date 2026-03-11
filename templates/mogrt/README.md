@@ -1,6 +1,7 @@
 # Sub Creator MOGRT Templates
 
 This folder is intended for your custom MOGRT templates.
+Files under this folder are auto-indexed into the panel gallery at build time.
 
 Suggested naming convention:
 - `SubCreator-Clean.mogrt`

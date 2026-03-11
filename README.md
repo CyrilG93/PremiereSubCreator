@@ -6,7 +6,7 @@ It supports:
 - SRT import workflow.
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
 - Premiere timeline insertion via ExtendScript:
-  - Insert MOGRT per cue (if path provided and valid).
+  - Insert MOGRT per cue (selected from integrated gallery).
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
 - Mac + Windows installers.
@@ -15,6 +15,8 @@ It supports:
 
 ### Do we need prebuilt MOGRT files?
 Yes, for premium animated design styles you should prepare MOGRT templates.
+
+MOGRT files placed under `templates/mogrt` are auto-discovered and shown in the panel gallery (Landscape/Portrait/Square filters).
 
 Without MOGRT, the panel still works but inserts markers as a safe fallback.
 
@@ -30,6 +32,7 @@ Active-sequence transcription is scaffolded in code (`src/core/transcription.ts`
 - `src/host/SubCreatorHost.jsx` ExtendScript host bridge.
 - `src/host/manifest.xml` CEP manifest.
 - `src/locales` language dictionaries.
+- `templates/mogrt` local MOGRT library auto-packaged into extension.
 - `scripts` prefixed project commands.
 - `installers` macOS + Windows install scripts.
 - `Releases` local zip output folder.
@@ -82,6 +85,10 @@ npm run subcreator:package
 - Extension id: `com.cyrilg93.subcreator`
 - Host: Premiere Pro `PPRO [25.0,99.9]`
 - Runtime: CSXS 11
+
+Track settings in panel:
+- `Video track`: destination track for inserted MOGRT (`0 = V1`, `1 = V2`, ...).
+- `Audio track`: required by Premiere `importMGT` API even when template has no audio (`0 = A1`, ...).
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 

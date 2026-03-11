@@ -4,7 +4,6 @@
   "field.language": "UI language",
   "field.source": "Subtitle source",
   "field.srt": "SRT file",
-  "field.premiereCaptionSource": "Premiere captions source",
   "field.whisperAudio": "Audio/video file for Whisper",
   "field.preset": "Style preset",
   "field.animation": "Animation mode",
@@ -15,7 +14,6 @@
   "field.mogrtFormat": "Gallery format",
   "field.mogrtGallery": "MOGRT gallery",
   "source.srt": "SRT file",
-  "source.premiereCaption": "Active Premiere caption track",
   "source.whisperLocal": "Whisper local (audio)",
   "animation.word": "Per word",
   "animation.line": "Per line",
@@ -28,7 +26,6 @@
   "gallery.noneSelected": "No template selected.",
   "gallery.selectedPrefix": "Selected template:",
   "gallery.previewText": "Preview",
-  "help.premiereCaptionSource": "Reads text + timing from the active caption track in the sequence.",
   "help.whisper": "Whisper must be installed locally (either `whisper` CLI or Python `whisper` module).",
   "help.tracks": "MOGRT subtitles are automatically inserted on a new top video track.",
   "placeholder.srtPath": "C:/.../captions.srt",
@@ -46,6 +43,5 @@
   "error.emptySrt": "The SRT file contains no valid subtitle cues.",
   "error.missingWhisperAudio": "Select an audio/video file for Whisper.",
   "error.emptyWhisper": "Whisper did not return usable subtitles.",
-  "error.noActiveCaptionTrack": "Unable to read the active caption track. If needed, select caption clips in timeline or use SRT source.",
   "error.mogrtCatalogMissing": "MOGRT catalog missing. Run npm run subcreator:build and reinstall the extension."
 }

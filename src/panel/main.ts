@@ -2,14 +2,13 @@
 import { buildCaptionPlan } from "../core/planner";
 import { STYLE_PRESETS } from "../core/presets";
 import { parseSrt } from "../core/srt";
-import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, HostCaptionCue, MogrtTemplateItem } from "../core/types";
+import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, MogrtTemplateItem } from "../core/types";
 import {
   applyCaptionPlan,
   getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
   pingHost,
-  readActiveCaptionTrackCues,
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
@@ -37,7 +36,7 @@ interface UpdateState {
 
 interface PanelStateSnapshot {
   languageCode: string;
-  sourceMode: "srt" | "premiere_caption" | "whisper_local";
+  sourceMode: "srt" | "whisper_local";
   srtPath: string;
   whisperAudioPath: string;
   whisperModel: string;
@@ -60,7 +59,6 @@ const elements = {
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
   srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
-  premiereCaptionField: document.querySelector<HTMLElement>("#premiereCaptionField"),
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
   whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
   whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
@@ -480,9 +478,9 @@ function applyPresetDefaults(presetId: string): void {
   elements.animationMode.value = preset.defaultAnimationMode;
 }
 
-function getSourceMode(): "srt" | "premiere_caption" | "whisper_local" {
+function getSourceMode(): "srt" | "whisper_local" {
   // // Normalize source mode value from UI select control.
-  return (elements.sourceMode?.value as "srt" | "premiere_caption" | "whisper_local") || "srt";
+  return (elements.sourceMode?.value as "srt" | "whisper_local") || "srt";
 }
 
 function resolveExtensionRootPath(): string {
@@ -521,10 +519,6 @@ function toggleSourceFields(): void {
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
-  }
-
-  if (elements.premiereCaptionField) {
-    elements.premiereCaptionField.style.display = mode === "premiere_caption" ? "grid" : "none";
   }
 
   if (elements.whisperField) {
@@ -755,39 +749,6 @@ function collectBuildOptions(): CaptionBuildOptions {
   };
 }
 
-function normalizeHostCaptionCues(hostCues: HostCaptionCue[]): CaptionCue[] {
-  // // Convert host caption cue payload into planner-compatible cue objects.
-  return hostCues.map((cue, index) => {
-    const startSeconds = Number(cue.startSeconds);
-    const endSeconds = Number(cue.endSeconds);
-    const text = String(cue.text || "").trim();
-    const words = text
-      .replace(/\r/g, "\n")
-      .replace(/\n+/g, " ")
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const totalDuration = Math.max(endSeconds - startSeconds, 0.01);
-    const wordDuration = words.length > 0 ? totalDuration / words.length : 0;
-
-    return {
-      id: `host-cue-${index + 1}`,
-      startSeconds,
-      endSeconds,
-      text,
-      words: words.map((word, wordIndex) => {
-        const wordStart = startSeconds + wordDuration * wordIndex;
-        const wordEnd = wordIndex === words.length - 1 ? endSeconds : wordStart + wordDuration;
-        return {
-          text: word,
-          startSeconds: wordStart,
-          endSeconds: wordEnd
-        };
-      })
-    };
-  });
-}
-
 async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise<CaptionCue[]> {
   // // Build cues from the currently selected source mode.
   if (options.sourceMode === "srt") {
@@ -799,16 +760,6 @@ async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise
     const cues = parseSrt(srtText);
     if (!cues.length) {
       throw new Error(translate("error.emptySrt"));
-    }
-
-    return cues;
-  }
-
-  if (options.sourceMode === "premiere_caption") {
-    const hostCues = await readActiveCaptionTrackCues();
-    const cues = normalizeHostCaptionCues(hostCues).filter((cue) => cue.text.length > 0 && cue.endSeconds > cue.startSeconds);
-    if (!cues.length) {
-      throw new Error(translate("error.noActiveCaptionTrack"));
     }
 
     return cues;

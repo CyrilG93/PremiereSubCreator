@@ -40,7 +40,6 @@
           <span data-i18n="field.source">Source des sous-titres</span>
           <select id="sourceMode">
             <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-            <option value="premiere_caption" data-i18n="source.premiereCaption">Piste caption active Premiere</option>
             <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
           </select>
         </label>
@@ -51,13 +50,6 @@
             <input id="srtPath" type="text" data-i18n-placeholder="placeholder.srtPath" placeholder="/Users/.../captions.srt" />
             <button id="srtBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
           </div>
-        </section>
-
-        <section class="field field--full" id="premiereCaptionField">
-          <span data-i18n="field.premiereCaptionSource">Source captions Premiere</span>
-          <p class="hint" data-i18n="help.premiereCaptionSource">
-            Lit les textes + timings depuis la piste caption active de la sequence.
-          </p>
         </section>
 
         <section class="field field--full" id="whisperField">

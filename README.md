@@ -3,9 +3,8 @@
 Sub Creator is a CEP panel extension for Adobe Premiere Pro 2025+ focused on dynamic/design subtitles.
 
 It supports:
-- Three source workflows:
+- Two source workflows:
   - SRT import via native file picker.
-  - Premiere active caption track extraction (text + timing) when API exposes it.
   - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
@@ -36,9 +35,6 @@ SRT works immediately.
 Whisper local can generate SRT on the fly from an audio/video file.
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
 If no local Whisper runtime is detected at panel startup, the `Whisper local (audio)` source option is hidden automatically.
-
-For Premiere native auto-transcription, CEP scripting still has API gaps depending on version; this extension tries to read the active caption track directly and falls back with a clear message if unavailable.
-On some Premiere builds, CEP returns only `SyntheticCaption` placeholders for caption clips; in that case, use SRT or Whisper source.
 
 ## Project structure
 
@@ -143,7 +139,6 @@ Caption planning behavior:
 - Chunk timing follows word timing boundaries when available, or proportional word distribution otherwise.
 - Boundary rebalancing favors readable punctuation grouping (for example avoids starting a chunk with `time,` when a better split exists).
 - Boundary rebalancing also avoids weak connector endings (for example ending a chunk with `since` when next words can absorb it).
-- Single synthetic placeholders from Premiere APIs (`SyntheticCaption`) are filtered so invalid caption-track reads do not silently generate wrong subtitles.
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 
@@ -155,6 +150,5 @@ If panel loading is blocked in development, enable CEP debug mode and restart Pr
 
 ## Next recommended milestone
 
-- Harden active caption-track extraction across Premiere versions using UXP APIs when available.
 - Ship curated MOGRT packs for each preset (`clean`, `punch`, `minimal`).
 - Add per-word visual emphasis controls (scale/color/blur) in UI and MOGRT parameters.

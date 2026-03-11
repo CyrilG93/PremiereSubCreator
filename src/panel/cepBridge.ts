@@ -1,5 +1,5 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
-import type { HostApplyPayload, HostCaptionCue } from "../core/types";
+import type { HostApplyPayload } from "../core/types";
 
 declare global {
   interface Window {
@@ -43,7 +43,7 @@ interface CepNodeModules {
     spawnSync: (
       command: string,
       args: string[],
-      options: { encoding: string; shell?: boolean; timeout?: number }
+      options: { encoding: string; shell?: boolean; timeout?: number; env?: Record<string, string | undefined> }
     ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } };
   };
   fs: {
@@ -59,6 +59,10 @@ interface CepNodeModules {
   path: {
     join: (...parts: string[]) => string;
     basename: (value: string) => string;
+    dirname: (value: string) => string;
+  };
+  process: {
+    env: Record<string, string | undefined>;
   };
 }
 
@@ -128,7 +132,8 @@ function resolveCepNodeModules(): CepNodeModules | null {
       childProcess: nodeRequire("child_process") as CepNodeModules["childProcess"],
       fs: nodeRequire("fs") as CepNodeModules["fs"],
       os: nodeRequire("os") as CepNodeModules["os"],
-      path: nodeRequire("path") as CepNodeModules["path"]
+      path: nodeRequire("path") as CepNodeModules["path"],
+      process: nodeRequire("process") as CepNodeModules["process"]
     };
   } catch {
     return null;
@@ -183,6 +188,59 @@ function discoverUserWhisperExecutables(modules: CepNodeModules): string[] {
   return discovered;
 }
 
+function resolveWhisperInterpreterFromScript(modules: CepNodeModules, executablePath: string): string {
+  // // Resolve interpreter from shebang so we can run `-m whisper` on the matching Python runtime.
+  try {
+    const scriptText = String(modules.fs.readFileSync(executablePath, "utf8") || "");
+    const firstLine = scriptText.split(/\r?\n/)[0] || "";
+    if (!firstLine.startsWith("#!")) {
+      return "";
+    }
+
+    const shebang = firstLine.slice(2).trim();
+    const envMatch = shebang.match(/^\/usr\/bin\/env\s+(\S+)/);
+    if (envMatch && envMatch[1]) {
+      return envMatch[1];
+    }
+
+    const directMatch = shebang.match(/^(\S+)/);
+    return directMatch && directMatch[1] ? directMatch[1] : "";
+  } catch {
+    return "";
+  }
+}
+
+function buildSpawnEnv(modules: CepNodeModules, userExecutables: string[]): Record<string, string | undefined> {
+  // // Extend PATH for CEP-spawned subprocesses so ffmpeg/python locations are discoverable.
+  const delimiter = detectWindowsRuntime() ? ";" : ":";
+  const currentPath = String(modules.process.env.PATH || "");
+  const segments = currentPath.length > 0 ? currentPath.split(delimiter).filter(Boolean) : [];
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+
+  const extraSegments = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  for (const executablePath of userExecutables) {
+    extraSegments.push(modules.path.dirname(executablePath));
+  }
+
+  for (const extra of extraSegments) {
+    if (!extra) {
+      continue;
+    }
+
+    if (lowerSegments.indexOf(extra.toLowerCase()) !== -1) {
+      continue;
+    }
+
+    segments.push(extra);
+    lowerSegments.push(extra.toLowerCase());
+  }
+
+  return {
+    ...modules.process.env,
+    PATH: segments.join(delimiter)
+  };
+}
+
 function buildWhisperCommandCandidates(
   modules: CepNodeModules,
   request: WhisperTranscriptionRequest,
@@ -210,6 +268,15 @@ function buildWhisperCommandCandidates(
 
   for (const executablePath of userExecutables) {
     pushCandidate(executablePath, baseArgs, executablePath);
+    const interpreter = resolveWhisperInterpreterFromScript(modules, executablePath);
+    if (interpreter) {
+      pushCandidate(interpreter, ["-m", "whisper", ...baseArgs], `${interpreter} -m whisper`);
+    }
+  }
+
+  const versionedPython = ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8"];
+  for (const pythonCommand of versionedPython) {
+    pushCandidate(pythonCommand, ["-m", "whisper", ...baseArgs], `${pythonCommand} -m whisper`);
   }
 
   pushCandidate("whisper", baseArgs, "whisper");
@@ -217,6 +284,12 @@ function buildWhisperCommandCandidates(
   pushCandidate("python", ["-m", "whisper", ...baseArgs], "python -m whisper");
 
   if (isWindows) {
+    pushCandidate("py", ["-3.13", "-m", "whisper", ...baseArgs], "py -3.13 -m whisper");
+    pushCandidate("py", ["-3.12", "-m", "whisper", ...baseArgs], "py -3.12 -m whisper");
+    pushCandidate("py", ["-3.11", "-m", "whisper", ...baseArgs], "py -3.11 -m whisper");
+    pushCandidate("py", ["-3.10", "-m", "whisper", ...baseArgs], "py -3.10 -m whisper");
+    pushCandidate("py", ["-3.9", "-m", "whisper", ...baseArgs], "py -3.9 -m whisper");
+    pushCandidate("py", ["-3.8", "-m", "whisper", ...baseArgs], "py -3.8 -m whisper");
     pushCandidate("py", ["-3", "-m", "whisper", ...baseArgs], "py -3 -m whisper");
     pushCandidate("py", ["-m", "whisper", ...baseArgs], "py -m whisper");
   }
@@ -224,16 +297,48 @@ function buildWhisperCommandCandidates(
   return candidates;
 }
 
-function buildPythonLauncherCandidates(): PythonLauncherCandidate[] {
+function buildPythonLauncherCandidates(modules: CepNodeModules, userExecutables: string[]): PythonLauncherCandidate[] {
   // // Build Python launcher candidates used to detect `openai-whisper` module availability.
-  const candidates: PythonLauncherCandidate[] = [
-    { command: "python3", argsPrefix: [], label: "python3" },
-    { command: "python", argsPrefix: [], label: "python" }
-  ];
+  const candidates: PythonLauncherCandidate[] = [];
+
+  function pushCandidate(command: string, argsPrefix: string[], label: string): void {
+    if (!command) {
+      return;
+    }
+
+    for (const existing of candidates) {
+      if (existing.command === command && existing.argsPrefix.join("\u0001") === argsPrefix.join("\u0001")) {
+        return;
+      }
+    }
+
+    candidates.push({ command, argsPrefix, label });
+  }
+
+  for (const executablePath of userExecutables) {
+    const interpreter = resolveWhisperInterpreterFromScript(modules, executablePath);
+    if (interpreter) {
+      pushCandidate(interpreter, [], interpreter);
+    }
+  }
+
+  const posixVersioned = ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8"];
+  for (const command of posixVersioned) {
+    pushCandidate(command, [], command);
+  }
+
+  pushCandidate("python3", [], "python3");
+  pushCandidate("python", [], "python");
 
   if (detectWindowsRuntime()) {
-    candidates.unshift({ command: "py", argsPrefix: ["-3"], label: "py -3" });
-    candidates.push({ command: "py", argsPrefix: [], label: "py" });
+    pushCandidate("py", ["-3.13"], "py -3.13");
+    pushCandidate("py", ["-3.12"], "py -3.12");
+    pushCandidate("py", ["-3.11"], "py -3.11");
+    pushCandidate("py", ["-3.10"], "py -3.10");
+    pushCandidate("py", ["-3.9"], "py -3.9");
+    pushCandidate("py", ["-3.8"], "py -3.8");
+    pushCandidate("py", ["-3"], "py -3");
+    pushCandidate("py", [], "py");
   }
 
   return candidates;
@@ -242,13 +347,15 @@ function buildPythonLauncherCandidates(): PythonLauncherCandidate[] {
 function runSpawn(
   modules: CepNodeModules,
   command: string,
-  args: string[]
+  args: string[],
+  spawnEnv: Record<string, string | undefined>
 ): { ok: boolean; status: number; stdout: string; stderr: string; errorCode: string; errorMessage: string } {
   // // Execute a command synchronously with a safe timeout and normalized result shape.
   const run = modules.childProcess.spawnSync(command, args, {
     encoding: "utf8",
     shell: false,
-    timeout: 12000
+    timeout: 12000,
+    env: spawnEnv
   });
 
   const status = typeof run.status === "number" ? run.status : -1;
@@ -278,10 +385,12 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
   }
 
   const checks: string[] = [];
+  const userExecutables = discoverUserWhisperExecutables(modules);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables);
 
-  const pythonLaunchers = buildPythonLauncherCandidates();
+  const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables);
   for (const launcher of pythonLaunchers) {
-    const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", "import whisper"]);
+    const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", "import whisper"], spawnEnv);
     if (probe.ok) {
       return {
         available: true,
@@ -300,10 +409,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     }
   }
 
-  const userExecutables = discoverUserWhisperExecutables(modules);
   const cliCandidates = [...userExecutables, "whisper"];
   for (const command of cliCandidates) {
-    const probe = runSpawn(modules, command, ["--help"]);
+    const probe = runSpawn(modules, command, ["--help"], spawnEnv);
     if (probe.ok) {
       return {
         available: true,
@@ -359,15 +467,17 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     modules.fs.mkdirSync(outputDir, { recursive: true });
   }
 
+  const userExecutables = discoverUserWhisperExecutables(modules);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables);
   const attempts: string[] = [];
   const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir);
   let collectedOutput = "";
-  let transcribed = false;
 
   for (const candidate of commandCandidates) {
     const run = modules.childProcess.spawnSync(candidate.command, candidate.args, {
       encoding: "utf8",
-      shell: false
+      shell: false,
+      env: spawnEnv
     });
 
     if (run.error) {
@@ -385,7 +495,8 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     }
 
     if (typeof run.status === "number" && run.status !== 0) {
-      attempts.push(`${candidate.label}: exit ${run.status}`);
+      const firstLine = attemptOutput.split(/\r?\n/).find((line) => line.trim().length > 0) || "";
+      attempts.push(`${candidate.label}: exit ${run.status}${firstLine ? ` (${firstLine})` : ""}`);
       continue;
     }
 
@@ -401,7 +512,6 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
       continue;
     }
 
-    transcribed = true;
     return {
       srtText,
       model: request.model?.trim() || "base",
@@ -410,18 +520,29 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     };
   }
 
-  if (!transcribed) {
-    const installHint = detectWindowsRuntime()
-      ? "Install command: py -m pip install -U openai-whisper"
-      : "Install command: python3 -m pip install -U openai-whisper";
-    throw new Error(
-      `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
-        collectedOutput || ""
-      }`
-    );
-  }
+  let installHint = "";
+  if (detectWindowsRuntime()) {
+    installHint = "Install command: py -m pip install --user -U openai-whisper";
+  } else {
+    let interpreterHint = "";
+    for (const executablePath of userExecutables) {
+      interpreterHint = resolveWhisperInterpreterFromScript(modules, executablePath);
+      if (interpreterHint) {
+        break;
+      }
+    }
 
-  return null;
+    if (interpreterHint) {
+      installHint = `Install command: ${interpreterHint} -m pip install --user -U openai-whisper`;
+    } else {
+      installHint = "Install command: python3 -m pip install --user -U openai-whisper";
+    }
+  }
+  throw new Error(
+    `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
+      collectedOutput || ""
+    }`
+  );
 }
 
 export async function getWhisperRuntimeStatus(): Promise<WhisperRuntimeStatus> {
@@ -470,16 +591,6 @@ export async function pickWhisperAudioPath(): Promise<string> {
   }
 
   return String(response.data?.path ?? "");
-}
-
-export async function readActiveCaptionTrackCues(): Promise<HostCaptionCue[]> {
-  // // Extract caption text/timing directly from the active caption track in Premiere.
-  const response = await evalHostJson<HostCaptionCue[]>("subcreator_extract_active_caption_track()");
-  if (!response.ok) {
-    throw new Error(response.error ?? "Unable to read active caption track.");
-  }
-
-  return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function transcribeWithWhisper(request: WhisperTranscriptionRequest): Promise<WhisperTranscriptionResult> {

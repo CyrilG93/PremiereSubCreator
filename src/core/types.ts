@@ -1,5 +1,5 @@
 // // Define strongly typed structures shared by the panel and host bridge.
-export type SourceMode = "srt" | "premiere_caption" | "whisper_local";
+export type SourceMode = "srt" | "whisper_local";
 
 // // Support both per-word and per-line animation strategies.
 export type AnimationMode = "word" | "line" | "none";
@@ -68,11 +68,4 @@ export interface MogrtTemplateItem {
   previewClass: string;
   previewImagePath?: string;
   previewVideoPath?: string;
-}
-
-// // Describe one cue extracted from Premiere caption tracks through host APIs.
-export interface HostCaptionCue {
-  text: string;
-  startSeconds: number;
-  endSeconds: number;
 }

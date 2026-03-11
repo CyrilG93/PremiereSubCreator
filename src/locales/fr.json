@@ -4,7 +4,6 @@
   "field.language": "Langue interface",
   "field.source": "Source des sous-titres",
   "field.srt": "Fichier SRT",
-  "field.premiereCaptionSource": "Source captions Premiere",
   "field.whisperAudio": "Fichier audio/video pour Whisper",
   "field.preset": "Preset style",
   "field.animation": "Mode animation",
@@ -15,7 +14,6 @@
   "field.mogrtFormat": "Format galerie",
   "field.mogrtGallery": "Galerie MOGRT",
   "source.srt": "Fichier SRT",
-  "source.premiereCaption": "Piste caption active Premiere",
   "source.whisperLocal": "Whisper local (audio)",
   "animation.word": "Par mot",
   "animation.line": "Par ligne",
@@ -28,7 +26,6 @@
   "gallery.noneSelected": "Aucun template selectionne.",
   "gallery.selectedPrefix": "Template selectionne:",
   "gallery.previewText": "Preview",
-  "help.premiereCaptionSource": "Lit les textes + timings depuis la piste caption active de la sequence.",
   "help.whisper": "Whisper doit etre installe localement (commande `whisper` ou module Python `whisper`).",
   "help.tracks": "Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.",
   "placeholder.srtPath": "/Users/.../captions.srt",
@@ -46,6 +43,5 @@
   "error.emptySrt": "Le fichier SRT ne contient aucun sous-titre valide.",
   "error.missingWhisperAudio": "Selectionne un fichier audio/video pour Whisper.",
   "error.emptyWhisper": "Whisper n'a renvoye aucun sous-titre exploitable.",
-  "error.noActiveCaptionTrack": "Impossible de lire la piste caption active. Si besoin, selectionne les clips captions dans la timeline ou utilise la source SRT.",
   "error.mogrtCatalogMissing": "Catalogue MOGRT introuvable. Lance npm run subcreator:build puis reinstalle l'extension."
 }

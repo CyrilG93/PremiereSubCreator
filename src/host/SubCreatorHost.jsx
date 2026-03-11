@@ -275,37 +275,230 @@ function subcreator_collection_to_array(collection) {
   return result;
 }
 
+function subcreator_is_default_caption_label(text) {
+  // // Detect synthetic/default caption names returned by some Premiere APIs.
+  var normalized = subcreator_trim_string(String(text || "")).toLowerCase().replace(/\s+/g, "");
+  return normalized === "syntheticcaption";
+}
+
+function subcreator_extract_text_from_json_payload(payload) {
+  // // Read text from JSON payload shapes used by caption and MOGRT controls.
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  if (typeof payload.textEditValue === "string" && payload.textEditValue.length > 0) {
+    return String(payload.textEditValue);
+  }
+
+  if (typeof payload.mText === "string" && payload.mText.length > 0) {
+    return String(payload.mText);
+  }
+
+  if (payload.styleSheet && typeof payload.styleSheet === "object" && typeof payload.styleSheet.mText === "string") {
+    return String(payload.styleSheet.mText);
+  }
+
+  if (payload.mStyleSheet && typeof payload.mStyleSheet === "object" && typeof payload.mStyleSheet.mText === "string") {
+    return String(payload.mStyleSheet.mText);
+  }
+
+  if (payload.mTextParam && typeof payload.mTextParam === "object") {
+    var nestedText = subcreator_extract_text_from_json_payload(payload.mTextParam);
+    if (nestedText) {
+      return nestedText;
+    }
+  }
+
+  return "";
+}
+
+function subcreator_extract_text_from_property_value(rawValue) {
+  // // Convert property values (plain/object/JSON string) into readable caption text.
+  if (rawValue === undefined || rawValue === null) {
+    return "";
+  }
+
+  if (typeof rawValue === "string") {
+    var rawText = String(rawValue || "");
+    if (rawText.indexOf("{") !== -1) {
+      try {
+        var parsed = JSON.parse(rawText);
+        var parsedText = subcreator_extract_text_from_json_payload(parsed);
+        if (parsedText) {
+          return parsedText;
+        }
+      } catch (jsonError) {}
+    }
+
+    return rawText;
+  }
+
+  if (typeof rawValue === "object") {
+    try {
+      var payloadText = subcreator_extract_text_from_json_payload(rawValue);
+      if (payloadText) {
+        return payloadText;
+      }
+    } catch (payloadError) {}
+
+    try {
+      var serialized = JSON.stringify(rawValue);
+      if (serialized && serialized.indexOf("{") !== -1) {
+        var parsedSerialized = JSON.parse(serialized);
+        var extracted = subcreator_extract_text_from_json_payload(parsedSerialized);
+        if (extracted) {
+          return extracted;
+        }
+      }
+    } catch (serializeError) {}
+  }
+
+  return "";
+}
+
+function subcreator_extract_text_from_component_properties(propertyCollection) {
+  // // Traverse component properties recursively to find editable caption text fields.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
+    return "";
+  }
+
+  for (var i = 0; i < propertyCollection.numItems; i += 1) {
+    var property = propertyCollection[i];
+    if (!property) {
+      continue;
+    }
+
+    if (typeof property.getValue === "function") {
+      try {
+        var rawValue = property.getValue();
+        if (subcreator_should_try_text_property(property.displayName || "", rawValue)) {
+          var extracted = subcreator_extract_text_from_property_value(rawValue);
+          var normalized = subcreator_trim_string(String(extracted || "").replace(/\r/g, "\n"));
+          if (normalized && !subcreator_is_default_caption_label(normalized)) {
+            return normalized;
+          }
+        }
+      } catch (propertyValueError) {}
+    }
+
+    if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+      var nested = subcreator_extract_text_from_component_properties(property.properties);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return "";
+}
+
+function subcreator_extract_text_from_item_components(item) {
+  // // Try to read caption text from component/control payloads on track items.
+  if (!item) {
+    return "";
+  }
+
+  var component = null;
+  try {
+    if (typeof item.getMGTComponent === "function") {
+      component = item.getMGTComponent();
+    }
+  } catch (mgtError) {}
+
+  if (!component && item.components && item.components.numItems > 0) {
+    component = item.components[0];
+  }
+
+  if (!component || !component.properties) {
+    return "";
+  }
+
+  return subcreator_extract_text_from_component_properties(component.properties);
+}
+
 function subcreator_extract_text_from_item(item) {
   // // Read caption text from known item methods/properties.
   if (!item) {
     return "";
   }
 
-  try {
-    if (typeof item.getCaptionText === "function") {
-      return String(item.getCaptionText() || "");
-    }
-  } catch (error1) {}
-
-  try {
-    if (typeof item.getText === "function") {
-      return String(item.getText() || "");
-    }
-  } catch (error2) {}
-
-  if (typeof item.text !== "undefined") {
-    return String(item.text || "");
+  var methodNames = ["getCaptionText", "getText", "getSourceText", "getFormattedText", "getTranscriptText"];
+  for (var methodIndex = 0; methodIndex < methodNames.length; methodIndex += 1) {
+    var methodName = methodNames[methodIndex];
+    try {
+      if (typeof item[methodName] === "function") {
+        var methodText = subcreator_trim_string(String(item[methodName]() || "").replace(/\r/g, "\n"));
+        if (methodText && !subcreator_is_default_caption_label(methodText)) {
+          return methodText;
+        }
+      }
+    } catch (methodError) {}
   }
 
+  var componentText = subcreator_extract_text_from_item_components(item);
+  if (componentText) {
+    return componentText;
+  }
+
+  var propNames = ["captionText", "sourceText", "subtitleText", "text", "value"];
+  for (var propIndex = 0; propIndex < propNames.length; propIndex += 1) {
+    var propName = propNames[propIndex];
+    try {
+      if (typeof item[propName] !== "undefined") {
+        var propText = subcreator_trim_string(String(item[propName] || "").replace(/\r/g, "\n"));
+        if (propText && !subcreator_is_default_caption_label(propText)) {
+          return propText;
+        }
+      }
+    } catch (propError) {}
+  }
+
+  try {
+    if (item.projectItem && typeof item.projectItem.getProjectMetadata === "function") {
+      var metadata = String(item.projectItem.getProjectMetadata() || "");
+      if (metadata && metadata.indexOf("SyntheticCaption") === -1) {
+        var metadataMatch = metadata.match(/<xmpDM:logComment>([\s\S]*?)<\/xmpDM:logComment>/);
+        if (metadataMatch && metadataMatch[1]) {
+          return subcreator_trim_string(String(metadataMatch[1]).replace(/\s+/g, " "));
+        }
+      }
+    }
+  } catch (metadataError) {}
+
   if (item.projectItem && item.projectItem.name) {
-    return String(item.projectItem.name || "");
+    var projectItemName = subcreator_trim_string(String(item.projectItem.name || ""));
+    if (projectItemName && !subcreator_is_default_caption_label(projectItemName)) {
+      return projectItemName;
+    }
   }
 
   if (item.name) {
-    return String(item.name || "");
+    var itemName = subcreator_trim_string(String(item.name || ""));
+    if (itemName && !subcreator_is_default_caption_label(itemName)) {
+      return itemName;
+    }
   }
 
   return "";
+}
+
+function subcreator_collect_track_items(track) {
+  // // Collect caption items from multiple possible collection properties.
+  var items = [];
+
+  function appendCollection(collection) {
+    var values = subcreator_collection_to_array(collection);
+    for (var i = 0; i < values.length; i += 1) {
+      items.push(values[i]);
+    }
+  }
+
+  appendCollection(track ? track.clips : null);
+  appendCollection(track ? track.items : null);
+  appendCollection(track ? track.captions : null);
+
+  return items;
 }
 
 function subcreator_extract_cues_from_items(items) {
@@ -371,10 +564,7 @@ function subcreator_extract_active_caption_track() {
           } catch (trackStateError) {}
         }
 
-        var trackItems =
-          subcreator_collection_to_array(selectedTrack.clips) ||
-          subcreator_collection_to_array(selectedTrack.items) ||
-          subcreator_collection_to_array(selectedTrack.captions);
+        var trackItems = subcreator_collect_track_items(selectedTrack);
 
         var cues = subcreator_extract_cues_from_items(trackItems);
         if (cues.length > 0) {
@@ -569,6 +759,10 @@ function subcreator_try_set_animation_mode_property(property, animationMode) {
 
   var key = String(property.displayName || "").toLowerCase();
   if (key.indexOf("highlight based on") !== -1 || key.indexOf("based on") !== -1) {
+    if (mode === "none") {
+      return false;
+    }
+
     // // Most MOGRT menu controls are 1-based: 1=Words, 2=Lines.
     var highlightValue = mode === "word" ? 1 : 2;
     try {
@@ -587,7 +781,48 @@ function subcreator_try_set_animation_mode_property(property, animationMode) {
   return false;
 }
 
-function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, stats) {
+function subcreator_try_set_layout_property(property, styleConfig) {
+  // // Apply layout controls (characters/lines/font size) when available in a template.
+  if (!property || typeof property.setValue !== "function" || !styleConfig) {
+    return false;
+  }
+
+  var key = String(property.displayName || "").toLowerCase();
+  var maxChars = Number(styleConfig.maxCharsPerLine || 0);
+  var maxLines = Number(styleConfig.linesPerCaption || 0);
+  var fontSize = Number(styleConfig.fontSize || 0);
+
+  if ((key.indexOf("character") !== -1 && key.indexOf("line") !== -1) || key.indexOf("chars per line") !== -1) {
+    if (!isNaN(maxChars) && maxChars > 0) {
+      try {
+        property.setValue(maxChars, true);
+        return true;
+      } catch (charsError) {}
+    }
+  }
+
+  if ((key.indexOf("max") !== -1 && key.indexOf("line") !== -1) || key.indexOf("lines per") !== -1) {
+    if (!isNaN(maxLines) && maxLines > 0) {
+      try {
+        property.setValue(maxLines, true);
+        return true;
+      } catch (linesError) {}
+    }
+  }
+
+  if (key.indexOf("font size") !== -1 || key.indexOf("taille") !== -1) {
+    if (!isNaN(fontSize) && fontSize > 0) {
+      try {
+        property.setValue(fontSize, true);
+        return true;
+      } catch (fontSizeError) {}
+    }
+  }
+
+  return false;
+}
+
+function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, stats) {
   // // Traverse nested Essential Graphics property groups and apply text/animation updates.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
@@ -607,20 +842,25 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
       if (subcreator_try_set_animation_mode_property(property, animationMode)) {
         stats.animationUpdates += 1;
       }
+
+      if (subcreator_try_set_layout_property(property, styleConfig)) {
+        stats.layoutUpdates += 1;
+      }
     }
 
     if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
-      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, stats);
+      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, styleConfig, stats);
     }
   }
 }
 
-function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode) {
+function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig) {
   // // Update text + animation related controls on inserted MOGRT components.
   if (!trackItem || !textValue) {
     return {
       textUpdates: 0,
-      animationUpdates: 0
+      animationUpdates: 0,
+      layoutUpdates: 0
     };
   }
 
@@ -636,15 +876,17 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode) 
   if (!component || !component.properties || component.properties.numItems < 1) {
     return {
       textUpdates: 0,
-      animationUpdates: 0
+      animationUpdates: 0,
+      layoutUpdates: 0
     };
   }
 
   var stats = {
     textUpdates: 0,
-    animationUpdates: 0
+    animationUpdates: 0,
+    layoutUpdates: 0
   };
-  subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, stats);
+  subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, styleConfig, stats);
   return stats;
 }
 
@@ -859,9 +1101,68 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
 }
 
 function subcreator_get_or_create_top_video_track_index(sequence) {
-  // // Create a new top video track without reindexing lower tracks when QE supports it.
+  // // Create a new top video track using non-destructive insertion signatures first.
   var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  var beforeSignatures = [];
+
+  function captureTrackSignatures(trackCollection) {
+    var signatures = [];
+    if (!trackCollection || typeof trackCollection.numTracks !== "number") {
+      return signatures;
+    }
+
+    for (var trackIndex = 0; trackIndex < trackCollection.numTracks; trackIndex += 1) {
+      var track = trackCollection[trackIndex];
+      var clipCount = track && track.clips ? Number(track.clips.numItems || 0) : 0;
+      var firstSignature = "";
+      var lastSignature = "";
+
+      if (clipCount > 0 && track && track.clips) {
+        var firstClip = track.clips[0];
+        var lastClip = track.clips[clipCount - 1];
+        firstSignature =
+          String(firstClip && firstClip.projectItem ? firstClip.projectItem.name : "") +
+          "@" +
+          String(subcreator_to_seconds(firstClip ? firstClip.start : 0));
+        lastSignature =
+          String(lastClip && lastClip.projectItem ? lastClip.projectItem.name : "") +
+          "@" +
+          String(subcreator_to_seconds(lastClip ? lastClip.start : 0));
+      }
+
+      signatures.push([String(clipCount), firstSignature, lastSignature].join("|"));
+    }
+
+    return signatures;
+  }
+
+  function detectInsertedTrackIndex(before, after) {
+    if (after.length !== before.length + 1) {
+      return -1;
+    }
+
+    for (var insertIndex = 0; insertIndex < after.length; insertIndex += 1) {
+      var matches = true;
+
+      for (var beforeIndex = 0; beforeIndex < before.length; beforeIndex += 1) {
+        var afterIndex = beforeIndex < insertIndex ? beforeIndex : beforeIndex + 1;
+        if (before[beforeIndex] !== after[afterIndex]) {
+          matches = false;
+          break;
+        }
+      }
+
+      if (matches) {
+        return insertIndex;
+      }
+    }
+
+    return -1;
+  }
+
+  beforeSignatures = captureTrackSignatures(sequence.videoTracks);
   var created = false;
+  var createdIndex = -1;
 
   try {
     if (typeof app.enableQE === "function") {
@@ -869,22 +1170,52 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
       if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
         var qeSequence = qe.project.getActiveSequence();
         if (qeSequence && typeof qeSequence.addTracks === "function") {
+          var inserted = false;
+
           try {
-            // // Default addTracks(1) has the safest behavior across Premiere versions.
-            qeSequence.addTracks(1);
-          } catch (signatureErrorDefault) {}
+            // // Try insertion above all tracks first to avoid shifting existing media tracks.
+            qeSequence.addTracks(1, -1, 0, -1);
+            inserted = true;
+          } catch (signatureErrorMinusOneFull) {}
+
+          if (!inserted) {
+            try {
+              qeSequence.addTracks(1, -1, 0);
+              inserted = true;
+            } catch (signatureErrorMinusOneShort) {}
+          }
+
+          if (!inserted) {
+            try {
+              qeSequence.addTracks(1, -1);
+              inserted = true;
+            } catch (signatureErrorMinusOneMinimal) {}
+          }
+
+          if (!inserted && currentTracks < 1) {
+            try {
+              qeSequence.addTracks(1);
+              inserted = true;
+            } catch (signatureErrorEmptySequence) {}
+          }
         }
       }
     }
   } catch (error) {}
 
   var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  var afterSignatures = captureTrackSignatures(sequence.videoTracks);
+
   if (updatedTracks > currentTracks) {
     created = true;
+    createdIndex = detectInsertedTrackIndex(beforeSignatures, afterSignatures);
+    if (createdIndex < 0) {
+      createdIndex = 0;
+    }
   }
 
   return {
-    index: updatedTracks > 0 ? updatedTracks - 1 : 0,
+    index: created ? createdIndex : 0,
     created: created,
     beforeTracks: currentTracks,
     afterTracks: updatedTracks
@@ -917,6 +1248,7 @@ function subcreator_apply_captions(payloadEncoded) {
     var insertedMarkers = 0;
     var updatedText = 0;
     var updatedAnimation = 0;
+    var updatedLayout = 0;
     var durationAdjusted = 0;
     var mogrtAttempted = 0;
     var lastImportMode = "";
@@ -938,13 +1270,17 @@ function subcreator_apply_captions(payloadEncoded) {
           var controlStats = subcreator_try_set_mogrt_controls(
             importAttempt.trackItem,
             text,
-            options.style ? options.style.animationMode : "line"
+            options.style ? options.style.animationMode : "line",
+            options.style || {}
           );
           if (controlStats.textUpdates > 0) {
             updatedText += controlStats.textUpdates;
           }
           if (controlStats.animationUpdates > 0) {
             updatedAnimation += controlStats.animationUpdates;
+          }
+          if (controlStats.layoutUpdates > 0) {
+            updatedLayout += controlStats.layoutUpdates;
           }
           if (subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
             durationAdjusted += 1;
@@ -971,6 +1307,7 @@ function subcreator_apply_captions(payloadEncoded) {
       insertedMarkers: insertedMarkers,
       mogrtTextUpdated: updatedText,
       mogrtAnimationUpdated: updatedAnimation,
+      mogrtLayoutUpdated: updatedLayout,
       mogrtDurationAdjusted: durationAdjusted,
       mogrtUsed: hasMogrt,
       mogrtPathResolved: mogrtPath,

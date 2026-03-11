@@ -12,6 +12,7 @@ It supports:
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
   - Apply text controls recursively (including grouped Essential Graphics properties) and map animation mode to controls like `Highlight Based On`.
+  - Apply style layout controls (characters per line / max lines / font size) when exposed by the selected template.
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
 - Version label in panel header + automatic GitHub release update banner.
@@ -111,9 +112,13 @@ npm run subcreator:package
 - Runtime: CSXS 11
 
 Track behavior in panel:
-- MOGRT subtitles are inserted on a new top video track automatically at generation time.
+- MOGRT subtitles are inserted on a non-destructive top video target (new top track when supported by host APIs; otherwise current top track).
 - Audio track index is handled internally for Premiere `importMGT` compatibility.
 - Update banner checks `https://api.github.com/repos/CyrilG93/PremiereSubCreator/releases/latest` and displays only when a newer version exists.
+
+Caption planning behavior:
+- Long cues are split by contiguous word groups (not arbitrary character cuts).
+- Chunk timing follows word timing boundaries when available, or proportional word distribution otherwise.
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 

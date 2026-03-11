@@ -585,12 +585,32 @@ function collectBuildOptions(): CaptionBuildOptions {
 function normalizeHostCaptionCues(hostCues: HostCaptionCue[]): CaptionCue[] {
   // // Convert host caption cue payload into planner-compatible cue objects.
   return hostCues.map((cue, index) => {
+    const startSeconds = Number(cue.startSeconds);
+    const endSeconds = Number(cue.endSeconds);
+    const text = String(cue.text || "").trim();
+    const words = text
+      .replace(/\r/g, "\n")
+      .replace(/\n+/g, " ")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const totalDuration = Math.max(endSeconds - startSeconds, 0.01);
+    const wordDuration = words.length > 0 ? totalDuration / words.length : 0;
+
     return {
       id: `host-cue-${index + 1}`,
-      startSeconds: Number(cue.startSeconds),
-      endSeconds: Number(cue.endSeconds),
-      text: String(cue.text || "").trim(),
-      words: []
+      startSeconds,
+      endSeconds,
+      text,
+      words: words.map((word, wordIndex) => {
+        const wordStart = startSeconds + wordDuration * wordIndex;
+        const wordEnd = wordIndex === words.length - 1 ? endSeconds : wordStart + wordDuration;
+        return {
+          text: word,
+          startSeconds: wordStart,
+          endSeconds: wordEnd
+        };
+      })
     };
   });
 }

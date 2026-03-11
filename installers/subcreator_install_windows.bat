@@ -26,6 +26,7 @@ if exist "%SUBCREATOR_DEST_DIR%" rmdir /s /q "%SUBCREATOR_DEST_DIR%"
 xcopy "%SUBCREATOR_SOURCE_DIR%" "%SUBCREATOR_DEST_DIR%" /e /i /h /y >nul
 
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
+call :subcreator_enable_cep_debug_mode
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
@@ -103,6 +104,14 @@ echo If needed, enable CEP debug mode and restart Premiere Pro.
 :subcreator_done
 endlocal
 exit /b 0
+
+:subcreator_enable_cep_debug_mode
+REM // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
+for %%v in (7 8 9 10 11 12) do (
+  reg add "HKCU\Software\Adobe\CSXS.%%v" /v PlayerDebugMode /t REG_SZ /d 1 /f >nul 2>nul
+)
+echo CEP debug mode enabled for CSXS.7 to CSXS.12
+goto :eof
 
 :subcreator_detect_python
 REM // Prefer explicit supported Python minor versions first to avoid defaulting to unsupported 3.14+.

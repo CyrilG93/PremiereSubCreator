@@ -10,6 +10,16 @@ SUBCREATOR_PYTHON_CMD=""
 SUBCREATOR_PYTHON_VERSION=""
 SUBCREATOR_PYTHON_SEEN=""
 
+subcreator_enable_cep_debug_mode() {
+  # // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
+  local csxs_versions=(7 8 9 10 11 12)
+  local csxs_version=""
+  for csxs_version in "${csxs_versions[@]}"; do
+    defaults write "com.adobe.CSXS.${csxs_version}" PlayerDebugMode -string "1" >/dev/null 2>&1 || true
+  done
+  echo "CEP debug mode enabled for CSXS.7 to CSXS.12"
+}
+
 subcreator_append_path_to_profile() {
   # // Append Whisper user-bin directory to a shell profile only once.
   local profile_path="$1"
@@ -134,6 +144,7 @@ rm -rf "${SUBCREATOR_DEST_DIR}"
 cp -R "${SUBCREATOR_SOURCE_DIR}" "${SUBCREATOR_DEST_DIR}"
 
 echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
+subcreator_enable_cep_debug_mode
 
 # // Discover supported Python runtime; when multiple versions exist we pick the newest supported one.
 if ! subcreator_select_python_cmd; then

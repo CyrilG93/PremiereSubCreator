@@ -93,6 +93,7 @@ whisper --help
 
 Installer behavior:
 - Installs extension files to CEP.
+- Enables CEP debug mode by default for CSXS.7 -> CSXS.12.
 - If multiple Python versions are installed, selects the highest compatible one (3.13 -> 3.8).
 - Tries to auto-install `openai-whisper` with local Python when Python is available and version is <= 3.13.
 - Adds `~/Library/Python/<version>/bin` to `~/.zprofile` and `~/.zshrc` when needed so `whisper` is in PATH.
@@ -107,6 +108,7 @@ installers\subcreator_install_windows.bat
 
 Installer behavior:
 - Installs extension files to CEP.
+- Enables CEP debug mode by default for CSXS.7 -> CSXS.12.
 - If multiple Python versions are installed, selects the highest compatible one (3.13 -> 3.8).
 - Tries to auto-install `openai-whisper` with `py -3` or `python` when available and version is <= 3.13.
 - Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).

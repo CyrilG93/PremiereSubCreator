@@ -66,6 +66,8 @@ export interface MogrtTemplateItem {
   aspect: string;
   relativePath: string;
   previewClass: string;
+  previewImagePath?: string;
+  previewVideoPath?: string;
 }
 
 // // Describe one cue extracted from Premiere caption tracks through host APIs.

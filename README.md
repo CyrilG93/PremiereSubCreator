@@ -8,10 +8,12 @@ It supports:
   - Premiere active caption track extraction (text + timing) when API exposes it.
   - Whisper local transcription from an audio/video file.
 - Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
+- MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
+- Version label in panel header + automatic GitHub release update banner.
 - Mac + Windows installers.
 
 ## Important product choices
@@ -20,6 +22,8 @@ It supports:
 Yes, for premium animated design styles you should prepare MOGRT templates.
 
 MOGRT files placed under `templates/mogrt` are auto-discovered and shown in the panel gallery (Landscape/Portrait/Square filters).
+
+If a `.mogrt` contains `thumb.png` or `thumb.mp4`, Sub Creator extracts it during build and uses it as the gallery preview.
 
 Without MOGRT, the panel still works but inserts markers as a safe fallback.
 
@@ -108,6 +112,7 @@ npm run subcreator:package
 Track behavior in panel:
 - MOGRT subtitles are inserted on a new top video track automatically at generation time.
 - Audio track index is handled internally for Premiere `importMGT` compatibility.
+- Update banner checks `https://api.github.com/repos/CyrilG93/PremiereSubCreator/releases/latest` and displays only when a newer version exists.
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 

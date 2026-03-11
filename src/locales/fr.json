@@ -36,6 +36,7 @@
   "action.ping": "Tester connexion Premiere",
   "action.generate": "Generer sous-titres",
   "action.browse": "Parcourir",
+  "update.downloadNotice": "Nouvelle version disponible (v{latest}, installee v{current}). Cliquer pour telecharger.",
   "log.ready": "Sub Creator pret.",
   "log.processing": "Generation des sous-titres en cours...",
   "log.hostResult": "Resultat hote:",

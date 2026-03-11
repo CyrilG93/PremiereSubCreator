@@ -21,8 +21,24 @@ interface MogrtCatalog {
   templates: MogrtTemplateItem[];
 }
 
+interface PanelMeta {
+  version: string;
+  repository: string;
+  releaseApiUrl: string;
+  releasePageUrl: string;
+}
+
+interface UpdateState {
+  visible: boolean;
+  latestVersion: string;
+  downloadUrl: string;
+}
+
 const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
+  appVersion: document.querySelector<HTMLSpanElement>("#appVersion"),
+  updateBanner: document.querySelector<HTMLElement>("#updateBanner"),
+  updateLink: document.querySelector<HTMLAnchorElement>("#updateLink"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
@@ -49,6 +65,18 @@ const elements = {
 let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
 let selectedMogrt: MogrtTemplateItem | null = null;
+const FALLBACK_PANEL_META: PanelMeta = {
+  version: "0.0.0",
+  repository: "CyrilG93/PremiereSubCreator",
+  releaseApiUrl: "https://api.github.com/repos/CyrilG93/PremiereSubCreator/releases/latest",
+  releasePageUrl: "https://github.com/CyrilG93/PremiereSubCreator/releases/latest"
+};
+let panelMeta: PanelMeta = { ...FALLBACK_PANEL_META };
+const updateState: UpdateState = {
+  visible: false,
+  latestVersion: "",
+  downloadUrl: ""
+};
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -66,6 +94,108 @@ function translate(key: string): string {
   return currentLocale[key] ?? key;
 }
 
+function translateTemplate(key: string, values: Record<string, string>): string {
+  // // Apply simple token replacement for localized UI messages.
+  const base = translate(key);
+  return Object.keys(values).reduce((output, token) => {
+    const matcher = new RegExp(`\\{${token}\\}`, "g");
+    return output.replace(matcher, values[token]);
+  }, base);
+}
+
+function panelAssetPath(relativeOrAbsolute: string): string {
+  // // Normalize extension-local asset paths for fetch/image usage.
+  if (!relativeOrAbsolute) {
+    return "";
+  }
+
+  if (/^(https?:)?\/\//i.test(relativeOrAbsolute) || relativeOrAbsolute.startsWith("./")) {
+    return relativeOrAbsolute;
+  }
+
+  return `./${relativeOrAbsolute.replace(/^\/+/, "")}`;
+}
+
+function normalizeVersion(input: string): string {
+  // // Normalize semantic version strings like v1.2.3 into 1.2.3.
+  const match = String(input || "").trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
+  if (!match) {
+    return "";
+  }
+
+  return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+function compareVersions(left: string, right: string): number {
+  // // Compare normalized semver values and return 1, 0, or -1.
+  const leftParts = normalizeVersion(left).split(".");
+  const rightParts = normalizeVersion(right).split(".");
+
+  if (leftParts.length !== 3 || rightParts.length !== 3) {
+    return 0;
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    const l = Number(leftParts[index]);
+    const r = Number(rightParts[index]);
+    if (l > r) {
+      return 1;
+    }
+    if (l < r) {
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+function resolveReleaseZipUrl(release: { assets?: Array<{ name?: string; browser_download_url?: string }> }): string {
+  // // Prefer zip release assets for one-click update downloads.
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+
+  for (const asset of assets) {
+    const name = String(asset.name || "").toLowerCase();
+    const downloadUrl = String(asset.browser_download_url || "");
+    if (name.endsWith(".zip") && downloadUrl) {
+      return downloadUrl;
+    }
+  }
+
+  return "";
+}
+
+function refreshVersionLabel(): void {
+  // // Display the current extension version next to the panel title.
+  if (!elements.appVersion) {
+    return;
+  }
+
+  const normalized = normalizeVersion(panelMeta.version);
+  const displayVersion = normalized || String(panelMeta.version || "0.0.0");
+  elements.appVersion.textContent = `v${displayVersion}`;
+}
+
+function refreshUpdateBanner(): void {
+  // // Render release-update banner whenever locale/version state changes.
+  if (!elements.updateBanner || !elements.updateLink) {
+    return;
+  }
+
+  if (!updateState.visible || !updateState.latestVersion || !updateState.downloadUrl) {
+    elements.updateBanner.hidden = true;
+    elements.updateLink.href = "#";
+    return;
+  }
+
+  const currentVersion = normalizeVersion(panelMeta.version) || panelMeta.version;
+  elements.updateBanner.hidden = false;
+  elements.updateLink.href = updateState.downloadUrl;
+  elements.updateLink.textContent = translateTemplate("update.downloadNotice", {
+    latest: updateState.latestVersion,
+    current: currentVersion
+  });
+}
+
 function setLog(message: string, isError = false): void {
   // // Provide a single visible place for runtime status and error traces.
   if (!elements.logOutput) {
@@ -74,6 +204,77 @@ function setLog(message: string, isError = false): void {
 
   elements.logOutput.textContent = message;
   elements.logOutput.classList.toggle("log--error", isError);
+}
+
+async function loadPanelMeta(): Promise<void> {
+  // // Load version/update metadata emitted by build step.
+  try {
+    const response = await fetch("./assets/subcreator-meta.json", { cache: "no-store" });
+    if (!response.ok) {
+      panelMeta = { ...FALLBACK_PANEL_META };
+      return;
+    }
+
+    const parsed = (await response.json()) as Partial<PanelMeta>;
+    panelMeta = {
+      version: String(parsed.version || FALLBACK_PANEL_META.version),
+      repository: String(parsed.repository || FALLBACK_PANEL_META.repository),
+      releaseApiUrl: String(parsed.releaseApiUrl || FALLBACK_PANEL_META.releaseApiUrl),
+      releasePageUrl: String(parsed.releasePageUrl || FALLBACK_PANEL_META.releasePageUrl)
+    };
+  } catch {
+    panelMeta = { ...FALLBACK_PANEL_META };
+  }
+}
+
+async function checkForUpdates(): Promise<void> {
+  // // Query latest GitHub release and show a banner if a newer version exists.
+  if (!window.fetch) {
+    updateState.visible = false;
+    refreshUpdateBanner();
+    return;
+  }
+
+  updateState.visible = false;
+  updateState.latestVersion = "";
+  updateState.downloadUrl = "";
+  refreshUpdateBanner();
+
+  const currentVersion = normalizeVersion(panelMeta.version);
+  if (!currentVersion) {
+    return;
+  }
+
+  try {
+    const response = await fetch(panelMeta.releaseApiUrl, { cache: "no-store" });
+    if (!response.ok) {
+      return;
+    }
+
+    const release = (await response.json()) as {
+      tag_name?: string;
+      html_url?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    };
+
+    const latestVersion = normalizeVersion(String(release.tag_name || ""));
+    if (!latestVersion || compareVersions(latestVersion, currentVersion) <= 0) {
+      return;
+    }
+
+    const downloadUrl = resolveReleaseZipUrl(release) || String(release.html_url || panelMeta.releasePageUrl || "");
+    if (!downloadUrl) {
+      return;
+    }
+
+    updateState.visible = true;
+    updateState.latestVersion = latestVersion;
+    updateState.downloadUrl = downloadUrl;
+    refreshUpdateBanner();
+  } catch {
+    updateState.visible = false;
+    refreshUpdateBanner();
+  }
 }
 
 async function loadLocale(languageCode: string): Promise<void> {
@@ -104,6 +305,8 @@ async function loadLocale(languageCode: string): Promise<void> {
       node.placeholder = translate(key);
     }
   });
+
+  refreshUpdateBanner();
 }
 
 function renderPresetSelect(): void {
@@ -268,7 +471,28 @@ function renderMogrtGallery(): void {
     const preview = document.createElement("div");
     preview.className = "mogrt-card__preview";
     preview.dataset.preview = template.previewClass;
-    preview.textContent = translate("gallery.previewText");
+
+    if (template.previewImagePath) {
+      const previewImage = document.createElement("img");
+      previewImage.className = "mogrt-card__preview-image";
+      previewImage.src = panelAssetPath(template.previewImagePath);
+      previewImage.loading = "lazy";
+      previewImage.alt = `${template.name} preview`;
+      preview.appendChild(previewImage);
+    } else if (template.previewVideoPath) {
+      const previewVideo = document.createElement("video");
+      previewVideo.className = "mogrt-card__preview-video";
+      previewVideo.src = panelAssetPath(template.previewVideoPath);
+      previewVideo.muted = true;
+      previewVideo.loop = true;
+      previewVideo.autoplay = true;
+      previewVideo.playsInline = true;
+      previewVideo.preload = "metadata";
+      previewVideo.setAttribute("aria-hidden", "true");
+      preview.appendChild(previewVideo);
+    } else {
+      preview.textContent = translate("gallery.previewText");
+    }
 
     const name = document.createElement("div");
     name.className = "mogrt-card__name";
@@ -436,6 +660,8 @@ async function generate(): Promise<void> {
 async function initialize(): Promise<void> {
   // // Initialize locale, controls, and event listeners once panel is loaded.
   assertDomBindings();
+  await loadPanelMeta();
+  refreshVersionLabel();
 
   const defaultLanguage = navigator.language?.startsWith("fr") ? "fr" : "en";
   if (elements.languageSelect) {
@@ -449,6 +675,7 @@ async function initialize(): Promise<void> {
 
   await loadMogrtCatalog();
   renderMogrtGallery();
+  await checkForUpdates();
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");

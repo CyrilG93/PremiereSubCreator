@@ -36,6 +36,7 @@
   "action.ping": "Test Premiere connection",
   "action.generate": "Generate subtitles",
   "action.browse": "Browse",
+  "update.downloadNotice": "New version available (v{latest}, installed v{current}). Click to download.",
   "log.ready": "Sub Creator ready.",
   "log.processing": "Generating subtitles...",
   "log.hostResult": "Host result:",

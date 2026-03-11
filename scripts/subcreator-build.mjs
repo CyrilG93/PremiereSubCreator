@@ -1,8 +1,9 @@
 // // Build the CEP extension payload into dist/com.cyrilg93.subcreator.
-import { mkdir, rm, cp, readdir, writeFile, stat, copyFile } from "node:fs/promises";
+import { mkdir, rm, cp, readdir, writeFile, stat, copyFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { unzipSync } from "fflate";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +11,8 @@ const projectRoot = path.resolve(__dirname, "..");
 const sourceRoot = path.join(projectRoot, "src");
 const distRoot = path.join(projectRoot, "dist", "com.cyrilg93.subcreator");
 const templatesRoot = path.join(projectRoot, "templates", "mogrt");
+const packageJsonPath = path.join(projectRoot, "package.json");
+const releaseRepoSlug = "CyrilG93/PremiereSubCreator";
 
 function subcreatorSlugify(input) {
   // // Build stable ids safe for JSON and DOM usage.
@@ -92,6 +95,85 @@ function subcreatorDetectPreviewClass(name) {
   return "default";
 }
 
+function subcreatorPickArchiveEntry(entryNames, ruleMatchers) {
+  // // Resolve preferred archive asset order while keeping original entry casing.
+  const pairs = entryNames.map((name) => {
+    return {
+      raw: name,
+      lower: String(name).replace(/\\/g, "/").toLowerCase()
+    };
+  });
+
+  for (const matcher of ruleMatchers) {
+    const hit = pairs.find((entry) => matcher.test(entry.lower));
+    if (hit) {
+      return hit.raw;
+    }
+  }
+
+  return "";
+}
+
+function subcreatorNormalizeArchiveExt(entryName, fallbackExt) {
+  // // Normalize archive extension for stable output filenames.
+  const ext = path.extname(entryName || "").toLowerCase();
+  if (!ext) {
+    return fallbackExt;
+  }
+
+  if (ext === ".jpeg") {
+    return ".jpg";
+  }
+
+  return ext;
+}
+
+async function subcreatorExtractMogrtPreviewAssets(sourcePath, outputDir, outputStem) {
+  // // Extract embedded thumbnail assets from .mogrt (zip) for accurate gallery previews.
+  let archiveMap = {};
+
+  try {
+    const archiveBytes = await readFile(sourcePath);
+    archiveMap = unzipSync(new Uint8Array(archiveBytes));
+  } catch {
+    return {
+      imageFileName: "",
+      videoFileName: ""
+    };
+  }
+
+  const entryNames = Object.keys(archiveMap);
+  if (!entryNames.length) {
+    return {
+      imageFileName: "",
+      videoFileName: ""
+    };
+  }
+
+  const imageEntry = subcreatorPickArchiveEntry(entryNames, [/\/thumb\.png$/i, /thumb\.png$/i, /thumb\.(jpg|jpeg|webp)$/i, /\.(png|jpg|jpeg|webp)$/i]);
+  const videoEntry = subcreatorPickArchiveEntry(entryNames, [/\/thumb\.mp4$/i, /thumb\.mp4$/i, /\.mp4$/i]);
+
+  let imageFileName = "";
+  let videoFileName = "";
+
+  if (imageEntry && archiveMap[imageEntry]) {
+    const imageExt = subcreatorNormalizeArchiveExt(imageEntry, ".png");
+    imageFileName = `${outputStem}${imageExt}`;
+    await writeFile(path.join(outputDir, imageFileName), Buffer.from(archiveMap[imageEntry]));
+  }
+
+  if (videoEntry && archiveMap[videoEntry]) {
+    const videoExt = subcreatorNormalizeArchiveExt(videoEntry, ".mp4");
+    videoFileName = `${outputStem}${videoExt}`;
+    await writeFile(path.join(outputDir, videoFileName), Buffer.from(archiveMap[videoEntry]));
+  }
+
+  return {
+    imageFileName,
+    videoFileName
+  };
+}
+
 async function subcreatorPathExists(targetPath) {
   // // Keep missing template folders non-fatal for early project setup.
   try {
@@ -135,6 +217,8 @@ async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
   // // Copy templates into extension bundle with ASCII-safe paths and emit gallery catalog.
   const discovered = [];
   const templates = [];
+  const previewRootDir = path.join(distAssetsDir, "mogrt-previews");
+  const previewRootRelativePath = "assets/mogrt-previews";
   const templateRootExists = await subcreatorPathExists(templatesRoot);
 
   if (templateRootExists) {
@@ -163,16 +247,22 @@ async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
     const relativePath = `${safeAspect}/${safeFileName}`;
     const destDir = path.join(distTemplatesDir, safeAspect);
     const destPath = path.join(destDir, safeFileName);
+    const previewDir = path.join(previewRootDir, safeAspect);
+    const previewStem = `${safeName}-${nextCount}`;
 
     await mkdir(destDir, { recursive: true });
+    await mkdir(previewDir, { recursive: true });
     await copyFile(item.sourcePath, destPath);
+    const previewAssets = await subcreatorExtractMogrtPreviewAssets(item.sourcePath, previewDir, previewStem);
 
     templates.push({
       id: `${subcreatorSlugify(item.aspect)}-${subcreatorSlugify(item.name)}-${index + 1}`,
       name: item.name,
       aspect: item.aspect,
       relativePath,
-      previewClass: item.previewClass
+      previewClass: item.previewClass,
+      previewImagePath: previewAssets.imageFileName ? `${previewRootRelativePath}/${safeAspect}/${previewAssets.imageFileName}` : "",
+      previewVideoPath: previewAssets.videoFileName ? `${previewRootRelativePath}/${safeAspect}/${previewAssets.videoFileName}` : ""
     });
   }
 
@@ -183,6 +273,35 @@ async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
   };
 
   await writeFile(path.join(distAssetsDir, "mogrt-catalog.json"), JSON.stringify(catalog, null, 2), "utf8");
+}
+
+async function subcreatorReadPackageVersion() {
+  // // Read extension version from package.json so panel UI stays in sync.
+  try {
+    const raw = await readFile(packageJsonPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.version === "string" && parsed.version.trim().length > 0) {
+      return parsed.version.trim();
+    }
+  } catch {
+    return "0.0.0";
+  }
+
+  return "0.0.0";
+}
+
+async function subcreatorBuildPanelMeta(distAssetsDir) {
+  // // Emit panel metadata used for version label and update notifications.
+  const version = await subcreatorReadPackageVersion();
+  const meta = {
+    generatedAt: new Date().toISOString(),
+    version,
+    repository: releaseRepoSlug,
+    releaseApiUrl: `https://api.github.com/repos/${releaseRepoSlug}/releases/latest`,
+    releasePageUrl: `https://github.com/${releaseRepoSlug}/releases/latest`
+  };
+
+  await writeFile(path.join(distAssetsDir, "subcreator-meta.json"), JSON.stringify(meta, null, 2), "utf8");
 }
 
 async function subcreatorBuild() {
@@ -220,6 +339,7 @@ async function subcreatorBuild() {
   ]);
 
   await subcreatorBuildMogrtCatalog(path.join(distRoot, "assets"), path.join(distRoot, "templates", "mogrt"));
+  await subcreatorBuildPanelMeta(path.join(distRoot, "assets"));
 
   // // Provide explicit build completion output for scripts and CI.
   process.stdout.write(`Built extension at ${distRoot}\n`);

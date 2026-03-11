@@ -9,19 +9,33 @@
   <body>
     <main class="panel">
       <header class="panel__header">
-        <h1 data-i18n="app.title">Sub Creator</h1>
-        <p data-i18n="app.subtitle">Sous-titres design et dynamiques pour Premiere Pro 2025+</p>
-      </header>
-
-      <section class="panel__grid">
-        <label class="field">
-          <span data-i18n="field.language">Langue interface</span>
-          <select id="languageSelect">
+        <div class="panel__header-row">
+          <div class="panel__title-wrap">
+            <h1 data-i18n="app.title">Sub Creator</h1>
+            <span id="appVersion" class="app-version">v0.0.0</span>
+          </div>
+          <select id="languageSelect" class="language-select" aria-label="Language">
             <option value="fr">Francais</option>
             <option value="en">English</option>
           </select>
-        </label>
+        </div>
+        <p data-i18n="app.subtitle">Sous-titres design et dynamiques pour Premiere Pro 2025+</p>
+      </header>
 
+      <section id="updateBanner" class="update-banner" hidden>
+        <a
+          id="updateLink"
+          class="update-link"
+          href="#"
+          target="_blank"
+          rel="noopener"
+          data-i18n="update.downloadNotice"
+        >
+          Nouvelle version disponible (vX.X.X). Cliquer pour telecharger.
+        </a>
+      </section>
+
+      <section class="panel__grid">
         <label class="field">
           <span data-i18n="field.source">Source des sous-titres</span>
           <select id="sourceMode">

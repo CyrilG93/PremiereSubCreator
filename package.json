@@ -1,0 +1,25 @@
+{
+  "name": "premiere-sub-creator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sub Creator - Adobe Premiere Pro extension for animated subtitles.",
+  "type": "module",
+  "scripts": {
+    "subcreator:build": "node scripts/subcreator-build.mjs",
+    "subcreator:lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "subcreator:test": "vitest run",
+    "subcreator:verify": "npm run subcreator:lint && npm run subcreator:test && npm run subcreator:build",
+    "subcreator:install:dev": "node scripts/subcreator-install-dev.mjs",
+    "subcreator:package": "node scripts/subcreator-package-release.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.22.0",
+    "esbuild": "^0.25.9",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1",
+    "vitest": "^3.0.8"
+  }
+}

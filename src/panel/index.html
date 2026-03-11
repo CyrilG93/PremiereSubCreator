@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sub Creator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="panel__header">
+        <h1 data-i18n="app.title">Sub Creator</h1>
+        <p data-i18n="app.subtitle">Sous-titres design et dynamiques pour Premiere Pro 2025+</p>
+      </header>
+
+      <section class="panel__grid">
+        <label class="field">
+          <span data-i18n="field.language">Langue interface</span>
+          <select id="languageSelect">
+            <option value="fr">Francais</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.source">Source des sous-titres</span>
+          <select id="sourceMode">
+            <option value="srt" data-i18n="source.srt">Fichier SRT</option>
+            <option value="transcription" data-i18n="source.transcription">Transcription sequence active</option>
+          </select>
+        </label>
+
+        <label class="field" id="srtInputField">
+          <span data-i18n="field.srt">Fichier SRT</span>
+          <input id="srtFile" type="file" accept=".srt,text/plain" />
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.preset">Preset style</span>
+          <select id="presetSelect"></select>
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.animation">Mode animation</span>
+          <select id="animationMode">
+            <option value="word" data-i18n="animation.word">Par mot</option>
+            <option value="line" data-i18n="animation.line">Par ligne</option>
+            <option value="none" data-i18n="animation.none">Aucune</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.maxChars">Lettres max par ligne</span>
+          <input id="maxChars" type="number" value="28" min="8" max="80" step="1" />
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.linesPerCaption">Lignes max par sous-titre</span>
+          <input id="linesPerCaption" type="number" value="2" min="1" max="3" step="1" />
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.fontSize">Taille texte</span>
+          <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
+        </label>
+
+        <label class="field field--checkbox">
+          <input id="uppercase" type="checkbox" />
+          <span data-i18n="field.uppercase">Forcer MAJUSCULES</span>
+        </label>
+
+        <label class="field">
+          <span data-i18n="field.mogrtPath">Chemin MOGRT (optionnel)</span>
+          <input id="mogrtPath" type="text" placeholder="/Users/.../SubCreatorPunch.mogrt" />
+        </label>
+
+        <label class="field field--inline">
+          <span data-i18n="field.videoTrack">Piste video</span>
+          <input id="videoTrackIndex" type="number" value="0" min="0" max="20" step="1" />
+        </label>
+
+        <label class="field field--inline">
+          <span data-i18n="field.audioTrack">Piste audio</span>
+          <input id="audioTrackIndex" type="number" value="0" min="0" max="20" step="1" />
+        </label>
+      </section>
+
+      <footer class="panel__footer">
+        <button id="pingButton" class="button button--secondary" data-i18n="action.ping">Tester connexion Premiere</button>
+        <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
+      </footer>
+
+      <pre id="logOutput" class="log" aria-live="polite"></pre>
+    </main>
+
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>

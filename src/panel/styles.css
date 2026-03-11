@@ -1,0 +1,143 @@
+:root {
+  --bg-primary: #111723;
+  --bg-surface: #1f2937;
+  --bg-soft: #243346;
+  --text-primary: #e9eef6;
+  --text-dim: #a8b4c6;
+  --accent: #3ecf8e;
+  --accent-soft: #8ad7b7;
+  --danger: #f48a8a;
+  --border: #344861;
+  --radius: 10px;
+  --shadow: 0 8px 24px rgba(7, 11, 17, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  background: radial-gradient(circle at top right, #20334f 0%, var(--bg-primary) 46%);
+  color: var(--text-primary);
+}
+
+.panel {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.panel__header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+}
+
+.panel__header p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.panel__grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  background: linear-gradient(180deg, var(--bg-soft), var(--bg-surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  box-shadow: var(--shadow);
+}
+
+.field span {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+
+.field--checkbox {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.field--inline {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+select,
+input,
+button {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #101927;
+  color: var(--text-primary);
+  padding: 8px;
+  font-size: 0.82rem;
+}
+
+input[type="checkbox"] {
+  width: auto;
+}
+
+.button {
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--accent), #1bb67a);
+  color: #07240f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button:hover {
+  filter: brightness(1.06);
+}
+
+.button--secondary {
+  background: transparent;
+  border-color: var(--accent-soft);
+  color: var(--accent-soft);
+}
+
+.panel__footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.log {
+  margin: 0;
+  min-height: 120px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #0d1420;
+  color: var(--accent-soft);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  padding: 10px;
+  line-height: 1.5;
+}
+
+.log--error {
+  color: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .panel__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel__footer {
+    grid-template-columns: 1fr;
+  }
+}

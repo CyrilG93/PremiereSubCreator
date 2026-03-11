@@ -39,7 +39,7 @@ interface CepNodeModules {
       command: string,
       args: string[],
       options: { encoding: string; shell?: boolean }
-    ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string } };
+    ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } };
   };
   fs: {
     existsSync: (path: string) => boolean;
@@ -49,11 +49,18 @@ interface CepNodeModules {
   };
   os: {
     tmpdir: () => string;
+    homedir: () => string;
   };
   path: {
     join: (...parts: string[]) => string;
     basename: (value: string) => string;
   };
+}
+
+interface WhisperCommandCandidate {
+  command: string;
+  args: string[];
+  label: string;
 }
 
 function escapeForJsx(input: string): string {
@@ -130,6 +137,82 @@ function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: strin
   return args;
 }
 
+function detectWindowsRuntime(): boolean {
+  // // Detect Windows from CEP browser runtime for CLI fallback ordering.
+  return /win/i.test(String(navigator?.platform || ""));
+}
+
+function discoverUserWhisperExecutables(modules: CepNodeModules): string[] {
+  // // Probe common user-local installation locations where PATH may be incomplete in CEP.
+  const discovered: string[] = [];
+  const home = modules.os.homedir();
+  const directCandidates = [modules.path.join(home, ".local", "bin", "whisper"), modules.path.join(home, "bin", "whisper")];
+
+  for (const candidate of directCandidates) {
+    if (modules.fs.existsSync(candidate)) {
+      discovered.push(candidate);
+    }
+  }
+
+  const pythonRoot = modules.path.join(home, "Library", "Python");
+  if (modules.fs.existsSync(pythonRoot)) {
+    try {
+      const versions = modules.fs.readdirSync(pythonRoot);
+      for (const versionName of versions) {
+        const candidate = modules.path.join(pythonRoot, versionName, "bin", "whisper");
+        if (modules.fs.existsSync(candidate)) {
+          discovered.push(candidate);
+        }
+      }
+    } catch {
+      // // Ignore inaccessible folders and continue other command candidates.
+    }
+  }
+
+  return discovered;
+}
+
+function buildWhisperCommandCandidates(
+  modules: CepNodeModules,
+  request: WhisperTranscriptionRequest,
+  outputDir: string
+): WhisperCommandCandidate[] {
+  // // Build ordered command fallbacks for diverse Whisper install methods.
+  const baseArgs = buildWhisperArgs(request, outputDir);
+  const candidates: WhisperCommandCandidate[] = [];
+  const isWindows = detectWindowsRuntime();
+  const userExecutables = discoverUserWhisperExecutables(modules);
+
+  function pushCandidate(command: string, args: string[], label: string): void {
+    if (!command) {
+      return;
+    }
+
+    for (const existing of candidates) {
+      if (existing.command === command && existing.args.join("\u0001") === args.join("\u0001")) {
+        return;
+      }
+    }
+
+    candidates.push({ command, args, label });
+  }
+
+  for (const executablePath of userExecutables) {
+    pushCandidate(executablePath, baseArgs, executablePath);
+  }
+
+  pushCandidate("whisper", baseArgs, "whisper");
+  pushCandidate("python3", ["-m", "whisper", ...baseArgs], "python3 -m whisper");
+  pushCandidate("python", ["-m", "whisper", ...baseArgs], "python -m whisper");
+
+  if (isWindows) {
+    pushCandidate("py", ["-3", "-m", "whisper", ...baseArgs], "py -3 -m whisper");
+    pushCandidate("py", ["-m", "whisper", ...baseArgs], "py -m whisper");
+  }
+
+  return candidates;
+}
+
 function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
   // // Resolve Whisper output SRT from expected filename or directory scan fallback.
   const baseName = modules.path.basename(audioPath).replace(/\.[^/.]+$/, "");
@@ -161,36 +244,69 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     modules.fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const run = modules.childProcess.spawnSync("whisper", buildWhisperArgs(request, outputDir), {
-    encoding: "utf8",
-    shell: false
-  });
+  const attempts: string[] = [];
+  const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir);
+  let collectedOutput = "";
+  let transcribed = false;
 
-  if (run.error) {
-    throw new Error(`Unable to execute Whisper CLI: ${String(run.error.message || run.error)}`);
+  for (const candidate of commandCandidates) {
+    const run = modules.childProcess.spawnSync(candidate.command, candidate.args, {
+      encoding: "utf8",
+      shell: false
+    });
+
+    if (run.error) {
+      const code = String(run.error.code || "");
+      attempts.push(`${candidate.label}: ${String(run.error.message || run.error)}`);
+      if (code === "ENOENT") {
+        continue;
+      }
+      continue;
+    }
+
+    const attemptOutput = [String(run.stdout || ""), String(run.stderr || "")].filter(Boolean).join("\n").trim();
+    if (attemptOutput) {
+      collectedOutput = attemptOutput;
+    }
+
+    if (typeof run.status === "number" && run.status !== 0) {
+      attempts.push(`${candidate.label}: exit ${run.status}`);
+      continue;
+    }
+
+    const srtPath = resolveWhisperSrtPath(modules, outputDir, request.audioPath);
+    if (!srtPath) {
+      attempts.push(`${candidate.label}: no srt output`);
+      continue;
+    }
+
+    const srtText = String(modules.fs.readFileSync(srtPath, "utf8") || "");
+    if (!srtText.trim()) {
+      attempts.push(`${candidate.label}: empty srt output`);
+      continue;
+    }
+
+    transcribed = true;
+    return {
+      srtText,
+      model: request.model?.trim() || "base",
+      audioPath: request.audioPath,
+      commandOutput: attemptOutput
+    };
   }
 
-  const commandOutput = [String(run.stdout || ""), String(run.stderr || "")].filter(Boolean).join("\n").trim();
-  if (typeof run.status === "number" && run.status !== 0) {
-    throw new Error(`Whisper exited with code ${run.status}. ${commandOutput}`);
+  if (!transcribed) {
+    const installHint = detectWindowsRuntime()
+      ? "Install command: py -m pip install -U openai-whisper"
+      : "Install command: python3 -m pip install -U openai-whisper";
+    throw new Error(
+      `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
+        collectedOutput || ""
+      }`
+    );
   }
 
-  const srtPath = resolveWhisperSrtPath(modules, outputDir, request.audioPath);
-  if (!srtPath) {
-    throw new Error(`Whisper did not produce an SRT file in ${outputDir}. ${commandOutput}`);
-  }
-
-  const srtText = String(modules.fs.readFileSync(srtPath, "utf8") || "");
-  if (!srtText.trim()) {
-    throw new Error(`Whisper produced an empty SRT file: ${srtPath}`);
-  }
-
-  return {
-    srtText,
-    model: request.model?.trim() || "base",
-    audioPath: request.audioPath,
-    commandOutput
-  };
+  return null;
 }
 
 export async function pingHost(): Promise<string> {

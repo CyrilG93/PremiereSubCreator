@@ -95,6 +95,7 @@ Installer behavior:
 - Installs extension files to CEP.
 - If multiple Python versions are installed, selects the highest compatible one (3.13 -> 3.8).
 - Tries to auto-install `openai-whisper` with local Python when Python is available and version is <= 3.13.
+- Adds `~/Library/Python/<version>/bin` to `~/.zprofile` and `~/.zshrc` when needed so `whisper` is in PATH.
 - Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).
 - Tries to install `ffmpeg` via Homebrew when available.
 

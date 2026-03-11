@@ -10,6 +10,49 @@ SUBCREATOR_PYTHON_CMD=""
 SUBCREATOR_PYTHON_VERSION=""
 SUBCREATOR_PYTHON_SEEN=""
 
+subcreator_append_path_to_profile() {
+  # // Append Whisper user-bin directory to a shell profile only once.
+  local profile_path="$1"
+  local bin_path="$2"
+  local export_line="export PATH=\"${bin_path}:\$PATH\""
+
+  if [ ! -f "${profile_path}" ]; then
+    touch "${profile_path}"
+  fi
+
+  if grep -F "${bin_path}" "${profile_path}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  printf "\n# // Added by Sub Creator installer for Whisper CLI\n%s\n" "${export_line}" >>"${profile_path}"
+  return 0
+}
+
+subcreator_configure_whisper_path() {
+  # // Persist PATH update for Whisper CLI location produced by pip --user on macOS.
+  local whisper_bin_path="${HOME}/Library/Python/${SUBCREATOR_PYTHON_VERSION}/bin"
+  if [ ! -d "${whisper_bin_path}" ]; then
+    return 1
+  fi
+
+  local updated=0
+  if subcreator_append_path_to_profile "${HOME}/.zprofile" "${whisper_bin_path}"; then
+    updated=1
+    echo "Added Whisper PATH to ${HOME}/.zprofile"
+  fi
+
+  if subcreator_append_path_to_profile "${HOME}/.zshrc" "${whisper_bin_path}"; then
+    updated=1
+    echo "Added Whisper PATH to ${HOME}/.zshrc"
+  fi
+
+  if [ "${updated}" -eq 1 ]; then
+    echo "Restart Terminal or run: source ~/.zprofile"
+  fi
+
+  return 0
+}
+
 subcreator_probe_python_version() {
   # // Return "<major>.<minor>" for a python executable, or empty when not callable.
   local candidate="$1"
@@ -113,6 +156,7 @@ fi
 
 if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade openai-whisper; then
   echo "Whisper Python package installed successfully."
+  subcreator_configure_whisper_path || true
 else
   echo "Whisper package install failed. You can run manually:"
   echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade openai-whisper"

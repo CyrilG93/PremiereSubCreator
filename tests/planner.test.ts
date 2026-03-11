@@ -14,6 +14,7 @@ const baseOptions: CaptionBuildOptions = {
     uppercase: false,
     linesPerCaption: 2
   },
+  extensionRootPath: "",
   mogrtPath: "",
   mogrtTemplateRelativePath: "",
   whisperAudioPath: "",

@@ -469,8 +469,24 @@ function subcreator_find_first_mogrt_in_folder(folderRef) {
 }
 
 function subcreator_resolve_mogrt_path(options) {
-  // // Prioritize bundled template path and fallback to manual absolute path.
-  var extensionRoot = subcreator_resolve_extension_root();
+  // // Prioritize explicit absolute path, then bundled template path, then first bundled fallback.
+  var manualPath = options.mogrtPath || "";
+  if (manualPath && manualPath.length > 0) {
+    var manualVariants = [
+      String(manualPath),
+      decodeURI(String(manualPath)),
+      String(manualPath).replace(/\\/g, "/")
+    ];
+
+    for (var variantIndex = 0; variantIndex < manualVariants.length; variantIndex += 1) {
+      var manualFile = new File(manualVariants[variantIndex]);
+      if (manualFile.exists) {
+        return manualFile.fsName;
+      }
+    }
+  }
+
+  var extensionRoot = options.extensionRootPath || subcreator_resolve_extension_root();
   var templateRelativePath = options.mogrtTemplateRelativePath || "";
   if (templateRelativePath && templateRelativePath.length > 0) {
     if (extensionRoot && extensionRoot.length > 0) {
@@ -479,14 +495,6 @@ function subcreator_resolve_mogrt_path(options) {
       if (bundledTemplate.exists) {
         return bundledTemplate.fsName;
       }
-    }
-  }
-
-  var manualPath = options.mogrtPath || "";
-  if (manualPath && manualPath.length > 0) {
-    var manualFile = new File(manualPath);
-    if (manualFile.exists) {
-      return manualFile.fsName;
     }
   }
 

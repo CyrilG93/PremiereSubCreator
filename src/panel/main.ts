@@ -142,6 +142,36 @@ function getSourceMode(): "srt" | "premiere_caption" | "whisper_local" {
   return (elements.sourceMode?.value as "srt" | "premiere_caption" | "whisper_local") || "srt";
 }
 
+function resolveExtensionRootPath(): string {
+  // // Resolve extension root from current file:// URL in CEP panel context.
+  try {
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.protocol !== "file:") {
+      return "";
+    }
+
+    let pathname = decodeURIComponent(currentUrl.pathname);
+    if (/^\/[a-zA-Z]:\//.test(pathname)) {
+      pathname = pathname.slice(1);
+    }
+
+    return pathname.replace(/\/index\.html.*$/i, "");
+  } catch {
+    return "";
+  }
+}
+
+function buildAbsoluteMogrtPath(extensionRootPath: string, templateRelativePath: string): string {
+  // // Compose absolute bundled MOGRT path so host can import without guessing.
+  if (!extensionRootPath || !templateRelativePath) {
+    return "";
+  }
+
+  const rootNormalized = extensionRootPath.replace(/\/$/, "");
+  const relNormalized = templateRelativePath.replace(/^\/+/, "");
+  return `${rootNormalized}/templates/mogrt/${relNormalized}`;
+}
+
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
@@ -304,6 +334,9 @@ function collectBuildOptions(): CaptionBuildOptions {
     selectedMogrt = availableMogrts[0];
   }
 
+  const extensionRootPath = resolveExtensionRootPath();
+  const templateRelativePath = selectedMogrt?.relativePath ?? "";
+
   return {
     sourceMode: getSourceMode(),
     languageCode: elements.languageSelect.value,
@@ -315,8 +348,9 @@ function collectBuildOptions(): CaptionBuildOptions {
       uppercase: elements.uppercase.checked,
       linesPerCaption: Number(elements.linesPerCaption.value)
     },
-    mogrtPath: "",
-    mogrtTemplateRelativePath: selectedMogrt?.relativePath ?? "",
+    extensionRootPath,
+    mogrtPath: buildAbsoluteMogrtPath(extensionRootPath, templateRelativePath),
+    mogrtTemplateRelativePath: templateRelativePath,
     whisperAudioPath: elements.whisperAudioPath.value.trim(),
     whisperModel: elements.whisperModel.value,
     videoTrackIndex: 0,

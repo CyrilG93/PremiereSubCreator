@@ -35,6 +35,7 @@ export interface CaptionBuildOptions {
   sourceMode: SourceMode;
   languageCode: string;
   style: CaptionStyleConfig;
+  extensionRootPath: string;
   mogrtPath: string;
   mogrtTemplateRelativePath: string;
   whisperAudioPath: string;

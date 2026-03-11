@@ -35,6 +35,7 @@ SRT works immediately.
 Whisper local can generate SRT on the fly from an audio/video file.
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
 If no local Whisper runtime is detected at panel startup, the `Whisper local (audio)` source option is hidden automatically.
+Installers also write a user-local runtime config (`subcreator-runtime.json`) with detected `python` / `whisper` / `ffmpeg` paths so CEP can run reliably even when host PATH is incomplete.
 
 ## Project structure
 
@@ -95,6 +96,7 @@ Installer behavior:
 - Adds `~/Library/Python/<version>/bin` to `~/.zprofile` and `~/.zshrc` when needed so `whisper` is in PATH.
 - Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).
 - Tries to install `ffmpeg` via Homebrew when available.
+- Writes runtime config to `~/Library/Application Support/SubCreator/subcreator-runtime.json`.
 
 ### Windows
 
@@ -109,6 +111,7 @@ Installer behavior:
 - Tries to auto-install `openai-whisper` with `py -3` or `python` when available and version is <= 3.13.
 - Skips Whisper auto-install when Python is missing or when Python version is 3.14+ (unsupported target for current package metadata).
 - Tries to install `ffmpeg` via `winget` when available.
+- Writes runtime config to `%APPDATA%\\SubCreator\\subcreator-runtime.json`.
 
 ## Release packaging
 

@@ -114,16 +114,187 @@ function subcreator_pick_audio_file() {
   }
 }
 
+function subcreator_runtime_push_unique(list, value) {
+  // // Push unique string values while keeping ExtendScript compatibility.
+  var normalized = subcreator_trim_string(String(value || ""));
+  if (!normalized) {
+    return;
+  }
+
+  var normalizedLower = normalized.toLowerCase();
+  for (var i = 0; i < list.length; i += 1) {
+    if (String(list[i] || "").toLowerCase() === normalizedLower) {
+      return;
+    }
+  }
+
+  list.push(normalized);
+}
+
+function subcreator_runtime_dirname(pathValue) {
+  // // Resolve parent folder for Windows or POSIX path strings.
+  var normalized = String(pathValue || "").replace(/\\/g, "/");
+  var slashIndex = normalized.lastIndexOf("/");
+  if (slashIndex < 1) {
+    return "";
+  }
+  return normalized.substring(0, slashIndex);
+}
+
+function subcreator_resolve_runtime_config_paths() {
+  // // Build user-local runtime config candidates written by installers.
+  var candidates = [];
+
+  if (subcreator_is_windows()) {
+    var appData = "";
+    try {
+      appData = subcreator_trim_string($.getenv("APPDATA"));
+    } catch (error) {}
+
+    if (!appData && Folder.userData) {
+      appData = subcreator_trim_string(Folder.userData.fsName);
+    }
+
+    if (appData) {
+      subcreator_runtime_push_unique(candidates, appData + "/SubCreator/subcreator-runtime.json");
+      subcreator_runtime_push_unique(candidates, appData + "/PremiereSubCreator/subcreator-runtime.json");
+    }
+
+    return candidates;
+  }
+
+  var homePath = Folder.home ? subcreator_trim_string(Folder.home.fsName) : "";
+  if (homePath) {
+    subcreator_runtime_push_unique(candidates, homePath + "/Library/Application Support/SubCreator/subcreator-runtime.json");
+    subcreator_runtime_push_unique(candidates, homePath + "/Library/Application Support/PremiereSubCreator/subcreator-runtime.json");
+  }
+
+  return candidates;
+}
+
+function subcreator_read_runtime_config() {
+  // // Read installer-generated runtime config to recover exact binary paths.
+  if (typeof JSON === "undefined" || !JSON || typeof JSON.parse !== "function") {
+    return null;
+  }
+
+  var candidatePaths = subcreator_resolve_runtime_config_paths();
+  for (var i = 0; i < candidatePaths.length; i += 1) {
+    var candidatePath = candidatePaths[i];
+    var fileRef = new File(candidatePath);
+    if (!fileRef.exists) {
+      continue;
+    }
+
+    if (!fileRef.open("r")) {
+      continue;
+    }
+
+    var payload = fileRef.read();
+    fileRef.close();
+    if (!payload || !subcreator_trim_string(payload)) {
+      continue;
+    }
+
+    try {
+      var parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === "object") {
+        parsed.__sourcePath = candidatePath;
+        return parsed;
+      }
+    } catch (error) {}
+  }
+
+  return null;
+}
+
+function subcreator_collect_runtime_path_hints(runtimeConfig) {
+  // // Collect PATH additions from config + known defaults so Whisper can find ffmpeg.
+  var hints = [];
+  if (!runtimeConfig || typeof runtimeConfig !== "object") {
+    return hints;
+  }
+
+  if (runtimeConfig.pathHints && typeof runtimeConfig.pathHints.length === "number") {
+    for (var i = 0; i < runtimeConfig.pathHints.length; i += 1) {
+      subcreator_runtime_push_unique(hints, runtimeConfig.pathHints[i]);
+    }
+  }
+
+  subcreator_runtime_push_unique(hints, subcreator_runtime_dirname(runtimeConfig.whisperPath));
+  subcreator_runtime_push_unique(hints, subcreator_runtime_dirname(runtimeConfig.pythonPath));
+  subcreator_runtime_push_unique(hints, subcreator_runtime_dirname(runtimeConfig.ffmpegPath));
+
+  if (subcreator_is_windows()) {
+    subcreator_runtime_push_unique(hints, "C:/Program Files/ffmpeg/bin");
+    subcreator_runtime_push_unique(hints, "C:/ffmpeg/bin");
+    subcreator_runtime_push_unique(hints, "C:/Windows/System32");
+  } else {
+    subcreator_runtime_push_unique(hints, "/opt/homebrew/bin");
+    subcreator_runtime_push_unique(hints, "/usr/local/bin");
+    subcreator_runtime_push_unique(hints, "/usr/bin");
+    subcreator_runtime_push_unique(hints, "/bin");
+  }
+
+  return hints;
+}
+
+function subcreator_build_runtime_env_prefix(runtimeConfig) {
+  // // Build shell prefix that injects runtime PATH hints before Whisper command execution.
+  var hints = subcreator_collect_runtime_path_hints(runtimeConfig);
+  if (!hints.length) {
+    return "";
+  }
+
+  if (subcreator_is_windows()) {
+    var windowsHints = [];
+    for (var i = 0; i < hints.length; i += 1) {
+      windowsHints.push(String(hints[i] || "").replace(/\//g, "\\"));
+    }
+    return 'set "PATH=' + windowsHints.join(";") + ';%PATH%" && ';
+  }
+
+  return "PATH=" + subcreator_quote_posix(hints.join(":")) + ":$PATH ";
+}
+
 function subcreator_build_whisper_command(audioPath, outputDir, model, languageCode) {
   // // Build CLI command string for local Whisper execution.
+  var runtimeConfig = subcreator_read_runtime_config();
+  var pathPrefix = subcreator_build_runtime_env_prefix(runtimeConfig);
   var whisperBinary = "whisper";
+  var usePythonModule = false;
+  var pythonCommandText = "";
+  if (runtimeConfig && typeof runtimeConfig === "object") {
+    var configuredWhisperPath = subcreator_trim_string(runtimeConfig.whisperPath || "");
+    var configuredPythonPath = subcreator_trim_string(runtimeConfig.pythonPath || "");
+    var configuredPythonCommand = subcreator_trim_string(runtimeConfig.pythonCommand || "");
+
+    if (configuredWhisperPath) {
+      whisperBinary = configuredWhisperPath;
+    } else if (configuredPythonPath) {
+      whisperBinary = configuredPythonPath;
+      usePythonModule = true;
+    } else if (configuredPythonCommand) {
+      pythonCommandText = configuredPythonCommand;
+      usePythonModule = true;
+    }
+  }
   var modelArg = model && model.length > 0 ? model : "base";
   var languageArg = languageCode && languageCode.length > 0 ? languageCode : "";
 
   if (subcreator_is_windows()) {
+    var launcherPrefix = "";
+    if (usePythonModule && pythonCommandText) {
+      launcherPrefix = pythonCommandText + " -m whisper ";
+    } else if (usePythonModule) {
+      launcherPrefix = subcreator_quote_cmd(whisperBinary) + " -m whisper ";
+    } else {
+      launcherPrefix = subcreator_quote_cmd(whisperBinary) + " ";
+    }
+
     var cmd =
-      whisperBinary +
-      " " +
+      pathPrefix +
+      launcherPrefix +
       subcreator_quote_cmd(audioPath) +
       " --model " +
       subcreator_quote_cmd(modelArg) +
@@ -138,9 +309,18 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
     return cmd;
   }
 
+  var launcher = "";
+  if (usePythonModule && pythonCommandText) {
+    launcher = pythonCommandText + " -m whisper ";
+  } else if (usePythonModule) {
+    launcher = subcreator_quote_posix(whisperBinary) + " -m whisper ";
+  } else {
+    launcher = subcreator_quote_posix(whisperBinary) + " ";
+  }
+
   var shellCmd =
-    whisperBinary +
-    " " +
+    pathPrefix +
+    launcher +
     subcreator_quote_posix(audioPath) +
     " --model " +
     subcreator_quote_posix(modelArg) +

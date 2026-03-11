@@ -78,6 +78,18 @@ interface PythonLauncherCandidate {
   label: string;
 }
 
+interface SubcreatorRuntimeConfig {
+  sourcePath: string;
+  pythonCommand: string;
+  pythonPath: string;
+  pythonVersion: string;
+  whisperPath: string;
+  ffmpegPath: string;
+  pathHints: string[];
+}
+
+let subcreatorRuntimeConfigCache: SubcreatorRuntimeConfig | null | undefined;
+
 function escapeForJsx(input: string): string {
   // // Escape special characters before embedding text into evalScript call strings.
   return input
@@ -158,15 +170,142 @@ function detectWindowsRuntime(): boolean {
   return /win/i.test(String(navigator?.platform || ""));
 }
 
-function discoverUserWhisperExecutables(modules: CepNodeModules): string[] {
+function pushUniqueString(target: string[], value: string): void {
+  // // Append a value only once while preserving initial order.
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return;
+  }
+
+  const lookup = normalized.toLowerCase();
+  for (const item of target) {
+    if (String(item || "").trim().toLowerCase() === lookup) {
+      return;
+    }
+  }
+
+  target.push(normalized);
+}
+
+function normalizeRuntimeConfigString(value: unknown): string {
+  // // Normalize optional runtime config values into clean strings.
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeRuntimeConfigPathHints(value: unknown): string[] {
+  // // Normalize optional path hint arrays from installer-generated config JSON.
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const hints: string[] = [];
+  for (const item of value) {
+    pushUniqueString(hints, normalizeRuntimeConfigString(item));
+  }
+
+  return hints;
+}
+
+function splitCommandString(value: string): { command: string; args: string[] } | null {
+  // // Split command text into executable + args for spawnSync when installers store launcher labels.
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length < 1) {
+    return null;
+  }
+
+  return {
+    command: tokens[0],
+    args: tokens.slice(1)
+  };
+}
+
+function resolveRuntimeConfigPathCandidates(modules: CepNodeModules): string[] {
+  // // Resolve user-local runtime config paths for macOS/Windows installer outputs.
+  const home = modules.os.homedir();
+  const candidates: string[] = [];
+
+  if (detectWindowsRuntime()) {
+    const appData = String(modules.process.env.APPDATA || modules.path.join(home, "AppData", "Roaming"));
+    pushUniqueString(candidates, modules.path.join(appData, "SubCreator", "subcreator-runtime.json"));
+    pushUniqueString(candidates, modules.path.join(appData, "PremiereSubCreator", "subcreator-runtime.json"));
+    return candidates;
+  }
+
+  pushUniqueString(candidates, modules.path.join(home, "Library", "Application Support", "SubCreator", "subcreator-runtime.json"));
+  pushUniqueString(candidates, modules.path.join(home, "Library", "Application Support", "PremiereSubCreator", "subcreator-runtime.json"));
+  return candidates;
+}
+
+function readRuntimeConfigFromDisk(modules: CepNodeModules): SubcreatorRuntimeConfig | null {
+  // // Read installer-generated runtime config so CEP can use exact binary paths reliably.
+  const candidates = resolveRuntimeConfigPathCandidates(modules);
+  for (const candidatePath of candidates) {
+    if (!modules.fs.existsSync(candidatePath)) {
+      continue;
+    }
+
+    try {
+      const rawText = String(modules.fs.readFileSync(candidatePath, "utf8") || "");
+      if (!rawText.trim()) {
+        continue;
+      }
+
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      const runtimeConfig: SubcreatorRuntimeConfig = {
+        sourcePath: candidatePath,
+        pythonCommand: normalizeRuntimeConfigString(parsed.pythonCommand),
+        pythonPath: normalizeRuntimeConfigString(parsed.pythonPath),
+        pythonVersion: normalizeRuntimeConfigString(parsed.pythonVersion),
+        whisperPath: normalizeRuntimeConfigString(parsed.whisperPath),
+        ffmpegPath: normalizeRuntimeConfigString(parsed.ffmpegPath),
+        pathHints: normalizeRuntimeConfigPathHints(parsed.pathHints)
+      };
+
+      if (
+        runtimeConfig.pythonCommand ||
+        runtimeConfig.pythonPath ||
+        runtimeConfig.whisperPath ||
+        runtimeConfig.ffmpegPath ||
+        runtimeConfig.pathHints.length > 0
+      ) {
+        return runtimeConfig;
+      }
+    } catch {
+      // // Ignore malformed runtime config files and continue fallback probing.
+    }
+  }
+
+  return null;
+}
+
+function getRuntimeConfig(modules: CepNodeModules): SubcreatorRuntimeConfig | null {
+  // // Cache runtime config lookup per session to avoid repeated disk reads.
+  if (typeof subcreatorRuntimeConfigCache !== "undefined") {
+    return subcreatorRuntimeConfigCache;
+  }
+
+  subcreatorRuntimeConfigCache = readRuntimeConfigFromDisk(modules);
+  return subcreatorRuntimeConfigCache;
+}
+
+function discoverUserWhisperExecutables(modules: CepNodeModules, runtimeConfig: SubcreatorRuntimeConfig | null): string[] {
   // // Probe common user-local installation locations where PATH may be incomplete in CEP.
   const discovered: string[] = [];
+  if (runtimeConfig && runtimeConfig.whisperPath && modules.fs.existsSync(runtimeConfig.whisperPath)) {
+    pushUniqueString(discovered, runtimeConfig.whisperPath);
+  }
+
   const home = modules.os.homedir();
   const directCandidates = [modules.path.join(home, ".local", "bin", "whisper"), modules.path.join(home, "bin", "whisper")];
 
   for (const candidate of directCandidates) {
     if (modules.fs.existsSync(candidate)) {
-      discovered.push(candidate);
+      pushUniqueString(discovered, candidate);
     }
   }
 
@@ -177,7 +316,7 @@ function discoverUserWhisperExecutables(modules: CepNodeModules): string[] {
       for (const versionName of versions) {
         const candidate = modules.path.join(pythonRoot, versionName, "bin", "whisper");
         if (modules.fs.existsSync(candidate)) {
-          discovered.push(candidate);
+          pushUniqueString(discovered, candidate);
         }
       }
     } catch {
@@ -210,14 +349,41 @@ function resolveWhisperInterpreterFromScript(modules: CepNodeModules, executable
   }
 }
 
-function buildSpawnEnv(modules: CepNodeModules, userExecutables: string[]): Record<string, string | undefined> {
+function buildSpawnEnv(
+  modules: CepNodeModules,
+  userExecutables: string[],
+  runtimeConfig: SubcreatorRuntimeConfig | null
+): Record<string, string | undefined> {
   // // Extend PATH for CEP-spawned subprocesses so ffmpeg/python locations are discoverable.
   const delimiter = detectWindowsRuntime() ? ";" : ":";
   const currentPath = String(modules.process.env.PATH || "");
   const segments = currentPath.length > 0 ? currentPath.split(delimiter).filter(Boolean) : [];
   const lowerSegments = segments.map((segment) => segment.toLowerCase());
 
-  const extraSegments = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  const extraSegments = detectWindowsRuntime()
+    ? [
+        "C:\\Program Files\\ffmpeg\\bin",
+        "C:\\ffmpeg\\bin",
+        modules.path.join(String(modules.process.env.SystemRoot || "C:\\Windows"), "System32")
+      ]
+    : ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+
+  if (runtimeConfig) {
+    for (const hintPath of runtimeConfig.pathHints) {
+      extraSegments.push(hintPath);
+    }
+
+    if (runtimeConfig.whisperPath) {
+      extraSegments.push(modules.path.dirname(runtimeConfig.whisperPath));
+    }
+    if (runtimeConfig.pythonPath) {
+      extraSegments.push(modules.path.dirname(runtimeConfig.pythonPath));
+    }
+    if (runtimeConfig.ffmpegPath) {
+      extraSegments.push(modules.path.dirname(runtimeConfig.ffmpegPath));
+    }
+  }
+
   for (const executablePath of userExecutables) {
     extraSegments.push(modules.path.dirname(executablePath));
   }
@@ -244,13 +410,14 @@ function buildSpawnEnv(modules: CepNodeModules, userExecutables: string[]): Reco
 function buildWhisperCommandCandidates(
   modules: CepNodeModules,
   request: WhisperTranscriptionRequest,
-  outputDir: string
+  outputDir: string,
+  userExecutables: string[],
+  runtimeConfig: SubcreatorRuntimeConfig | null
 ): WhisperCommandCandidate[] {
   // // Build ordered command fallbacks for diverse Whisper install methods.
   const baseArgs = buildWhisperArgs(request, outputDir);
   const candidates: WhisperCommandCandidate[] = [];
   const isWindows = detectWindowsRuntime();
-  const userExecutables = discoverUserWhisperExecutables(modules);
 
   function pushCandidate(command: string, args: string[], label: string): void {
     if (!command) {
@@ -264,6 +431,25 @@ function buildWhisperCommandCandidates(
     }
 
     candidates.push({ command, args, label });
+  }
+
+  if (runtimeConfig) {
+    if (runtimeConfig.whisperPath) {
+      pushCandidate(runtimeConfig.whisperPath, baseArgs, runtimeConfig.whisperPath);
+    }
+
+    if (runtimeConfig.pythonPath) {
+      pushCandidate(runtimeConfig.pythonPath, ["-m", "whisper", ...baseArgs], `${runtimeConfig.pythonPath} -m whisper`);
+    }
+
+    const pythonCommand = splitCommandString(runtimeConfig.pythonCommand);
+    if (pythonCommand) {
+      pushCandidate(
+        pythonCommand.command,
+        [...pythonCommand.args, "-m", "whisper", ...baseArgs],
+        `${runtimeConfig.pythonCommand} -m whisper`
+      );
+    }
   }
 
   for (const executablePath of userExecutables) {
@@ -297,7 +483,11 @@ function buildWhisperCommandCandidates(
   return candidates;
 }
 
-function buildPythonLauncherCandidates(modules: CepNodeModules, userExecutables: string[]): PythonLauncherCandidate[] {
+function buildPythonLauncherCandidates(
+  modules: CepNodeModules,
+  userExecutables: string[],
+  runtimeConfig: SubcreatorRuntimeConfig | null
+): PythonLauncherCandidate[] {
   // // Build Python launcher candidates used to detect `openai-whisper` module availability.
   const candidates: PythonLauncherCandidate[] = [];
 
@@ -313,6 +503,21 @@ function buildPythonLauncherCandidates(modules: CepNodeModules, userExecutables:
     }
 
     candidates.push({ command, argsPrefix, label });
+  }
+
+  if (runtimeConfig) {
+    if (runtimeConfig.pythonPath) {
+      pushCandidate(runtimeConfig.pythonPath, [], runtimeConfig.pythonPath);
+    }
+
+    const pythonCommand = splitCommandString(runtimeConfig.pythonCommand);
+    if (pythonCommand) {
+      pushCandidate(
+        pythonCommand.command,
+        pythonCommand.args,
+        runtimeConfig.pythonCommand || pythonCommand.command
+      );
+    }
   }
 
   for (const executablePath of userExecutables) {
@@ -385,16 +590,17 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
   }
 
   const checks: string[] = [];
-  const userExecutables = discoverUserWhisperExecutables(modules);
-  const spawnEnv = buildSpawnEnv(modules, userExecutables);
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
 
-  const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables);
+  const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables, runtimeConfig);
   for (const launcher of pythonLaunchers) {
     const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", "import whisper"], spawnEnv);
     if (probe.ok) {
       return {
         available: true,
-        details: `Python module detected via ${launcher.label}`
+        details: `Python module detected via ${launcher.label}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`
       };
     }
 
@@ -415,7 +621,7 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     if (probe.ok) {
       return {
         available: true,
-        details: `CLI detected via ${command}`
+        details: `CLI detected via ${command}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`
       };
     }
 
@@ -432,7 +638,7 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
 
   return {
     available: false,
-    details: checks.join(" | ")
+    details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`
   };
 }
 
@@ -467,10 +673,11 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     modules.fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const userExecutables = discoverUserWhisperExecutables(modules);
-  const spawnEnv = buildSpawnEnv(modules, userExecutables);
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
   const attempts: string[] = [];
-  const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir);
+  const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir, userExecutables, runtimeConfig);
   let collectedOutput = "";
 
   for (const candidate of commandCandidates) {
@@ -522,13 +729,26 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
 
   let installHint = "";
   if (detectWindowsRuntime()) {
-    installHint = "Install command: py -m pip install --user -U openai-whisper";
+    if (runtimeConfig?.pythonPath) {
+      installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user -U openai-whisper`;
+    } else if (runtimeConfig?.pythonCommand) {
+      installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user -U openai-whisper`;
+    } else {
+      installHint = "Install command: py -m pip install --user -U openai-whisper";
+    }
   } else {
     let interpreterHint = "";
-    for (const executablePath of userExecutables) {
-      interpreterHint = resolveWhisperInterpreterFromScript(modules, executablePath);
-      if (interpreterHint) {
-        break;
+    if (runtimeConfig?.pythonPath) {
+      interpreterHint = runtimeConfig.pythonPath;
+    } else if (runtimeConfig?.pythonCommand) {
+      interpreterHint = runtimeConfig.pythonCommand;
+    }
+    if (!interpreterHint) {
+      for (const executablePath of userExecutables) {
+        interpreterHint = resolveWhisperInterpreterFromScript(modules, executablePath);
+        if (interpreterHint) {
+          break;
+        }
       }
     }
 
@@ -540,8 +760,8 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
   }
   throw new Error(
     `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
-      collectedOutput || ""
-    }`
+      runtimeConfig ? `Runtime config: ${runtimeConfig.sourcePath}. ` : ""
+    }${collectedOutput || ""}`
   );
 }
 

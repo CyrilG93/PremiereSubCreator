@@ -97,6 +97,16 @@ interface ChunkRange {
   end: number;
 }
 
+function wordHasBoundaryPunctuation(word: string): boolean {
+  // // Detect words that should not start a caption chunk by themselves (e.g. "time,").
+  return /[,;:!?]$/.test(word.trim());
+}
+
+function wordStartsWithPunctuation(word: string): boolean {
+  // // Detect leading punctuation that should stay attached to previous words.
+  return /^[,;:!?)\]}]/.test(word.trim());
+}
+
 function chunkFits(words: string[], range: ChunkRange, maxCharsPerLine: number, linesPerCaption: number): boolean {
   // // Validate whether a chunk range still respects the max-lines wrapping rule.
   if (range.end <= range.start) {
@@ -166,6 +176,24 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
         leftSize -= 1;
         rightSize += 1;
         changed = true;
+      }
+
+      // // If the next chunk starts with punctuation-attached words, shift boundary left for better readability.
+      const rightFirstWord = words[right.start] ?? "";
+      if ((wordHasBoundaryPunctuation(rightFirstWord) || wordStartsWithPunctuation(rightFirstWord)) && leftSize > 1) {
+        const candidateBoundary = right.start - 1;
+        const candidateLeft = { start: left.start, end: candidateBoundary };
+        const candidateRight = { start: candidateBoundary, end: right.end };
+        const candidateRightSize = candidateRight.end - candidateRight.start;
+        if (
+          candidateRightSize > 1 &&
+          chunkFits(words, candidateLeft, maxCharsPerLine, linesPerCaption) &&
+          chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)
+        ) {
+          left.end = candidateBoundary;
+          right.start = candidateBoundary;
+          changed = true;
+        }
       }
     }
 

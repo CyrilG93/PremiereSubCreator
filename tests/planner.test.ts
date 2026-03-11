@@ -125,4 +125,30 @@ describe("buildCaptionPlan", () => {
     const lastChunkWordCount = planned[planned.length - 1].text.split(/\s+/).filter(Boolean).length;
     expect(lastChunkWordCount).toBeGreaterThan(1);
   });
+
+  it("prefers punctuation-aware chunk boundaries", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-5",
+          startSeconds: 0,
+          endSeconds: 8,
+          text: "He gets a response back in record time, since all the details",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 34,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    expect(planned.length).toBeGreaterThan(1);
+    const secondChunkText = planned[1].text.replace(/\n/g, " ");
+    expect(secondChunkText.toLowerCase().startsWith("time,")).toBe(false);
+  });
 });

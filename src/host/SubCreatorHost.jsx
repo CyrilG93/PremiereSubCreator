@@ -281,6 +281,98 @@ function subcreator_is_default_caption_label(text) {
   return normalized === "syntheticcaption";
 }
 
+function subcreator_decode_xml_entities(text) {
+  // // Decode common XML entities found in Premiere metadata blobs.
+  return String(text || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function subcreator_extract_text_from_metadata_blob(metadataText) {
+  // // Extract readable caption candidates from XMP/XML metadata payloads.
+  var metadata = String(metadataText || "");
+  if (!metadata) {
+    return "";
+  }
+
+  var candidates = [];
+
+  function pushCandidate(value) {
+    var normalized = subcreator_trim_string(subcreator_decode_xml_entities(String(value || "")).replace(/\s+/g, " "));
+    if (!normalized) {
+      return;
+    }
+
+    if (subcreator_is_default_caption_label(normalized)) {
+      return;
+    }
+
+    if (!/[A-Za-z0-9]/.test(normalized)) {
+      return;
+    }
+
+    if (normalized.length > 300) {
+      return;
+    }
+
+    var lower = normalized.toLowerCase();
+    if (lower.indexOf("http://") === 0 || lower.indexOf("https://") === 0) {
+      return;
+    }
+
+    for (var index = 0; index < candidates.length; index += 1) {
+      if (candidates[index] === normalized) {
+        return;
+      }
+    }
+
+    candidates.push(normalized);
+  }
+
+  var prioritizedTagPattern = /<(?:[^>]*)(?:caption|subtitle|transcript|spoken|dialog|text|logcomment)[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  var prioritizedMatch = null;
+  while ((prioritizedMatch = prioritizedTagPattern.exec(metadata))) {
+    pushCandidate(prioritizedMatch[1]);
+  }
+
+  var attributePattern = /\b(?:caption|subtitle|transcript|spoken|dialog|text|logcomment)[\w:-]*\s*=\s*"([^"]+)"/gi;
+  var attributeMatch = null;
+  while ((attributeMatch = attributePattern.exec(metadata))) {
+    pushCandidate(attributeMatch[1]);
+  }
+
+  var nodePattern = />([^<]+)</g;
+  var nodeMatch = null;
+  while ((nodeMatch = nodePattern.exec(metadata))) {
+    pushCandidate(nodeMatch[1]);
+  }
+
+  var bestCandidate = "";
+  var bestScore = -9999;
+  for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    var candidate = candidates[candidateIndex];
+    var wordCount = candidate.split(/\s+/).filter(Boolean).length;
+    var score = wordCount * 4 + Math.min(candidate.length, 120) / 20;
+    if (/[.,!?;:]/.test(candidate)) {
+      score += 1;
+    }
+
+    if (candidate.length < 2) {
+      score -= 10;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = candidate;
+    }
+  }
+
+  return bestCandidate;
+}
+
 function subcreator_extract_text_from_json_payload(payload) {
   // // Read text from JSON payload shapes used by caption and MOGRT controls.
   if (!payload || typeof payload !== "object") {
@@ -431,24 +523,204 @@ function subcreator_extract_text_from_item(item) {
     return "";
   }
 
+  function rememberTextCandidate(value, state) {
+    var normalizedValue = subcreator_trim_string(String(value || "").replace(/\r/g, "\n"));
+    if (!normalizedValue) {
+      return "";
+    }
+
+    if (!subcreator_is_default_caption_label(normalizedValue)) {
+      return normalizedValue;
+    }
+
+    if (!state.syntheticFallback) {
+      state.syntheticFallback = normalizedValue;
+    }
+
+    return "";
+  }
+
+  function extractTextFromUnknownValue(rawValue, state) {
+    if (rawValue === undefined || rawValue === null) {
+      return "";
+    }
+
+    if (typeof rawValue === "string") {
+      return rememberTextCandidate(rawValue, state);
+    }
+
+    if (typeof rawValue === "object") {
+      var fromPayload = subcreator_extract_text_from_property_value(rawValue);
+      var rememberPayload = rememberTextCandidate(fromPayload, state);
+      if (rememberPayload) {
+        return rememberPayload;
+      }
+
+      if (typeof rawValue.text !== "undefined") {
+        var fromTextField = rememberTextCandidate(rawValue.text, state);
+        if (fromTextField) {
+          return fromTextField;
+        }
+      }
+
+      try {
+        for (var valueKey in rawValue) {
+          if (!rawValue.hasOwnProperty(valueKey)) {
+            continue;
+          }
+
+          var keyValue = rawValue[valueKey];
+          if (keyValue === undefined || keyValue === null) {
+            continue;
+          }
+
+          var normalizedKey = String(valueKey || "").toLowerCase();
+          var keyLooksTextual =
+            normalizedKey.indexOf("text") !== -1 ||
+            normalizedKey.indexOf("caption") !== -1 ||
+            normalizedKey.indexOf("subtitle") !== -1 ||
+            normalizedKey.indexOf("transcript") !== -1 ||
+            normalizedKey.indexOf("content") !== -1 ||
+            normalizedKey.indexOf("comment") !== -1 ||
+            normalizedKey.indexOf("metadata") !== -1;
+
+          if (typeof keyValue === "string") {
+            if (keyLooksTextual || keyValue.indexOf(" ") !== -1) {
+              var keyString = rememberTextCandidate(keyValue, state);
+              if (keyString) {
+                return keyString;
+              }
+            }
+            continue;
+          }
+
+          if (typeof keyValue === "object" && keyLooksTextual) {
+            var nestedString = extractTextFromUnknownValue(keyValue, state);
+            if (nestedString) {
+              return nestedString;
+            }
+          }
+        }
+      } catch (rawValueKeyError) {}
+    }
+
+    return "";
+  }
+
+  function extractTextViaReflection(rawItem, state) {
+    if (!rawItem || !rawItem.reflect) {
+      return "";
+    }
+
+    try {
+      if (rawItem.reflect.methods && typeof rawItem.reflect.methods.length === "number") {
+        for (var methodIdx = 0; methodIdx < rawItem.reflect.methods.length; methodIdx += 1) {
+          var reflectedMethod = rawItem.reflect.methods[methodIdx];
+          var methodName = reflectedMethod ? String(reflectedMethod.name || "") : "";
+          if (!methodName) {
+            continue;
+          }
+
+          var methodKey = methodName.toLowerCase();
+          if (
+            methodKey.indexOf("text") === -1 &&
+            methodKey.indexOf("caption") === -1 &&
+            methodKey.indexOf("transcript") === -1 &&
+            methodKey.indexOf("content") === -1 &&
+            methodKey.indexOf("comment") === -1 &&
+            methodKey.indexOf("metadata") === -1 &&
+            methodKey.indexOf("name") === -1 &&
+            methodKey.indexOf("get") !== 0
+          ) {
+            continue;
+          }
+
+          try {
+            if (typeof rawItem[methodName] === "function") {
+              var reflectedValue = rawItem[methodName]();
+              var reflectedText = extractTextFromUnknownValue(reflectedValue, state);
+              if (reflectedText) {
+                return reflectedText;
+              }
+            }
+          } catch (reflectedMethodError) {}
+        }
+      }
+    } catch (reflectMethodsError) {}
+
+    try {
+      if (rawItem.reflect.properties && typeof rawItem.reflect.properties.length === "number") {
+        for (var propIdx = 0; propIdx < rawItem.reflect.properties.length; propIdx += 1) {
+          var reflectedProp = rawItem.reflect.properties[propIdx];
+          var propName = reflectedProp ? String(reflectedProp.name || "") : "";
+          if (!propName) {
+            continue;
+          }
+
+          var propKey = propName.toLowerCase();
+          if (
+            propKey.indexOf("text") === -1 &&
+            propKey.indexOf("caption") === -1 &&
+            propKey.indexOf("transcript") === -1 &&
+            propKey.indexOf("content") === -1 &&
+            propKey.indexOf("comment") === -1 &&
+            propKey.indexOf("metadata") === -1 &&
+            propKey.indexOf("name") === -1
+          ) {
+            continue;
+          }
+
+          try {
+            if (typeof rawItem[propName] !== "undefined") {
+              var reflectedPropText = extractTextFromUnknownValue(rawItem[propName], state);
+              if (reflectedPropText) {
+                return reflectedPropText;
+              }
+            }
+          } catch (reflectedPropError) {}
+        }
+      }
+    } catch (reflectPropsError) {}
+
+    return "";
+  }
+
   var syntheticFallback = "";
-  var methodNames = ["getCaptionText", "getText", "getSourceText", "getFormattedText", "getTranscriptText"];
+  var localState = { syntheticFallback: "" };
+  var methodNames = [
+    "getCaptionText",
+    "getText",
+    "getSourceText",
+    "getFormattedText",
+    "getTranscriptText",
+    "getComment",
+    "getMetadata",
+    "getProjectMetadata",
+    "getXMPMetadata"
+  ];
   for (var methodIndex = 0; methodIndex < methodNames.length; methodIndex += 1) {
     var methodName = methodNames[methodIndex];
     try {
       if (typeof item[methodName] === "function") {
-        var methodText = subcreator_trim_string(String(item[methodName]() || "").replace(/\r/g, "\n"));
+        var methodText = rememberTextCandidate(item[methodName](), localState);
         if (methodText) {
-          if (!subcreator_is_default_caption_label(methodText)) {
-            return methodText;
-          }
-
-          if (!syntheticFallback) {
-            syntheticFallback = methodText;
-          }
+          return methodText;
         }
       }
     } catch (methodError) {}
+  }
+
+  if (localState.syntheticFallback) {
+    syntheticFallback = localState.syntheticFallback;
+  }
+
+  var reflectedText = extractTextViaReflection(item, localState);
+  if (reflectedText) {
+    return reflectedText;
+  }
+
+  if (!syntheticFallback && localState.syntheticFallback) {
+    syntheticFallback = localState.syntheticFallback;
   }
 
   var componentText = subcreator_extract_text_from_item_components(item);
@@ -484,14 +756,22 @@ function subcreator_extract_text_from_item(item) {
   try {
     if (item.projectItem && typeof item.projectItem.getProjectMetadata === "function") {
       var metadata = String(item.projectItem.getProjectMetadata() || "");
-      if (metadata && metadata.indexOf("SyntheticCaption") === -1) {
-        var metadataMatch = metadata.match(/<xmpDM:logComment>([\s\S]*?)<\/xmpDM:logComment>/);
-        if (metadataMatch && metadataMatch[1]) {
-          return subcreator_trim_string(String(metadataMatch[1]).replace(/\s+/g, " "));
-        }
+      var metadataText = subcreator_extract_text_from_metadata_blob(metadata);
+      if (metadataText) {
+        return metadataText;
       }
     }
   } catch (metadataError) {}
+
+  try {
+    if (item.projectItem && typeof item.projectItem.getXMPMetadata === "function") {
+      var xmpMetadata = String(item.projectItem.getXMPMetadata() || "");
+      var xmpText = subcreator_extract_text_from_metadata_blob(xmpMetadata);
+      if (xmpText) {
+        return xmpText;
+      }
+    }
+  } catch (xmpMetadataError) {}
 
   if (item.projectItem && item.projectItem.name) {
     var projectItemName = subcreator_trim_string(String(item.projectItem.name || ""));
@@ -520,6 +800,23 @@ function subcreator_extract_text_from_item(item) {
   }
 
   return syntheticFallback;
+}
+
+function subcreator_drop_synthetic_cues(cues) {
+  // // Keep cues that expose readable text and drop synthetic placeholder labels.
+  var filtered = [];
+  for (var index = 0; index < cues.length; index += 1) {
+    var cue = cues[index];
+    if (!cue) {
+      continue;
+    }
+
+    if (!subcreator_is_default_caption_label(cue.text || "")) {
+      filtered.push(cue);
+    }
+  }
+
+  return filtered;
 }
 
 function subcreator_collect_track_items(track) {
@@ -604,10 +901,23 @@ function subcreator_extract_active_caption_track() {
         }
 
         var trackItems = subcreator_collect_track_items(selectedTrack);
+        var selectedTrackCues = subcreator_drop_synthetic_cues(subcreator_extract_cues_from_items(trackItems));
+        if (selectedTrackCues.length > 0) {
+          return subcreator_ok(selectedTrackCues);
+        }
 
-        var cues = subcreator_extract_cues_from_items(trackItems);
-        if (cues.length > 0) {
-          return subcreator_ok(cues);
+        var bestTrackCues = [];
+        for (var trackIndex = 0; trackIndex < tracks.length; trackIndex += 1) {
+          var candidateTrack = tracks[trackIndex];
+          var candidateItems = subcreator_collect_track_items(candidateTrack);
+          var candidateCues = subcreator_drop_synthetic_cues(subcreator_extract_cues_from_items(candidateItems));
+          if (candidateCues.length > bestTrackCues.length) {
+            bestTrackCues = candidateCues;
+          }
+        }
+
+        if (bestTrackCues.length > 0) {
+          return subcreator_ok(bestTrackCues);
         }
       }
     }
@@ -615,14 +925,14 @@ function subcreator_extract_active_caption_track() {
     // // Fallback: try selected timeline items when captionTracks API is unavailable.
     if (typeof sequence.getSelection === "function") {
       var selection = subcreator_collection_to_array(sequence.getSelection());
-      var selectionCues = subcreator_extract_cues_from_items(selection);
+      var selectionCues = subcreator_drop_synthetic_cues(subcreator_extract_cues_from_items(selection));
       if (selectionCues.length > 0) {
         return subcreator_ok(selectionCues);
       }
     }
 
     return subcreator_error(
-      "Impossible de lire la piste caption active avec cette API CEP. Si possible, selectionne les clips caption sur la timeline ou utilise la source SRT."
+      "Impossible de lire un texte caption exploitable (Premiere renvoie uniquement des labels SyntheticCaption via cette API CEP). Selectionne les clips caption ou utilise la source SRT."
     );
   } catch (error) {
     return subcreator_error(error);
@@ -1139,155 +1449,114 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
   return applied;
 }
 
-function subcreator_get_or_create_top_video_track_index(sequence) {
-  // // Create a new top video track using non-destructive insertion signatures first.
-  var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
-  var beforeSignatures = [];
-
-  function resolveTopUsableTrackIndex(trackCollection) {
-    // // Prefer an empty top track; otherwise use the current top-most track.
-    if (!trackCollection || typeof trackCollection.numTracks !== "number") {
-      return 0;
-    }
-
-    var totalTracks = Number(trackCollection.numTracks || 0);
-    if (totalTracks < 1) {
-      return 0;
-    }
-
-    for (var topIndex = totalTracks - 1; topIndex >= 0; topIndex -= 1) {
-      var track = trackCollection[topIndex];
-      var clipCount = track && track.clips ? Number(track.clips.numItems || 0) : 0;
-      if (clipCount < 1) {
-        return topIndex;
-      }
-    }
-
-    return totalTracks - 1;
+function subcreator_get_video_track_clip_count(track) {
+  // // Read clip count in a defensive way across Premiere/QE collection variants.
+  if (!track || !track.clips) {
+    return 0;
   }
 
-  function captureTrackSignatures(trackCollection) {
-    var signatures = [];
-    if (!trackCollection || typeof trackCollection.numTracks !== "number") {
-      return signatures;
-    }
-
-    for (var trackIndex = 0; trackIndex < trackCollection.numTracks; trackIndex += 1) {
-      var track = trackCollection[trackIndex];
-      var clipCount = track && track.clips ? Number(track.clips.numItems || 0) : 0;
-      var firstSignature = "";
-      var lastSignature = "";
-
-      if (clipCount > 0 && track && track.clips) {
-        var firstClip = track.clips[0];
-        var lastClip = track.clips[clipCount - 1];
-        firstSignature =
-          String(firstClip && firstClip.projectItem ? firstClip.projectItem.name : "") +
-          "@" +
-          String(subcreator_to_seconds(firstClip ? firstClip.start : 0));
-        lastSignature =
-          String(lastClip && lastClip.projectItem ? lastClip.projectItem.name : "") +
-          "@" +
-          String(subcreator_to_seconds(lastClip ? lastClip.start : 0));
-      }
-
-      signatures.push([String(clipCount), firstSignature, lastSignature].join("|"));
-    }
-
-    return signatures;
+  if (typeof track.clips.numItems === "number") {
+    return Number(track.clips.numItems || 0);
   }
 
-  function detectInsertedTrackIndex(before, after) {
-    if (after.length !== before.length + 1) {
-      return -1;
-    }
+  if (typeof track.clips.length === "number") {
+    return Number(track.clips.length || 0);
+  }
 
-    for (var insertIndex = 0; insertIndex < after.length; insertIndex += 1) {
-      var matches = true;
+  return 0;
+}
 
-      for (var beforeIndex = 0; beforeIndex < before.length; beforeIndex += 1) {
-        var afterIndex = beforeIndex < insertIndex ? beforeIndex : beforeIndex + 1;
-        if (before[beforeIndex] !== after[afterIndex]) {
-          matches = false;
-          break;
-        }
-      }
-
-      if (matches) {
-        return insertIndex;
-      }
-    }
-
+function subcreator_find_highest_empty_video_track_index(trackCollection) {
+  // // Return the top-most empty track to avoid touching existing media clips.
+  if (!trackCollection || typeof trackCollection.numTracks !== "number") {
     return -1;
   }
 
-  beforeSignatures = captureTrackSignatures(sequence.videoTracks);
-  var created = false;
-  var createdIndex = -1;
+  var totalTracks = Number(trackCollection.numTracks || 0);
+  if (totalTracks < 1) {
+    return -1;
+  }
 
+  for (var trackIndex = totalTracks - 1; trackIndex >= 0; trackIndex -= 1) {
+    var track = trackCollection[trackIndex];
+    if (subcreator_get_video_track_clip_count(track) < 1) {
+      return trackIndex;
+    }
+  }
+
+  return -1;
+}
+
+function subcreator_get_or_create_top_video_track_index(sequence) {
+  // // Reuse top empty track when possible, otherwise append a new top track via QE.
+  var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  if (currentTracks > 0) {
+    var reusableTopEmpty = subcreator_find_highest_empty_video_track_index(sequence.videoTracks);
+    if (reusableTopEmpty >= 0) {
+      return {
+        index: reusableTopEmpty,
+        created: false,
+        beforeTracks: currentTracks,
+        afterTracks: currentTracks
+      };
+    }
+  }
+
+  var created = false;
+  var inserted = false;
   try {
     if (typeof app.enableQE === "function") {
       app.enableQE();
       if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
         var qeSequence = qe.project.getActiveSequence();
         if (qeSequence && typeof qeSequence.addTracks === "function") {
-          var inserted = false;
-
           if (!inserted && currentTracks > 0) {
             try {
-              // // Most reliable append signature from QE docs/community examples.
-              qeSequence.addTracks(1, currentTracks - 1, 0, 0, 0);
+              // // Append one video track at the top so existing tracks are untouched.
+              qeSequence.addTracks(1, currentTracks, 0, 0, 0);
               inserted = true;
             } catch (signatureErrorAppendFull) {}
           }
 
           if (!inserted && currentTracks > 0) {
             try {
-              qeSequence.addTracks(1, currentTracks - 1, 0, 0);
+              qeSequence.addTracks(1, currentTracks, 0, 0);
               inserted = true;
             } catch (signatureErrorAppendShort) {}
           }
 
           if (!inserted && currentTracks > 0) {
             try {
-              qeSequence.addTracks(1, currentTracks - 1, 0);
+              qeSequence.addTracks(1, currentTracks, 0);
               inserted = true;
             } catch (signatureErrorAppendMinimal) {}
           }
 
           if (!inserted && currentTracks > 0) {
             try {
-              qeSequence.addTracks(1, currentTracks - 1);
+              qeSequence.addTracks(1, currentTracks);
               inserted = true;
             } catch (signatureErrorAppendTwoArgs) {}
           }
 
           try {
-            if (!inserted && currentTracks < 1) {
+            if (!inserted) {
               qeSequence.addTracks(1);
               inserted = true;
             }
-          } catch (signatureErrorEmptySequence) {}
+          } catch (signatureErrorSingleArg) {}
         }
       }
     }
   } catch (error) {}
 
   var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
-  var afterSignatures = captureTrackSignatures(sequence.videoTracks);
-
-  if (updatedTracks > currentTracks) {
-    created = true;
-    createdIndex = detectInsertedTrackIndex(beforeSignatures, afterSignatures);
-    if (createdIndex < 0 || createdIndex > updatedTracks - 1) {
-      createdIndex = updatedTracks - 1;
-    }
-  }
-
-  var fallbackIndex = resolveTopUsableTrackIndex(sequence.videoTracks);
+  created = updatedTracks > currentTracks;
+  var highestEmptyAfter = subcreator_find_highest_empty_video_track_index(sequence.videoTracks);
+  var fallbackTop = updatedTracks > 0 ? updatedTracks - 1 : 0;
 
   return {
-    index: created ? createdIndex : fallbackIndex,
+    index: highestEmptyAfter >= 0 ? highestEmptyAfter : fallbackTop,
     created: created,
     beforeTracks: currentTracks,
     afterTracks: updatedTracks

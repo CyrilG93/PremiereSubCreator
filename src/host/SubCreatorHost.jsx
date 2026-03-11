@@ -400,31 +400,143 @@ function subcreator_extract_active_caption_track() {
   }
 }
 
+function subcreator_should_try_text_property(displayName, rawValue) {
+  // // Identify likely text controls from label and raw value shape.
+  var key = String(displayName || "").toLowerCase();
+  if (
+    key.indexOf("source text") !== -1 ||
+    key.indexOf("texte source") !== -1 ||
+    key.indexOf("caption") !== -1 ||
+    key.indexOf("subtitle") !== -1 ||
+    key.indexOf("title") !== -1 ||
+    key === "text"
+  ) {
+    return true;
+  }
+
+  var raw = String(rawValue || "");
+  return (
+    raw.indexOf("\"textEditValue\"") !== -1 ||
+    raw.indexOf("\"mText\"") !== -1 ||
+    raw.indexOf("\"fontTextRunLength\"") !== -1
+  );
+}
+
+function subcreator_try_set_json_text_payload(payload, textValue) {
+  // // Update known text fields in MOGRT JSON payloads.
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  var updated = false;
+
+  if (typeof payload.textEditValue !== "undefined") {
+    payload.textEditValue = textValue;
+    updated = true;
+  }
+
+  if (payload.styleSheet && typeof payload.styleSheet === "object" && typeof payload.styleSheet.mText !== "undefined") {
+    payload.styleSheet.mText = textValue;
+    updated = true;
+  }
+
+  if (payload.mStyleSheet && typeof payload.mStyleSheet === "object" && typeof payload.mStyleSheet.mText !== "undefined") {
+    payload.mStyleSheet.mText = textValue;
+    updated = true;
+  }
+
+  if (payload.mTextParam && typeof payload.mTextParam === "object") {
+    if (typeof payload.mTextParam.mText !== "undefined") {
+      payload.mTextParam.mText = textValue;
+      updated = true;
+    }
+    if (
+      payload.mTextParam.mStyleSheet &&
+      typeof payload.mTextParam.mStyleSheet === "object" &&
+      typeof payload.mTextParam.mStyleSheet.mText !== "undefined"
+    ) {
+      payload.mTextParam.mStyleSheet.mText = textValue;
+      updated = true;
+    }
+  }
+
+  if (typeof payload.fontTextRunLength !== "undefined") {
+    payload.fontTextRunLength = [String(textValue).length];
+    updated = true;
+  }
+
+  return updated;
+}
+
+function subcreator_try_set_mogrt_text_property(property, textValue) {
+  // // Apply text to a property, supporting both plain strings and JSON-based payloads.
+  var displayName = property.displayName || "";
+  var rawValue = "";
+
+  if (typeof property.getValue === "function") {
+    try {
+      rawValue = property.getValue();
+    } catch (getError) {
+      rawValue = "";
+    }
+  }
+
+  if (!subcreator_should_try_text_property(displayName, rawValue)) {
+    return false;
+  }
+
+  var textString = String(textValue || "");
+
+  if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
+    try {
+      var parsed = JSON.parse(rawValue);
+      if (subcreator_try_set_json_text_payload(parsed, textString)) {
+        property.setValue(JSON.stringify(parsed), true);
+        return true;
+      }
+    } catch (jsonError) {}
+  }
+
+  try {
+    property.setValue(textString, true);
+    return true;
+  } catch (setError) {}
+
+  return false;
+}
+
 function subcreator_try_set_mogrt_text(trackItem, textValue) {
-  // // Attempt to update known text properties on inserted MOGRT components.
-  if (!trackItem || !textValue || typeof trackItem.getMGTComponent !== "function") {
-    return false;
+  // // Attempt to update text properties on inserted MOGRT components (plain and JSON-encoded formats).
+  if (!trackItem || !textValue) {
+    return 0;
   }
 
-  var component = trackItem.getMGTComponent();
+  var component = null;
+  if (typeof trackItem.getMGTComponent === "function") {
+    component = trackItem.getMGTComponent();
+  }
+
+  if (!component && trackItem.components && trackItem.components.numItems > 0) {
+    component = trackItem.components[0];
+  }
+
   if (!component || !component.properties || component.properties.numItems < 1) {
-    return false;
+    return 0;
   }
 
+  var updatedCount = 0;
   for (var i = 0; i < component.properties.numItems; i += 1) {
     var property = component.properties[i];
-    if (!property || !property.displayName || typeof property.setValue !== "function") {
+    if (!property || typeof property.setValue !== "function") {
       continue;
     }
 
-    var key = String(property.displayName).toLowerCase();
-    if (key.indexOf("source text") !== -1 || key.indexOf("texte source") !== -1 || key === "text") {
-      property.setValue(textValue, true);
-      return true;
+    if (subcreator_try_set_mogrt_text_property(property, textValue)) {
+      updatedCount += 1;
     }
   }
 
-  return false;
+  return updatedCount;
 }
 
 function subcreator_resolve_extension_root() {
@@ -590,9 +702,57 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
   return importResult;
 }
 
+function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) {
+  // // Apply cue-specific end time to imported MOGRT clip when API allows it.
+  if (!trackItem) {
+    return false;
+  }
+
+  var safeStart = Number(startSeconds);
+  var safeEnd = Number(endSeconds);
+  if (isNaN(safeStart) || isNaN(safeEnd) || safeEnd <= safeStart) {
+    return false;
+  }
+
+  var applied = false;
+  var endTime = null;
+  try {
+    endTime = new Time();
+    endTime.seconds = safeEnd;
+  } catch (createTimeError) {
+    endTime = null;
+  }
+
+  if (endTime) {
+    try {
+      trackItem.end = endTime;
+      applied = true;
+    } catch (endAssignError) {}
+
+    try {
+      if (trackItem.end && typeof trackItem.end.seconds !== "undefined") {
+        trackItem.end.seconds = safeEnd;
+        applied = true;
+      }
+    } catch (endSecondsError) {}
+  }
+
+  try {
+    if (typeof trackItem.outPoint !== "undefined") {
+      var outPointTime = new Time();
+      outPointTime.seconds = Math.max(safeEnd - safeStart, 0.01);
+      trackItem.outPoint = outPointTime;
+      applied = true;
+    }
+  } catch (outPointError) {}
+
+  return applied;
+}
+
 function subcreator_get_or_create_top_video_track_index(sequence) {
   // // Create a new top video track and return its index, with safe fallbacks.
   var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  var insertAfterIndex = currentTracks > 0 ? currentTracks - 1 : 0;
 
   try {
     if (typeof app.enableQE === "function") {
@@ -600,19 +760,15 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
       if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
         var qeSequence = qe.project.getActiveSequence();
         if (qeSequence && typeof qeSequence.addTracks === "function") {
-          if (currentTracks > 0) {
+          try {
+            // // QE signature: addTracks(videoNum, insertAfterVideoIndex, audioNum, insertAfterAudioIndex).
+            qeSequence.addTracks(1, insertAfterIndex, 0, 0);
+          } catch (signatureErrorFull) {
             try {
-              // // Prefer inserting after the highest existing index so new track is on top.
-              qeSequence.addTracks(1, currentTracks, 0);
-            } catch (signatureErrorTop) {
-              try {
-                qeSequence.addTracks(1, currentTracks - 1, 0);
-              } catch (signatureErrorFallback) {
-                qeSequence.addTracks(1);
-              }
+              qeSequence.addTracks(1, insertAfterIndex, 0);
+            } catch (signatureErrorShort) {
+              qeSequence.addTracks(1);
             }
-          } else {
-            qeSequence.addTracks(1);
           }
         }
       }
@@ -651,6 +807,7 @@ function subcreator_apply_captions(payloadEncoded) {
     var insertedMogrt = 0;
     var insertedMarkers = 0;
     var updatedText = 0;
+    var durationAdjusted = 0;
     var mogrtAttempted = 0;
     var lastImportMode = "";
     var lastImportPath = "";
@@ -668,8 +825,12 @@ function subcreator_apply_captions(payloadEncoded) {
           insertedMogrt += 1;
           lastImportMode = importAttempt.usedTimeMode;
           lastImportPath = importAttempt.usedPath;
-          if (subcreator_try_set_mogrt_text(importAttempt.trackItem, text)) {
-            updatedText += 1;
+          var updatedTextProps = subcreator_try_set_mogrt_text(importAttempt.trackItem, text);
+          if (updatedTextProps > 0) {
+            updatedText += updatedTextProps;
+          }
+          if (subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
+            durationAdjusted += 1;
           }
           continue;
         }
@@ -692,6 +853,7 @@ function subcreator_apply_captions(payloadEncoded) {
       insertedMogrt: insertedMogrt,
       insertedMarkers: insertedMarkers,
       mogrtTextUpdated: updatedText,
+      mogrtDurationAdjusted: durationAdjusted,
       mogrtUsed: hasMogrt,
       mogrtPathResolved: mogrtPath,
       mogrtPathCandidates: pathCandidates,

@@ -109,7 +109,7 @@ call :subcreator_detect_whisper_path
 call :subcreator_detect_ffmpeg_path
 call :subcreator_write_runtime_config
 
-echo If needed, enable CEP debug mode and restart Premiere Pro.
+echo Restart Premiere Pro.
 
 :subcreator_done
 endlocal

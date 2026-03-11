@@ -661,6 +661,53 @@ function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audio
   return "";
 }
 
+function summarizeWhisperErrorOutput(output: string): string {
+  // // Extract a meaningful root-cause line from Whisper tracebacks for actionable panel logs.
+  const normalized = String(output || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const lines = normalized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (!lines.length) {
+    return "";
+  }
+
+  const preferredPatterns = [
+    /SSLCertVerificationError/i,
+    /CERTIFICATE_VERIFY_FAILED/i,
+    /urllib\.error\.URLError/i,
+    /No module named whisper/i,
+    /No such file or directory.*ffmpeg/i,
+    /\bffmpeg\b.*(not found|missing|failed)/i,
+    /Permission denied/i,
+    /File not found/i
+  ];
+
+  for (const pattern of preferredPatterns) {
+    for (const line of lines) {
+      if (pattern.test(line)) {
+        return line;
+      }
+    }
+  }
+
+  return lines[lines.length - 1] || lines[0] || "";
+}
+
+function isWhisperFatalDownloadError(summary: string): boolean {
+  // // Detect SSL download failures where retrying alternate launchers is noise-only.
+  const normalized = String(summary || "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.indexOf("sslcertverificationerror") !== -1 || normalized.indexOf("certificate_verify_failed") !== -1;
+}
+
 function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): WhisperTranscriptionResult | null {
   // // Run Whisper with CEP Node runtime to avoid ExtendScript `system.callSystem` availability issues.
   const modules = resolveCepNodeModules();
@@ -679,6 +726,7 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
   const attempts: string[] = [];
   const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir, userExecutables, runtimeConfig);
   let collectedOutput = "";
+  let rootCauseSummary = "";
 
   for (const candidate of commandCandidates) {
     const run = modules.childProcess.spawnSync(candidate.command, candidate.args, {
@@ -697,13 +745,19 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     }
 
     const attemptOutput = [String(run.stdout || ""), String(run.stderr || "")].filter(Boolean).join("\n").trim();
-    if (attemptOutput) {
+    if (attemptOutput && !collectedOutput) {
       collectedOutput = attemptOutput;
     }
 
     if (typeof run.status === "number" && run.status !== 0) {
-      const firstLine = attemptOutput.split(/\r?\n/).find((line) => line.trim().length > 0) || "";
-      attempts.push(`${candidate.label}: exit ${run.status}${firstLine ? ` (${firstLine})` : ""}`);
+      const summary = summarizeWhisperErrorOutput(attemptOutput);
+      if (summary && !rootCauseSummary) {
+        rootCauseSummary = summary;
+      }
+      attempts.push(`${candidate.label}: exit ${run.status}${summary ? ` (${summary})` : ""}`);
+      if (isWhisperFatalDownloadError(summary)) {
+        break;
+      }
       continue;
     }
 
@@ -728,6 +782,7 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
   }
 
   let installHint = "";
+  let runtimeHint = "";
   if (detectWindowsRuntime()) {
     if (runtimeConfig?.pythonPath) {
       installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user -U openai-whisper`;
@@ -758,10 +813,14 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
       installHint = "Install command: python3 -m pip install --user -U openai-whisper";
     }
   }
+  if (rootCauseSummary && /sslcertverificationerror|certificate_verify_failed|urllib\.error\.urlerror/i.test(rootCauseSummary)) {
+    runtimeHint =
+      "Model download failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or pre-download Whisper models.";
+  }
   throw new Error(
     `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
       runtimeConfig ? `Runtime config: ${runtimeConfig.sourcePath}. ` : ""
-    }${collectedOutput || ""}`
+    }${runtimeHint ? `${runtimeHint}. ` : ""}${collectedOutput || ""}`
   );
 }
 

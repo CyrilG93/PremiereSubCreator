@@ -71,6 +71,8 @@ Then verify:
 whisper --help
 ```
 
+Note: first Whisper transcription downloads the selected model. In enterprise/proxy environments, Python SSL trust issues can block this download (`CERTIFICATE_VERIFY_FAILED`).
+
 ## Commands
 
 - `npm run subcreator:build` Build extension to `dist/com.cyrilg93.subcreator`.

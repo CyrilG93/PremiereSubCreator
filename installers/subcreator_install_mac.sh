@@ -345,5 +345,4 @@ subcreator_resolve_python_executable_path || true
 subcreator_detect_whisper_path || true
 subcreator_detect_ffmpeg_path || true
 subcreator_write_runtime_config
-
-echo "If needed, enable CEP debug mode and restart Premiere Pro."
+echo "Restart Premiere Pro."

@@ -602,9 +602,14 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
         if (qeSequence && typeof qeSequence.addTracks === "function") {
           if (currentTracks > 0) {
             try {
-              qeSequence.addTracks(1, currentTracks - 1, 0);
-            } catch (signatureError) {
-              qeSequence.addTracks(1);
+              // // Prefer inserting after the highest existing index so new track is on top.
+              qeSequence.addTracks(1, currentTracks, 0);
+            } catch (signatureErrorTop) {
+              try {
+                qeSequence.addTracks(1, currentTracks - 1, 0);
+              } catch (signatureErrorFallback) {
+                qeSequence.addTracks(1);
+              }
             }
           } else {
             qeSequence.addTracks(1);

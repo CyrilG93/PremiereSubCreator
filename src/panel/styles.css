@@ -395,7 +395,7 @@ input[type="checkbox"] {
 
 .visual-property-list {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .visual-group {
@@ -407,8 +407,8 @@ input[type="checkbox"] {
 
 .visual-group__title {
   cursor: pointer;
-  padding: 7px 10px;
-  font-size: 0.72rem;
+  padding: 6px 8px;
+  font-size: 0.69rem;
   font-weight: 650;
   color: var(--accent-soft);
   list-style: none;
@@ -432,27 +432,27 @@ input[type="checkbox"] {
 
 .visual-group__body {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   border-top: 1px solid rgba(52, 72, 97, 0.45);
-  padding: 8px;
+  padding: 6px;
 }
 
 .visual-property-item {
   display: grid;
-  grid-template-columns: minmax(110px, 1fr) 1.6fr;
-  gap: 8px;
+  grid-template-columns: minmax(110px, 0.95fr) 1.65fr;
+  gap: 6px;
   align-items: start;
-  border: 1px solid rgba(52, 72, 97, 0.45);
-  border-radius: 7px;
-  background: rgba(18, 26, 41, 0.92);
-  padding: 6px;
+  border: 1px solid rgba(52, 72, 97, 0.35);
+  border-radius: 6px;
+  background: rgba(18, 26, 41, 0.86);
+  padding: 5px 6px;
 }
 
 .visual-property-label {
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   color: var(--accent-soft);
-  line-height: 1.25;
-  padding-top: 6px;
+  line-height: 1.2;
+  padding-top: 5px;
 }
 
 .visual-property-control {
@@ -460,7 +460,7 @@ input[type="checkbox"] {
 }
 
 .visual-property-control textarea {
-  min-height: 54px;
+  min-height: 48px;
   resize: vertical;
   line-height: 1.35;
 }
@@ -469,20 +469,20 @@ input[type="checkbox"] {
 .visual-property-control input[type="text"],
 .visual-property-control textarea,
 .visual-property-control select {
-  padding: 6px 7px;
-  font-size: 0.78rem;
+  padding: 5px 6px;
+  font-size: 0.75rem;
 }
 
 .visual-property-control input[type="color"] {
-  min-height: 34px;
+  min-height: 30px;
   padding: 2px;
 }
 
 .visual-property-item--checkbox {
   grid-template-columns: auto 1fr;
   align-items: center;
-  padding: 6px 8px;
-  min-height: 34px;
+  padding: 5px 7px;
+  min-height: 30px;
 }
 
 .visual-property-item--checkbox .visual-property-label {
@@ -491,14 +491,25 @@ input[type="checkbox"] {
 
 .visual-slider-row {
   display: grid;
-  grid-template-columns: 1fr 84px;
-  gap: 8px;
+  grid-template-columns: 1fr 76px;
+  gap: 6px;
   align-items: center;
 }
 
 .visual-slider-row input[type="range"] {
   padding: 0;
-  height: 24px;
+  height: 20px;
+}
+
+.visual-vector-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.visual-vector-input {
+  min-width: 0;
+  text-align: center;
 }
 
 @media (max-width: 640px) {
@@ -512,6 +523,10 @@ input[type="checkbox"] {
 
   .visual-slider-row {
     grid-template-columns: 1fr;
+  }
+
+  .visual-vector-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

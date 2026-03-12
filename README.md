@@ -10,7 +10,7 @@ It supports:
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - Two UI tabs:
   - `Creation`: source -> planning -> MOGRT insertion.
-  - `Visual editor`: read and apply editable Essential Graphics parameters on selected MOGRT clips with grouped compact controls (sliders, checkboxes, colors, text).
+  - `Visual editor`: read and apply editable Essential Graphics style parameters on selected MOGRT clips with grouped compact controls (sliders, checkboxes, colors, vectors).
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
   - Apply text controls recursively (including grouped Essential Graphics properties) and map animation mode to controls like `Highlight Based On`.
@@ -20,6 +20,7 @@ It supports:
 - Version label in panel header + automatic GitHub release update banner.
 - Persisted panel settings (source, style, limits, language, and selected MOGRT).
 - Mac + Windows installers.
+- Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
 
 ## Important product choices
 

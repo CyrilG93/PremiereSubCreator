@@ -510,6 +510,42 @@ function subcreator_detect_visual_property_type(rawValue) {
   return "json";
 }
 
+function subcreator_visual_is_guid_list_string(value) {
+  // // Detect Premiere internal GUID lists used by synthetic group metadata payloads.
+  var text = subcreator_trim_string(String(value || ""));
+  if (!text) {
+    return false;
+  }
+
+  return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(text);
+}
+
+function subcreator_visual_is_group_metadata_value(rawValue) {
+  // // Identify container-only values that should not be shown as editable controls.
+  if (rawValue === undefined || rawValue === null) {
+    return true;
+  }
+
+  if (typeof rawValue === "string") {
+    var normalized = subcreator_trim_string(rawValue);
+    if (!normalized) {
+      return true;
+    }
+
+    if (subcreator_visual_is_guid_list_string(normalized)) {
+      return true;
+    }
+  }
+
+  if (typeof rawValue === "object") {
+    if (typeof rawValue.length === "number" && rawValue.length < 1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function subcreator_visual_to_number(rawValue) {
   // // Convert unknown scalar values to number while preserving NaN on failure.
   var parsed = Number(rawValue);
@@ -572,6 +608,35 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
     return null;
   }
 
+  if (typeof rawValue === "number") {
+    var numericColor = Math.floor(Math.abs(Number(rawValue)));
+    if (isNaN(numericColor)) {
+      return null;
+    }
+
+    if (numericColor <= 1) {
+      var grayUnit = subcreator_visual_clamp(numericColor * 255, 0, 255);
+      return {
+        red: grayUnit,
+        green: grayUnit,
+        blue: grayUnit,
+        unitScale: true
+      };
+    }
+
+    // // Use low 24 bits as RGB to support packed integer color payloads.
+    var packed = numericColor % 16777216;
+    var redPacked = Math.floor(packed / 65536) % 256;
+    var greenPacked = Math.floor(packed / 256) % 256;
+    var bluePacked = packed % 256;
+    return {
+      red: redPacked,
+      green: greenPacked,
+      blue: bluePacked,
+      unitScale: false
+    };
+  }
+
   if (typeof rawValue === "string") {
     var text = subcreator_trim_string(String(rawValue || ""));
     if (/^#[0-9a-f]{6}$/i.test(text)) {
@@ -590,6 +655,10 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
         blue: parseInt(text.charAt(3) + text.charAt(3), 16),
         unitScale: false
       };
+    }
+
+    if (/^\d+$/.test(text)) {
+      return subcreator_visual_extract_rgb_from_value(Number(text));
     }
 
     if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
@@ -794,6 +863,29 @@ function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
   };
 }
 
+function subcreator_visual_extract_numeric_vector(rawValue) {
+  // // Extract compact numeric vectors used by offset/size controls.
+  if (!rawValue || typeof rawValue !== "object" || typeof rawValue.length !== "number") {
+    return null;
+  }
+
+  var size = Number(rawValue.length || 0);
+  if (size < 2 || size > 4) {
+    return null;
+  }
+
+  var values = [];
+  for (var index = 0; index < size; index += 1) {
+    var numericValue = Number(rawValue[index]);
+    if (isNaN(numericValue)) {
+      return null;
+    }
+    values.push(numericValue);
+  }
+
+  return values;
+}
+
 function subcreator_serialize_visual_property_value(rawValue, valueType) {
   // // Serialize complex property values into text payloads usable in panel controls.
   if (valueType === "json") {
@@ -807,7 +899,7 @@ function subcreator_serialize_visual_property_value(rawValue, valueType) {
   return rawValue;
 }
 
-function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, textFallback) {
+function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, textFallback, hasChildren) {
   // // Build one panel-ready visual property entry with inferred control metadata.
   var rawValue;
   try {
@@ -817,6 +909,14 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   }
 
   if (typeof rawValue === "undefined") {
+    return null;
+  }
+
+  if (subcreator_visual_is_guid_list_string(rawValue)) {
+    return null;
+  }
+
+  if (hasChildren && subcreator_visual_is_group_metadata_value(rawValue)) {
     return null;
   }
 
@@ -834,6 +934,23 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
 
   var colorHex = subcreator_visual_extract_color_hex(rawValue);
   var looksLikeColor = !!(colorHex && (subcreator_visual_is_color_label(displayName) || key.indexOf("rgb") !== -1));
+  var vectorValue = subcreator_visual_extract_numeric_vector(rawValue);
+
+  // // Do not expose subtitle text in visual editor to avoid overriding all generated captions.
+  if (shouldTreatAsText) {
+    return null;
+  }
+
+  if (looksLikeColor) {
+    return {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "string",
+      controlKind: "color",
+      value: colorHex
+    };
+  }
 
   if (detectedType === "boolean") {
     return {
@@ -872,56 +989,20 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
     return descriptor;
   }
 
-  if (looksLikeColor) {
-    return {
-      path: currentPath,
-      displayName: displayName,
-      groupPath: groupPath || "General",
-      valueType: "string",
-      controlKind: "color",
-      value: colorHex
-    };
-  }
-
-  if (shouldTreatAsText || (key === "text" && extractedText)) {
-    return {
-      path: currentPath,
-      displayName: displayName,
-      groupPath: groupPath || "General",
-      valueType: "string",
-      controlKind: "text",
-      value: extractedText || ""
-    };
-  }
-
-  if (detectedType === "json") {
-    var serializedValue = subcreator_serialize_visual_property_value(rawValue, "json");
-    var serializedText = String(serializedValue || "");
-
-    // // Hide noisy internal payload-only fields when no readable text can be extracted.
-    if (!extractedText && key.indexOf("text") !== -1 && serializedText.indexOf("capProp") !== -1) {
-      if (textFallback) {
-        return {
-          path: currentPath,
-          displayName: displayName,
-          groupPath: groupPath || "General",
-          valueType: "string",
-          controlKind: "text",
-          value: String(textFallback || "")
-        };
-      }
-
-      return null;
-    }
-
+  if (vectorValue) {
     return {
       path: currentPath,
       displayName: displayName,
       groupPath: groupPath || "General",
       valueType: "json",
-      controlKind: "json",
-      value: serializedText
+      controlKind: "vector",
+      value: JSON.stringify(vectorValue)
     };
+  }
+
+  if (detectedType === "json") {
+    // // Skip unsupported JSON blobs to keep the editor compact and practical.
+    return null;
   }
 
   return {
@@ -958,20 +1039,30 @@ function subcreator_collect_mogrt_visual_properties_recursive(
       displayName = "Property " + currentPath;
     }
 
+    var hasChildren = !!(
+      property.properties &&
+      typeof property.properties.numItems === "number" &&
+      property.properties.numItems > 0
+    );
+    if (subcreator_visual_is_guid_list_string(displayName)) {
+      displayName = "Group " + String(index + 1);
+    }
+
     if (typeof property.getValue === "function" && typeof property.setValue === "function") {
       var descriptor = subcreator_build_visual_property_entry(
         property,
         currentPath,
         displayName,
         groupPathPrefix || "General",
-        textFallback
+        textFallback,
+        hasChildren
       );
       if (descriptor) {
         collector.push(descriptor);
       }
     }
 
-    if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+    if (hasChildren) {
       var nextGroupPath = groupPathPrefix ? groupPathPrefix + " / " + displayName : displayName;
       subcreator_collect_mogrt_visual_properties_recursive(
         property.properties,
@@ -1211,6 +1302,19 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     property.setValue(subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue), true);
     return true;
   } catch (hexError) {}
+
+  if (typeof rawValue === "number") {
+    var packedRgb = rgb.red * 65536 + rgb.green * 256 + rgb.blue;
+    try {
+      property.setValue(packedRgb, true);
+      return true;
+    } catch (packedRgbError) {}
+
+    try {
+      property.setValue(255 * 16777216 + packedRgb, true);
+      return true;
+    } catch (packedArgbError) {}
+  }
 
   return false;
 }

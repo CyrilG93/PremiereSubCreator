@@ -43,7 +43,7 @@ export interface SelectedMogrtVisualProperty {
   displayName: string;
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
-  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector";
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -920,6 +920,7 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
       controlKindRaw === "number" ||
       controlKindRaw === "checkbox" ||
       controlKindRaw === "color" ||
+      controlKindRaw === "vector" ||
       controlKindRaw === "text" ||
       controlKindRaw === "json"
         ? controlKindRaw

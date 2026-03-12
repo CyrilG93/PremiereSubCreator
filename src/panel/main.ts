@@ -42,7 +42,7 @@ interface HostVisualProperty {
   displayName: string;
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
-  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector";
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -585,6 +585,50 @@ function formatVisualValue(valueType: HostVisualProperty["valueType"], value: st
   return String(value);
 }
 
+function looksLikeGuidList(value: string): boolean {
+  // // Detect Premiere internal GUID-list artifacts to avoid exposing them as group labels.
+  return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(String(value || "").trim());
+}
+
+function parseVectorValues(value: string | number | boolean): number[] {
+  // // Parse vector payloads from host JSON strings into editable number fields.
+  if (typeof value === "number") {
+    return [value];
+  }
+
+  if (typeof value === "boolean") {
+    return [value ? 1 : 0];
+  }
+
+  const text = String(value || "").trim();
+  if (!text) {
+    return [0, 0];
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      const numbers = parsed
+        .map((item) => Number(item))
+        .filter((item) => Number.isFinite(item))
+        .slice(0, 4);
+      if (numbers.length > 0) {
+        return numbers;
+      }
+    }
+  } catch {
+    // // Fall through to compact CSV parsing when payload is not strict JSON.
+  }
+
+  const csvNumbers = text
+    .replace(/^\[|\]$/g, "")
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item))
+    .slice(0, 4);
+  return csvNumbers.length > 0 ? csvNumbers : [0, 0];
+}
+
 function updateVisualSelectionSummary(message: string): void {
   // // Keep selection summary centralized for clearer visual-editor feedback.
   if (!elements.visualSelectionSummary) {
@@ -609,7 +653,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
-    const groupKey = String(property.groupPath || "").trim() || "General";
+    if (property.controlKind === "text" || property.controlKind === "json") {
+      continue;
+    }
+
+    const rawGroup = String(property.groupPath || "").trim();
+    const groupKey = rawGroup && !looksLikeGuidList(rawGroup) ? rawGroup : "General";
     const existing = grouped.get(groupKey);
     if (existing) {
       existing.push(property);
@@ -621,7 +670,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   for (const [groupName, groupProperties] of grouped.entries()) {
     const groupNode = document.createElement("details");
     groupNode.className = "visual-group";
-    groupNode.open = true;
+    groupNode.open = false;
 
     const summary = document.createElement("summary");
     summary.className = "visual-group__title";
@@ -728,6 +777,40 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
         sliderWrap.append(rangeInput, numberInput);
         controlWrap.appendChild(sliderWrap);
+      } else if (property.controlKind === "vector") {
+        const vectorWrap = document.createElement("div");
+        vectorWrap.className = "visual-vector-row";
+
+        const vectorValues = parseVectorValues(property.value);
+        const hiddenInput = document.createElement("input");
+        hiddenInput.type = "hidden";
+        hiddenInput.dataset.visualPath = property.path;
+        hiddenInput.dataset.visualType = property.valueType;
+        hiddenInput.dataset.visualControlKind = property.controlKind;
+        hiddenInput.dataset.visualRole = "value";
+        hiddenInput.value = JSON.stringify(vectorValues);
+
+        const componentInputs: HTMLInputElement[] = [];
+        vectorValues.forEach((vectorValue) => {
+          const component = document.createElement("input");
+          component.type = "number";
+          component.step = Number.isInteger(vectorValue) ? "1" : "0.01";
+          component.value = String(vectorValue);
+          component.className = "visual-vector-input";
+          componentInputs.push(component);
+          vectorWrap.appendChild(component);
+        });
+
+        const syncVector = (): void => {
+          const nextValues = componentInputs.map((input) => Number(input.value)).filter((item) => Number.isFinite(item));
+          hiddenInput.value = JSON.stringify(nextValues.length > 0 ? nextValues : [0, 0]);
+        };
+        componentInputs.forEach((input) => {
+          input.addEventListener("input", syncVector);
+        });
+        syncVector();
+
+        controlWrap.append(vectorWrap, hiddenInput);
       } else {
         const input = document.createElement("input");
         input.type = property.controlKind === "number" ? "number" : "text";

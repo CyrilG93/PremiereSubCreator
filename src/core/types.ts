@@ -22,7 +22,6 @@ export interface CaptionCue {
 
 // // Describe the style and animation configuration selected in the UI.
 export interface CaptionStyleConfig {
-  presetId: string;
   fontSize: number;
   maxCharsPerLine: number;
   animationMode: AnimationMode;
@@ -48,15 +47,6 @@ export interface CaptionBuildOptions {
 export interface HostApplyPayload {
   options: CaptionBuildOptions;
   cues: CaptionCue[];
-}
-
-// // Define a user-selectable style preset with visual defaults.
-export interface StylePreset {
-  id: string;
-  labelKey: string;
-  defaultFontSize: number;
-  defaultMaxCharsPerLine: number;
-  defaultAnimationMode: AnimationMode;
 }
 
 // // Describe one discoverable MOGRT template displayed in the gallery.

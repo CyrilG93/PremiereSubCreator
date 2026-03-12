@@ -459,6 +459,288 @@ function subcreator_collection_to_array(collection) {
   return result;
 }
 
+function subcreator_get_selected_track_items(sequence) {
+  // // Read current timeline selection and normalize to a plain array.
+  if (!sequence || typeof sequence.getSelection !== "function") {
+    return [];
+  }
+
+  try {
+    return subcreator_collection_to_array(sequence.getSelection());
+  } catch (error) {
+    return [];
+  }
+}
+
+function subcreator_get_mogrt_component_from_track_item(trackItem) {
+  // // Resolve Essential Graphics component from a track item when available.
+  if (!trackItem) {
+    return null;
+  }
+
+  var component = null;
+  try {
+    if (typeof trackItem.getMGTComponent === "function") {
+      component = trackItem.getMGTComponent();
+    }
+  } catch (mgtError) {}
+
+  if (!component && trackItem.components && trackItem.components.numItems > 0) {
+    component = trackItem.components[0];
+  }
+
+  if (!component || !component.properties || typeof component.properties.numItems !== "number") {
+    return null;
+  }
+
+  return component;
+}
+
+function subcreator_detect_visual_property_type(rawValue) {
+  // // Categorize host property values so panel can render matching input controls.
+  if (typeof rawValue === "number") {
+    return "number";
+  }
+  if (typeof rawValue === "boolean") {
+    return "boolean";
+  }
+  if (typeof rawValue === "string") {
+    return "string";
+  }
+  return "json";
+}
+
+function subcreator_serialize_visual_property_value(rawValue, valueType) {
+  // // Serialize complex property values into text payloads usable in panel controls.
+  if (valueType === "json") {
+    try {
+      return JSON.stringify(rawValue);
+    } catch (error) {
+      return String(rawValue);
+    }
+  }
+
+  return rawValue;
+}
+
+function subcreator_collect_mogrt_visual_properties_recursive(propertyCollection, pathPrefix, collector) {
+  // // Traverse nested Essential Graphics properties and capture editable entries.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
+    return;
+  }
+
+  for (var index = 0; index < propertyCollection.numItems; index += 1) {
+    var property = propertyCollection[index];
+    if (!property) {
+      continue;
+    }
+
+    var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
+    if (typeof property.getValue === "function" && typeof property.setValue === "function") {
+      try {
+        var rawValue = property.getValue();
+        if (typeof rawValue !== "undefined") {
+          var valueType = subcreator_detect_visual_property_type(rawValue);
+          var displayName = subcreator_trim_string(String(property.displayName || ""));
+          if (!displayName) {
+            displayName = "Property " + currentPath;
+          }
+
+          collector.push({
+            path: currentPath,
+            displayName: displayName,
+            valueType: valueType,
+            value: subcreator_serialize_visual_property_value(rawValue, valueType)
+          });
+        }
+      } catch (readError) {}
+    }
+
+    if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+      subcreator_collect_mogrt_visual_properties_recursive(property.properties, currentPath, collector);
+    }
+  }
+}
+
+function subcreator_find_property_by_path(propertyCollection, pathValue) {
+  // // Resolve nested property by index-path notation (`0.2.4`) from panel payload.
+  var pathText = subcreator_trim_string(String(pathValue || ""));
+  if (!pathText) {
+    return null;
+  }
+
+  var chunks = pathText.split(".");
+  var collection = propertyCollection;
+  var property = null;
+
+  for (var index = 0; index < chunks.length; index += 1) {
+    if (!collection || typeof collection.numItems !== "number") {
+      return null;
+    }
+
+    var itemIndex = Number(chunks[index]);
+    if (isNaN(itemIndex) || itemIndex < 0 || itemIndex >= collection.numItems) {
+      return null;
+    }
+
+    property = collection[itemIndex];
+    if (!property) {
+      return null;
+    }
+
+    if (index === chunks.length - 1) {
+      return property;
+    }
+
+    collection = property.properties;
+  }
+
+  return null;
+}
+
+function subcreator_normalize_visual_payload_value(valueType, rawValue) {
+  // // Convert panel-sent values to host-friendly types before property.setValue.
+  if (valueType === "number") {
+    return Number(rawValue);
+  }
+
+  if (valueType === "boolean") {
+    if (typeof rawValue === "boolean") {
+      return rawValue;
+    }
+    var text = subcreator_trim_string(String(rawValue || "")).toLowerCase();
+    return text === "true" || text === "1" || text === "yes";
+  }
+
+  if (valueType === "json") {
+    if (typeof rawValue === "string") {
+      try {
+        return JSON.parse(rawValue);
+      } catch (jsonError) {
+        return rawValue;
+      }
+    }
+    return rawValue;
+  }
+
+  return String(rawValue || "");
+}
+
+function subcreator_list_selected_mogrt_properties() {
+  // // Return editable visual properties from selected MOGRT clips in active sequence.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var selectedItems = subcreator_get_selected_track_items(sequence);
+    var mogrtItems = [];
+
+    for (var index = 0; index < selectedItems.length; index += 1) {
+      var item = selectedItems[index];
+      if (subcreator_get_mogrt_component_from_track_item(item)) {
+        mogrtItems.push(item);
+      }
+    }
+
+    if (!mogrtItems.length) {
+      return subcreator_ok({
+        selectedCount: 0,
+        editableCount: 0,
+        properties: []
+      });
+    }
+
+    var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
+    var properties = [];
+    subcreator_collect_mogrt_visual_properties_recursive(firstComponent ? firstComponent.properties : null, "", properties);
+
+    return subcreator_ok({
+      selectedCount: mogrtItems.length,
+      editableCount: properties.length,
+      properties: properties
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
+function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
+  // // Apply visual property changes from panel payload to each selected MOGRT clip.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
+    var payload = JSON.parse(decodedPayload || "{}");
+    var changes = payload && payload.changes && typeof payload.changes.length === "number" ? payload.changes : [];
+    var sequence = app.project.activeSequence;
+    var selectedItems = subcreator_get_selected_track_items(sequence);
+    var mogrtItems = [];
+    for (var itemIndex = 0; itemIndex < selectedItems.length; itemIndex += 1) {
+      var trackItem = selectedItems[itemIndex];
+      if (subcreator_get_mogrt_component_from_track_item(trackItem)) {
+        mogrtItems.push(trackItem);
+      }
+    }
+
+    if (!mogrtItems.length) {
+      return subcreator_ok({
+        selectedCount: 0,
+        updatedCount: 0,
+        failedCount: 0
+      });
+    }
+
+    var updatedCount = 0;
+    var failedCount = 0;
+
+    for (var clipIndex = 0; clipIndex < mogrtItems.length; clipIndex += 1) {
+      var clip = mogrtItems[clipIndex];
+      var component = subcreator_get_mogrt_component_from_track_item(clip);
+      if (!component || !component.properties) {
+        failedCount += changes.length;
+        continue;
+      }
+
+      for (var changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
+        var change = changes[changeIndex] || {};
+        var path = subcreator_trim_string(String(change.path || ""));
+        var valueType = subcreator_trim_string(String(change.valueType || "string")).toLowerCase();
+        var value = change.value;
+        if (!path) {
+          failedCount += 1;
+          continue;
+        }
+
+        var property = subcreator_find_property_by_path(component.properties, path);
+        if (!property || typeof property.setValue !== "function") {
+          failedCount += 1;
+          continue;
+        }
+
+        try {
+          var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
+          property.setValue(normalizedValue, true);
+          updatedCount += 1;
+        } catch (setError) {
+          failedCount += 1;
+        }
+      }
+    }
+
+    return subcreator_ok({
+      selectedCount: mogrtItems.length,
+      updatedCount: updatedCount,
+      failedCount: failedCount
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_is_default_caption_label(text) {
   // // Detect synthetic/default caption names returned by some Premiere APIs.
   var normalized = subcreator_trim_string(String(text || "")).toLowerCase().replace(/\s+/g, "");

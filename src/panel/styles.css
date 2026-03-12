@@ -30,6 +30,15 @@ body {
   gap: 14px;
 }
 
+.mode-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.mode-panel[hidden] {
+  display: none !important;
+}
+
 .panel__header h1 {
   margin: 0;
   font-size: 1.2rem;
@@ -62,12 +71,6 @@ body {
   justify-self: end;
 }
 
-.panel__header p {
-  margin: 6px 0 0;
-  color: var(--text-dim);
-  font-size: 0.85rem;
-}
-
 .update-banner {
   border: 1px solid rgba(138, 215, 183, 0.45);
   border-radius: var(--radius);
@@ -89,6 +92,29 @@ body {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tab-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tab-button {
+  border: 1px solid var(--border);
+  background: #0f1726;
+  color: var(--text-dim);
+  border-radius: 9px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.tab-button.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(138, 215, 183, 0.45);
 }
 
 .field {
@@ -118,6 +144,35 @@ body {
 
 .field--full {
   grid-column: 1 / -1;
+}
+
+.field__header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.field__header > span {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+
+.field__header-control {
+  margin: 0;
+  min-width: 168px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 select,
@@ -173,6 +228,10 @@ input[type="checkbox"] {
 
 .inline-row > :only-child {
   grid-column: 1 / -1;
+}
+
+.inline-row--actions {
+  grid-template-columns: 1fr 1fr;
 }
 
 .mogrt-card {
@@ -334,6 +393,30 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
+.visual-property-list {
+  display: grid;
+  gap: 8px;
+}
+
+.visual-property-item {
+  border: 1px solid rgba(52, 72, 97, 0.75);
+  border-radius: 8px;
+  background: #0f1726;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.visual-property-label {
+  font-size: 0.72rem;
+  color: var(--accent-soft);
+}
+
+.visual-property-meta {
+  font-size: 0.64rem;
+  color: var(--text-dim);
+}
+
 .log {
   margin: 0;
   min-height: 120px;
@@ -367,7 +450,19 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
+  .inline-row--actions {
+    grid-template-columns: 1fr;
+  }
+
   .panel__footer {
     grid-template-columns: 1fr;
+  }
+
+  .field__header {
+    grid-template-columns: 1fr;
+  }
+
+  .field__header-control {
+    min-width: 0;
   }
 }

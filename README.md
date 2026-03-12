@@ -6,8 +6,11 @@ It supports:
 - Two source workflows:
   - SRT import via native file picker.
   - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
-- Caption planning with max letters, max lines, style presets, uppercase, and animation mode metadata.
+- Caption planning with max letters, max lines, font size, uppercase, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
+- Two UI tabs:
+  - `Creation`: source -> planning -> MOGRT insertion.
+  - `Visual editor`: read and apply editable Essential Graphics parameters on selected MOGRT clips.
 - Premiere timeline insertion via ExtendScript:
   - Insert MOGRT per cue (selected from integrated gallery).
   - Apply text controls recursively (including grouped Essential Graphics properties) and map animation mode to controls like `Highlight Based On`.

@@ -1,14 +1,15 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
-import { STYLE_PRESETS } from "../core/presets";
 import { parseSrt } from "../core/srt";
 import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, MogrtTemplateItem } from "../core/types";
 import {
   applyCaptionPlan,
+  applyVisualPropertiesToSelectedMogrts,
   getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
   pingHost,
+  readSelectedMogrtVisualProperties,
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
@@ -34,13 +35,22 @@ interface UpdateState {
   downloadUrl: string;
 }
 
+type PanelMode = "generate" | "visual";
+
+interface HostVisualProperty {
+  path: string;
+  displayName: string;
+  valueType: "number" | "boolean" | "string" | "json";
+  value: string | number | boolean;
+}
+
 interface PanelStateSnapshot {
   languageCode: string;
+  activeMode: PanelMode;
   sourceMode: "srt" | "whisper_local";
   srtPath: string;
   whisperAudioPath: string;
   whisperModel: string;
-  presetId: string;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
   linesPerCaption: number;
@@ -55,6 +65,10 @@ const elements = {
   appVersion: document.querySelector<HTMLSpanElement>("#appVersion"),
   updateBanner: document.querySelector<HTMLElement>("#updateBanner"),
   updateLink: document.querySelector<HTMLAnchorElement>("#updateLink"),
+  tabGenerate: document.querySelector<HTMLButtonElement>("#tabGenerate"),
+  tabVisual: document.querySelector<HTMLButtonElement>("#tabVisual"),
+  modeGenerate: document.querySelector<HTMLElement>("#modeGenerate"),
+  modeVisual: document.querySelector<HTMLElement>("#modeVisual"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
@@ -63,7 +77,6 @@ const elements = {
   whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
   whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
-  presetSelect: document.querySelector<HTMLSelectElement>("#presetSelect"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
@@ -72,6 +85,10 @@ const elements = {
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
+  visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
+  visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
+  visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
+  visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   pingButton: document.querySelector<HTMLButtonElement>("#pingButton"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
   logOutput: document.querySelector<HTMLPreElement>("#logOutput")
@@ -94,6 +111,8 @@ const updateState: UpdateState = {
 };
 const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
 let pendingSelectedMogrtId = "";
+let activeMode: PanelMode = "generate";
+let loadedVisualProperties: HostVisualProperty[] = [];
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -148,11 +167,11 @@ function persistPanelState(): void {
   // // Persist current panel configuration so reopening keeps user preferences.
   if (
     !elements.languageSelect ||
+    !elements.tabGenerate ||
     !elements.sourceMode ||
     !elements.srtPath ||
     !elements.whisperAudioPath ||
     !elements.whisperModel ||
-    !elements.presetSelect ||
     !elements.animationMode ||
     !elements.maxChars ||
     !elements.linesPerCaption ||
@@ -165,11 +184,11 @@ function persistPanelState(): void {
 
   const snapshot: PanelStateSnapshot = {
     languageCode: elements.languageSelect.value || "en",
+    activeMode,
     sourceMode: getSourceMode(),
     srtPath: elements.srtPath.value || "",
     whisperAudioPath: elements.whisperAudioPath.value || "",
     whisperModel: elements.whisperModel.value || "base",
-    presetId: elements.presetSelect.value || STYLE_PRESETS[0].id,
     animationMode: (elements.animationMode.value as AnimationMode) || "line",
     maxCharsPerLine: Number(elements.maxChars.value),
     linesPerCaption: Number(elements.linesPerCaption.value),
@@ -208,10 +227,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     elements.whisperModel.value = snapshot.whisperModel;
   }
 
-  if (elements.presetSelect && snapshot.presetId && hasSelectOption(elements.presetSelect, snapshot.presetId)) {
-    elements.presetSelect.value = snapshot.presetId;
-  }
-
   if (elements.animationMode && snapshot.animationMode && hasSelectOption(elements.animationMode, snapshot.animationMode)) {
     elements.animationMode.value = snapshot.animationMode;
   }
@@ -238,6 +253,12 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
     pendingSelectedMogrtId = snapshot.selectedMogrtId;
+  }
+
+  if (snapshot.activeMode === "visual") {
+    activeMode = "visual";
+  } else {
+    activeMode = "generate";
   }
 }
 
@@ -447,37 +468,6 @@ async function loadLocale(languageCode: string): Promise<void> {
   refreshUpdateBanner();
 }
 
-function renderPresetSelect(): void {
-  // // Populate style presets from static configuration.
-  if (!elements.presetSelect) {
-    return;
-  }
-
-  const selectedId = elements.presetSelect.value;
-  elements.presetSelect.innerHTML = "";
-
-  STYLE_PRESETS.forEach((preset) => {
-    const option = document.createElement("option");
-    option.value = preset.id;
-    option.textContent = translate(preset.labelKey);
-    elements.presetSelect?.appendChild(option);
-  });
-
-  elements.presetSelect.value = selectedId || STYLE_PRESETS[0].id;
-}
-
-function applyPresetDefaults(presetId: string): void {
-  // // Sync numeric controls whenever user chooses a different style preset.
-  const preset = STYLE_PRESETS.find((item) => item.id === presetId);
-  if (!preset || !elements.fontSize || !elements.maxChars || !elements.animationMode) {
-    return;
-  }
-
-  elements.fontSize.value = String(preset.defaultFontSize);
-  elements.maxChars.value = String(preset.defaultMaxCharsPerLine);
-  elements.animationMode.value = preset.defaultAnimationMode;
-}
-
 function getSourceMode(): "srt" | "whisper_local" {
   // // Normalize source mode value from UI select control.
   return (elements.sourceMode?.value as "srt" | "whisper_local") || "srt";
@@ -554,6 +544,183 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   } catch {
     // // Keep Whisper visible when detection fails unexpectedly to avoid hiding a usable source.
   }
+}
+
+function setActiveMode(mode: PanelMode): void {
+  // // Toggle tab state and active mode container visibility.
+  activeMode = mode;
+
+  if (elements.tabGenerate) {
+    const isActive = mode === "generate";
+    elements.tabGenerate.classList.toggle("is-active", isActive);
+    elements.tabGenerate.setAttribute("aria-selected", isActive ? "true" : "false");
+  }
+
+  if (elements.tabVisual) {
+    const isActive = mode === "visual";
+    elements.tabVisual.classList.toggle("is-active", isActive);
+    elements.tabVisual.setAttribute("aria-selected", isActive ? "true" : "false");
+  }
+
+  if (elements.modeGenerate) {
+    elements.modeGenerate.hidden = mode !== "generate";
+  }
+
+  if (elements.modeVisual) {
+    elements.modeVisual.hidden = mode !== "visual";
+  }
+}
+
+function formatVisualValue(valueType: HostVisualProperty["valueType"], value: string | number | boolean): string {
+  // // Normalize host values for text/textarea fields in the visual editor.
+  if (valueType === "json") {
+    if (typeof value === "string") {
+      return value;
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+function updateVisualSelectionSummary(message: string): void {
+  // // Keep selection summary centralized for clearer visual-editor feedback.
+  if (!elements.visualSelectionSummary) {
+    return;
+  }
+
+  elements.visualSelectionSummary.textContent = message;
+}
+
+function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
+  // // Render editable controls from selected MOGRT property metadata returned by host.
+  if (!elements.visualPropertyList) {
+    return;
+  }
+
+  elements.visualPropertyList.innerHTML = "";
+  loadedVisualProperties = properties.slice();
+
+  if (!properties.length) {
+    return;
+  }
+
+  for (const property of properties) {
+    const row = document.createElement("div");
+    row.className = "visual-property-item";
+
+    const label = document.createElement("div");
+    label.className = "visual-property-label";
+    label.textContent = property.displayName;
+
+    const meta = document.createElement("div");
+    meta.className = "visual-property-meta";
+    meta.textContent = `${property.valueType} • ${property.path}`;
+
+    let input: HTMLInputElement | HTMLTextAreaElement;
+    if (property.valueType === "boolean") {
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(property.value);
+      input = checkbox;
+    } else if (property.valueType === "json") {
+      const textarea = document.createElement("textarea");
+      textarea.rows = 4;
+      textarea.value = formatVisualValue(property.valueType, property.value);
+      input = textarea;
+    } else if (property.valueType === "number") {
+      const numberInput = document.createElement("input");
+      numberInput.type = "number";
+      numberInput.step = "any";
+      numberInput.value = String(property.value);
+      input = numberInput;
+    } else {
+      const textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.value = formatVisualValue(property.valueType, property.value);
+      input = textInput;
+    }
+
+    input.dataset.visualPath = property.path;
+    input.dataset.visualType = property.valueType;
+    row.append(label, meta, input);
+    elements.visualPropertyList.appendChild(row);
+  }
+}
+
+type VisualPropertyChange = {
+  path: string;
+  valueType: HostVisualProperty["valueType"];
+  value: string | number | boolean;
+};
+
+function collectVisualPropertyChanges(): VisualPropertyChange[] {
+  // // Build payload from rendered editor controls for host-side property updates.
+  if (!elements.visualPropertyList) {
+    return [];
+  }
+
+  const changes: VisualPropertyChange[] = [];
+  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-visual-path]");
+  controls.forEach((control) => {
+    const path = String(control.dataset.visualPath || "");
+    const valueType = (String(control.dataset.visualType || "string") as HostVisualProperty["valueType"]) || "string";
+    if (!path) {
+      return;
+    }
+
+    let value: string | number | boolean = "";
+    if (valueType === "boolean" && control instanceof HTMLInputElement) {
+      value = control.checked;
+    } else if (valueType === "number") {
+      value = Number(control.value);
+    } else {
+      value = control.value;
+    }
+
+    changes.push({
+      path,
+      valueType,
+      value
+    });
+  });
+
+  return changes;
+}
+
+async function loadVisualPropertiesFromSelection(): Promise<void> {
+  // // Read selected MOGRT editable controls from host and refresh visual editor UI.
+  const result = await readSelectedMogrtVisualProperties();
+  renderVisualPropertyEditor(result.properties);
+  if (result.properties.length > 0) {
+    updateVisualSelectionSummary(
+      translateTemplate("visual.selectionSummary", {
+        clips: String(result.selectedCount),
+        props: String(result.editableCount)
+      })
+    );
+  } else if (result.selectedCount > 0) {
+    updateVisualSelectionSummary(translate("visual.noProperties"));
+  } else {
+    updateVisualSelectionSummary(translate("visual.selectionDefault"));
+  }
+}
+
+async function applyVisualChangesToSelection(): Promise<void> {
+  // // Apply edited visual property values to currently selected MOGRT clips.
+  const changes = collectVisualPropertyChanges();
+  if (!changes.length) {
+    throw new Error(translate("visual.noChanges"));
+  }
+
+  const response = await applyVisualPropertiesToSelectedMogrts(changes);
+  setLog(`${translate("log.visualApplyDone")}\n${JSON.stringify(response, null, 2)}`);
+  await loadVisualPropertiesFromSelection();
 }
 
 async function loadMogrtCatalog(): Promise<void> {
@@ -709,7 +876,6 @@ function collectBuildOptions(): CaptionBuildOptions {
   if (
     !elements.sourceMode ||
     !elements.languageSelect ||
-    !elements.presetSelect ||
     !elements.fontSize ||
     !elements.maxChars ||
     !elements.linesPerCaption ||
@@ -732,7 +898,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     sourceMode: getSourceMode(),
     languageCode: elements.languageSelect.value,
     style: {
-      presetId: elements.presetSelect.value,
       fontSize: Number(elements.fontSize.value),
       maxCharsPerLine: Number(elements.maxChars.value),
       animationMode: elements.animationMode.value as AnimationMode,
@@ -820,9 +985,8 @@ async function initialize(): Promise<void> {
 
   await loadLocale(elements.languageSelect?.value ?? "en");
   await enforceWhisperSourceAvailability();
-  renderPresetSelect();
-  applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
   applyPersistedPanelState(persistedState);
+  setActiveMode(activeMode);
   toggleSourceFields();
 
   await loadMogrtCatalog();
@@ -839,13 +1003,19 @@ async function initialize(): Promise<void> {
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
-    renderPresetSelect();
     renderMogrtGallery();
+    if (!loadedVisualProperties.length) {
+      updateVisualSelectionSummary(translate("visual.selectionDefault"));
+    }
     persistPanelState();
   });
 
-  elements.presetSelect?.addEventListener("change", () => {
-    applyPresetDefaults(elements.presetSelect?.value ?? STYLE_PRESETS[0].id);
+  elements.tabGenerate?.addEventListener("click", () => {
+    setActiveMode("generate");
+    persistPanelState();
+  });
+  elements.tabVisual?.addEventListener("click", () => {
+    setActiveMode("visual");
     persistPanelState();
   });
 
@@ -913,6 +1083,23 @@ async function initialize(): Promise<void> {
     try {
       persistPanelState();
       await generate();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
+  elements.visualReadButton?.addEventListener("click", async () => {
+    try {
+      await loadVisualPropertiesFromSelection();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
+  elements.visualApplyButton?.addEventListener("click", async () => {
+    try {
+      await applyVisualChangesToSelection();
+      persistPanelState();
     } catch (error) {
       setLog(String(error), true);
     }

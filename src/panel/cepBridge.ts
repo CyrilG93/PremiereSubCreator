@@ -38,6 +38,25 @@ export interface WhisperRuntimeStatus {
   details: string;
 }
 
+export interface SelectedMogrtVisualProperty {
+  path: string;
+  displayName: string;
+  valueType: "number" | "boolean" | "string" | "json";
+  value: string | number | boolean;
+}
+
+export interface SelectedMogrtVisualPropertyList {
+  selectedCount: number;
+  editableCount: number;
+  properties: SelectedMogrtVisualProperty[];
+}
+
+export interface ApplyVisualPropertiesResult {
+  selectedCount: number;
+  updatedCount: number;
+  failedCount: number;
+}
+
 interface CepNodeModules {
   childProcess: {
     spawnSync: (
@@ -870,6 +889,80 @@ export async function pickWhisperAudioPath(): Promise<string> {
   }
 
   return String(response.data?.path ?? "");
+}
+
+function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualPropertyList {
+  // // Sanitize host payload shape before rendering dynamic visual controls.
+  const payload = (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) || {};
+  const rawProperties = Array.isArray(payload.properties) ? payload.properties : [];
+  const properties: SelectedMogrtVisualProperty[] = [];
+
+  for (const rawProperty of rawProperties) {
+    const item = rawProperty && typeof rawProperty === "object" ? (rawProperty as Record<string, unknown>) : null;
+    if (!item) {
+      continue;
+    }
+
+    const path = String(item.path || "").trim();
+    const displayName = String(item.displayName || "").trim();
+    const valueTypeRaw = String(item.valueType || "string").trim().toLowerCase();
+    const valueType: SelectedMogrtVisualProperty["valueType"] =
+      valueTypeRaw === "number" || valueTypeRaw === "boolean" || valueTypeRaw === "json" ? valueTypeRaw : "string";
+    if (!path || !displayName) {
+      continue;
+    }
+
+    let value: string | number | boolean = "";
+    if (valueType === "number") {
+      value = Number(item.value || 0);
+    } else if (valueType === "boolean") {
+      value = Boolean(item.value);
+    } else {
+      value = String(item.value ?? "");
+    }
+
+    properties.push({
+      path,
+      displayName,
+      valueType,
+      value
+    });
+  }
+
+  return {
+    selectedCount: Number(payload.selectedCount || 0),
+    editableCount: Number(payload.editableCount || properties.length),
+    properties
+  };
+}
+
+export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrtVisualPropertyList> {
+  // // Request editable MOGRT properties from selected timeline clips.
+  const response = await evalHostJson<SelectedMogrtVisualPropertyList>("subcreator_list_selected_mogrt_properties()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read selected MOGRT properties.");
+  }
+
+  return normalizeVisualPropertyList(response.data);
+}
+
+export async function applyVisualPropertiesToSelectedMogrts(
+  changes: Array<{ path: string; valueType: SelectedMogrtVisualProperty["valueType"]; value: string | number | boolean }>
+): Promise<ApplyVisualPropertiesResult> {
+  // // Send edited property payload to host and apply values on selected MOGRT clips.
+  const encodedPayload = encodeURIComponent(JSON.stringify({ changes }));
+  const response = await evalHostJson<ApplyVisualPropertiesResult>(
+    `subcreator_apply_selected_mogrt_properties("${escapeForJsx(encodedPayload)}")`
+  );
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to apply selected MOGRT properties.");
+  }
+
+  return {
+    selectedCount: Number(response.data?.selectedCount || 0),
+    updatedCount: Number(response.data?.updatedCount || 0),
+    failedCount: Number(response.data?.failedCount || 0)
+  };
 }
 
 export async function transcribeWithWhisper(request: WhisperTranscriptionRequest): Promise<WhisperTranscriptionResult> {

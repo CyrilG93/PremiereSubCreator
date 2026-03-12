@@ -19,7 +19,6 @@
             <option value="en">English</option>
           </select>
         </div>
-        <p data-i18n="app.subtitle">Sous-titres design et dynamiques pour Premiere Pro 2025+</p>
       </header>
 
       <section id="updateBanner" class="update-banner" hidden>
@@ -35,103 +34,141 @@
         </a>
       </section>
 
-      <section class="panel__grid">
-        <label class="field">
-          <span data-i18n="field.source">Source des sous-titres</span>
-          <select id="sourceMode">
-            <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-            <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
-          </select>
-        </label>
+      <section class="tab-nav" role="tablist" aria-label="Sub Creator modes">
+        <button id="tabGenerate" class="tab-button is-active" type="button" role="tab" aria-selected="true" data-tab="generate" data-i18n="tab.generate">
+          Creation
+        </button>
+        <button id="tabVisual" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="visual" data-i18n="tab.visual">
+          Visual editor
+        </button>
+      </section>
 
-        <section class="field field--full" id="srtInputField">
-          <span data-i18n="field.srt">Fichier SRT</span>
-          <div class="inline-row">
-            <input id="srtPath" type="text" data-i18n-placeholder="placeholder.srtPath" placeholder="/Users/.../captions.srt" />
-            <button id="srtBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
-          </div>
-        </section>
-
-        <section class="field field--full" id="whisperField">
-          <span data-i18n="field.whisperAudio">Fichier audio/video pour Whisper</span>
-          <div class="inline-row">
-            <input id="whisperAudioPath" type="text" data-i18n-placeholder="placeholder.whisperAudio" placeholder="/Users/.../audio.wav" />
-            <button id="whisperBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
-          </div>
-          <div class="inline-row">
-            <select id="whisperModel">
-              <option value="tiny">tiny</option>
-              <option value="base" selected>base</option>
-              <option value="small">small</option>
-              <option value="medium">medium</option>
-              <option value="large-v3">large-v3</option>
-              <option value="turbo">turbo</option>
+      <section id="modeGenerate" class="mode-panel is-active" data-mode="generate">
+        <section class="panel__grid">
+          <label class="field field--full">
+            <span data-i18n="field.source">Source des sous-titres</span>
+            <select id="sourceMode">
+              <option value="srt" data-i18n="source.srt">Fichier SRT</option>
+              <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
             </select>
-          </div>
-          <p class="hint" data-i18n="help.whisper">
-            Whisper doit etre installe localement et accessible via la commande `whisper`.
+          </label>
+
+          <section class="field field--full" id="srtInputField">
+            <span data-i18n="field.srt">Fichier SRT</span>
+            <div class="inline-row">
+              <input
+                id="srtPath"
+                type="text"
+                data-i18n-placeholder="placeholder.srtPath"
+                placeholder="/Users/.../captions.srt"
+              />
+              <button id="srtBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
+            </div>
+          </section>
+
+          <section class="field field--full" id="whisperField">
+            <span data-i18n="field.whisperAudio">Fichier audio/video pour Whisper</span>
+            <div class="inline-row">
+              <input
+                id="whisperAudioPath"
+                type="text"
+                data-i18n-placeholder="placeholder.whisperAudio"
+                placeholder="/Users/.../audio.wav"
+              />
+              <button id="whisperBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
+            </div>
+            <div class="inline-row">
+              <select id="whisperModel">
+                <option value="tiny">tiny</option>
+                <option value="base" selected>base</option>
+                <option value="small">small</option>
+                <option value="medium">medium</option>
+                <option value="large-v3">large-v3</option>
+                <option value="turbo">turbo</option>
+              </select>
+            </div>
+            <p class="hint" data-i18n="help.whisper">
+              Whisper doit etre installe localement et accessible via la commande `whisper`.
+            </p>
+          </section>
+
+          <label class="field">
+            <span data-i18n="field.animation">Mode animation</span>
+            <select id="animationMode">
+              <option value="word" data-i18n="animation.word">Par mot</option>
+              <option value="line" data-i18n="animation.line">Par ligne</option>
+              <option value="none" data-i18n="animation.none">Aucune</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span data-i18n="field.maxChars">Lettres max par ligne</span>
+            <input id="maxChars" type="number" value="28" min="8" max="80" step="1" />
+          </label>
+
+          <label class="field">
+            <span data-i18n="field.linesPerCaption">Lignes max par sous-titre</span>
+            <input id="linesPerCaption" type="number" value="2" min="1" max="3" step="1" />
+          </label>
+
+          <label class="field">
+            <span data-i18n="field.fontSize">Taille texte</span>
+            <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
+          </label>
+
+          <label class="field field--checkbox">
+            <input id="uppercase" type="checkbox" />
+            <span data-i18n="field.uppercase">Forcer MAJUSCULES</span>
+          </label>
+
+          <section class="field field--full" id="mogrtGalleryField">
+            <div class="field__header">
+              <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
+              <label class="field__header-control">
+                <span class="sr-only" data-i18n="field.mogrtFormat">Format galerie</span>
+                <select id="mogrtAspectFilter">
+                  <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
+                  <option value="Landscape">Landscape (16:9)</option>
+                  <option value="Portrait">Portrait (9:16)</option>
+                  <option value="Square">Square (1:1)</option>
+                </select>
+              </label>
+            </div>
+            <div id="mogrtGallery" class="mogrt-gallery" role="listbox" aria-label="MOGRT gallery"></div>
+            <p id="mogrtSelectedLabel" class="hint"></p>
+          </section>
+
+          <p class="hint field--full" data-i18n="help.tracks">
+            Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
           </p>
         </section>
 
-        <label class="field">
-          <span data-i18n="field.preset">Preset style</span>
-          <select id="presetSelect"></select>
-        </label>
-
-        <label class="field">
-          <span data-i18n="field.animation">Mode animation</span>
-          <select id="animationMode">
-            <option value="word" data-i18n="animation.word">Par mot</option>
-            <option value="line" data-i18n="animation.line">Par ligne</option>
-            <option value="none" data-i18n="animation.none">Aucune</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span data-i18n="field.maxChars">Lettres max par ligne</span>
-          <input id="maxChars" type="number" value="28" min="8" max="80" step="1" />
-        </label>
-
-        <label class="field">
-          <span data-i18n="field.linesPerCaption">Lignes max par sous-titre</span>
-          <input id="linesPerCaption" type="number" value="2" min="1" max="3" step="1" />
-        </label>
-
-        <label class="field">
-          <span data-i18n="field.fontSize">Taille texte</span>
-          <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
-        </label>
-
-        <label class="field field--checkbox">
-          <input id="uppercase" type="checkbox" />
-          <span data-i18n="field.uppercase">Forcer MAJUSCULES</span>
-        </label>
-
-        <label class="field">
-          <span data-i18n="field.mogrtFormat">Format galerie</span>
-          <select id="mogrtAspectFilter">
-            <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
-            <option value="Landscape">Landscape (16:9)</option>
-            <option value="Portrait">Portrait (9:16)</option>
-            <option value="Square">Square (1:1)</option>
-          </select>
-        </label>
-
-        <section class="field field--full" id="mogrtGalleryField">
-          <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
-          <div id="mogrtGallery" class="mogrt-gallery" role="listbox" aria-label="MOGRT gallery"></div>
-          <p id="mogrtSelectedLabel" class="hint"></p>
-        </section>
-
-        <p class="hint field--full" data-i18n="help.tracks">
-          Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
-        </p>
+        <footer class="panel__footer">
+          <button id="pingButton" class="button button--secondary" data-i18n="action.ping">Tester connexion Premiere</button>
+          <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
+        </footer>
       </section>
 
-      <footer class="panel__footer">
-        <button id="pingButton" class="button button--secondary" data-i18n="action.ping">Tester connexion Premiere</button>
-        <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
-      </footer>
+      <section id="modeVisual" class="mode-panel" data-mode="visual" hidden>
+        <section class="panel__grid">
+          <section class="field field--full">
+            <span data-i18n="visual.title">Edition visuelle des MOGRT selectionnes</span>
+            <p class="hint" data-i18n="visual.description">
+              Selectionne un ou plusieurs MOGRT Sub Creator sur la timeline, lis les parametres disponibles, puis applique les changements.
+            </p>
+            <div class="inline-row inline-row--actions">
+              <button id="visualReadButton" type="button" class="button button--secondary" data-i18n="action.readMogrtProps">
+                Lire parametres selection
+              </button>
+              <button id="visualApplyButton" type="button" class="button" data-i18n="action.applyMogrtProps">
+                Appliquer modifications
+              </button>
+            </div>
+            <p id="visualSelectionSummary" class="hint" data-i18n="visual.selectionDefault">Aucune selection MOGRT lue.</p>
+            <div id="visualPropertyList" class="visual-property-list"></div>
+          </section>
+        </section>
+      </section>
 
       <pre id="logOutput" class="log" aria-live="polite"></pre>
     </main>

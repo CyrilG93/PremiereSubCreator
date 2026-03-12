@@ -21,6 +21,7 @@ It supports:
 - Persisted panel settings (source, style, limits, language, and selected MOGRT).
 - Mac + Windows installers.
 - Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
+- Visual editor apply sends only modified controls, preserving untouched MOGRT parameters.
 
 ## Important product choices
 

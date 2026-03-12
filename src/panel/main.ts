@@ -116,6 +116,8 @@ const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
 let pendingSelectedMogrtId = "";
 let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
+const visualOriginalValuesByPath = new Map<string, string>();
+const visualOpenGroups = new Set<string>();
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -585,6 +587,15 @@ function formatVisualValue(valueType: HostVisualProperty["valueType"], value: st
   return String(value);
 }
 
+function normalizeColorHex(value: string | number | boolean): string {
+  // // Normalize possible color values into lowercase #rrggbb.
+  const text = String(value || "").trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(text)) {
+    return text;
+  }
+  return "";
+}
+
 function looksLikeGuidList(value: string): boolean {
   // // Detect Premiere internal GUID-list artifacts to avoid exposing them as group labels.
   return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(String(value || "").trim());
@@ -629,6 +640,54 @@ function parseVectorValues(value: string | number | boolean): number[] {
   return csvNumbers.length > 0 ? csvNumbers : [0, 0];
 }
 
+function canonicalizeVisualValue(
+  controlKind: HostVisualProperty["controlKind"],
+  valueType: HostVisualProperty["valueType"],
+  value: string | number | boolean
+): string {
+  // // Build stable comparable value strings so apply only sends modified controls.
+  if (controlKind === "vector") {
+    const vectorValues = parseVectorValues(value).map((item) => Number(item.toFixed(6)));
+    return JSON.stringify(vectorValues);
+  }
+
+  if (controlKind === "color") {
+    return normalizeColorHex(value) || String(value || "").trim().toLowerCase();
+  }
+
+  if (valueType === "boolean") {
+    return value === true ? "true" : "false";
+  }
+
+  if (valueType === "number") {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? String(Number(numericValue.toFixed(6))) : "0";
+  }
+
+  return String(value ?? "");
+}
+
+function captureOpenVisualGroupsFromDom(): void {
+  // // Persist current expand/collapse state before re-rendering the visual editor list.
+  if (!elements.visualPropertyList) {
+    return;
+  }
+
+  const groups = elements.visualPropertyList.querySelectorAll<HTMLDetailsElement>("details.visual-group[data-group-name]");
+  groups.forEach((groupNode) => {
+    const groupName = String(groupNode.dataset.groupName || "").trim();
+    if (!groupName) {
+      return;
+    }
+
+    if (groupNode.open) {
+      visualOpenGroups.add(groupName);
+    } else {
+      visualOpenGroups.delete(groupName);
+    }
+  });
+}
+
 function updateVisualSelectionSummary(message: string): void {
   // // Keep selection summary centralized for clearer visual-editor feedback.
   if (!elements.visualSelectionSummary) {
@@ -644,8 +703,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return;
   }
 
+  captureOpenVisualGroupsFromDom();
   elements.visualPropertyList.innerHTML = "";
   loadedVisualProperties = properties.slice();
+  visualOriginalValuesByPath.clear();
 
   if (!properties.length) {
     return;
@@ -659,6 +720,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
     const rawGroup = String(property.groupPath || "").trim();
     const groupKey = rawGroup && !looksLikeGuidList(rawGroup) ? rawGroup : "General";
+    visualOriginalValuesByPath.set(
+      property.path,
+      canonicalizeVisualValue(property.controlKind, property.valueType, property.value)
+    );
     const existing = grouped.get(groupKey);
     if (existing) {
       existing.push(property);
@@ -670,7 +735,15 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   for (const [groupName, groupProperties] of grouped.entries()) {
     const groupNode = document.createElement("details");
     groupNode.className = "visual-group";
-    groupNode.open = false;
+    groupNode.dataset.groupName = groupName;
+    groupNode.open = visualOpenGroups.has(groupName);
+    groupNode.addEventListener("toggle", () => {
+      if (groupNode.open) {
+        visualOpenGroups.add(groupName);
+      } else {
+        visualOpenGroups.delete(groupName);
+      }
+    });
 
     const summary = document.createElement("summary");
     summary.className = "visual-group__title";
@@ -865,6 +938,12 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
       value = Number(control.value);
     } else {
       value = control.value;
+    }
+
+    const currentComparable = canonicalizeVisualValue(controlKind, valueType, value);
+    const originalComparable = visualOriginalValuesByPath.get(path);
+    if (typeof originalComparable === "string" && currentComparable === originalComparable) {
+      return;
     }
 
     changes.push({

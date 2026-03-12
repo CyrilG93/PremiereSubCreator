@@ -732,6 +732,20 @@ function subcreator_visual_is_color_label(displayName) {
   );
 }
 
+function subcreator_visual_group_suggests_color(groupPath) {
+  // // Detect color-oriented groups so numeric packed colors can be shown as color pickers.
+  var key = String(groupPath || "").toLowerCase();
+  return (
+    key.indexOf("fill") !== -1 ||
+    key.indexOf("stroke") !== -1 ||
+    key.indexOf("highlight") !== -1 ||
+    key.indexOf("color") !== -1 ||
+    key.indexOf("couleur") !== -1 ||
+    key.indexOf("outline") !== -1 ||
+    key.indexOf("shadow") !== -1
+  );
+}
+
 function subcreator_visual_is_discrete_numeric_label(displayName) {
   // // Detect numeric menu-like fields where a raw number input is safer than slider.
   var key = String(displayName || "").toLowerCase();
@@ -899,13 +913,15 @@ function subcreator_serialize_visual_property_value(rawValue, valueType) {
   return rawValue;
 }
 
-function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, textFallback, hasChildren) {
+function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, hasChildren, rawValueOverride) {
   // // Build one panel-ready visual property entry with inferred control metadata.
-  var rawValue;
-  try {
-    rawValue = property.getValue();
-  } catch (readError) {
-    return null;
+  var rawValue = typeof rawValueOverride !== "undefined" ? rawValueOverride : undefined;
+  if (typeof rawValue === "undefined") {
+    try {
+      rawValue = property.getValue();
+    } catch (readError) {
+      return null;
+    }
   }
 
   if (typeof rawValue === "undefined") {
@@ -922,18 +938,14 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
 
   var detectedType = subcreator_detect_visual_property_type(rawValue);
   var key = String(displayName || "").toLowerCase();
-  var extractedText = subcreator_trim_string(String(subcreator_extract_text_from_property_value(rawValue) || "").replace(/\r/g, "\n"));
-  if (subcreator_is_default_caption_label(extractedText)) {
-    extractedText = "";
-  }
-
   var shouldTreatAsText = subcreator_should_try_text_property(displayName, rawValue);
-  if (!extractedText && shouldTreatAsText && textFallback) {
-    extractedText = subcreator_trim_string(String(textFallback || "").replace(/\r/g, "\n"));
-  }
-
   var colorHex = subcreator_visual_extract_color_hex(rawValue);
-  var looksLikeColor = !!(colorHex && (subcreator_visual_is_color_label(displayName) || key.indexOf("rgb") !== -1));
+  var looksLikeColor = !!(
+    colorHex &&
+    (subcreator_visual_is_color_label(displayName) ||
+      subcreator_visual_group_suggests_color(groupPath) ||
+      key.indexOf("rgb") !== -1)
+  );
   var vectorValue = subcreator_visual_extract_numeric_vector(rawValue);
 
   // // Do not expose subtitle text in visual editor to avoid overriding all generated captions.
@@ -1019,13 +1031,14 @@ function subcreator_collect_mogrt_visual_properties_recursive(
   propertyCollection,
   pathPrefix,
   groupPathPrefix,
-  collector,
-  textFallback
+  collector
 ) {
   // // Traverse nested Essential Graphics properties and capture editable entries with group paths.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
   }
+
+  var activeSiblingGroupPath = String(groupPathPrefix || "");
 
   for (var index = 0; index < propertyCollection.numItems; index += 1) {
     var property = propertyCollection[index];
@@ -1039,6 +1052,17 @@ function subcreator_collect_mogrt_visual_properties_recursive(
       displayName = "Property " + currentPath;
     }
 
+    var rawValue = undefined;
+    var hasValue = false;
+    if (typeof property.getValue === "function") {
+      try {
+        rawValue = property.getValue();
+        hasValue = true;
+      } catch (readValueError) {
+        hasValue = false;
+      }
+    }
+
     var hasChildren = !!(
       property.properties &&
       typeof property.properties.numItems === "number" &&
@@ -1048,14 +1072,31 @@ function subcreator_collect_mogrt_visual_properties_recursive(
       displayName = "Group " + String(index + 1);
     }
 
+    // // Group markers are represented as GUID-list payload strings in many MOGRT templates.
+    if (hasValue && subcreator_visual_is_guid_list_string(rawValue)) {
+      activeSiblingGroupPath = groupPathPrefix ? groupPathPrefix + " / " + displayName : displayName;
+
+      if (hasChildren) {
+        subcreator_collect_mogrt_visual_properties_recursive(
+          property.properties,
+          currentPath,
+          activeSiblingGroupPath,
+          collector
+        );
+      }
+      continue;
+    }
+
+    var resolvedGroupPath = activeSiblingGroupPath || groupPathPrefix || "General";
+
     if (typeof property.getValue === "function" && typeof property.setValue === "function") {
       var descriptor = subcreator_build_visual_property_entry(
         property,
         currentPath,
         displayName,
-        groupPathPrefix || "General",
-        textFallback,
-        hasChildren
+        resolvedGroupPath,
+        hasChildren,
+        hasValue ? rawValue : undefined
       );
       if (descriptor) {
         collector.push(descriptor);
@@ -1063,13 +1104,12 @@ function subcreator_collect_mogrt_visual_properties_recursive(
     }
 
     if (hasChildren) {
-      var nextGroupPath = groupPathPrefix ? groupPathPrefix + " / " + displayName : displayName;
+      var nextGroupPath = resolvedGroupPath ? resolvedGroupPath + " / " + displayName : displayName;
       subcreator_collect_mogrt_visual_properties_recursive(
         property.properties,
         currentPath,
         nextGroupPath,
-        collector,
-        textFallback
+        collector
       );
     }
   }
@@ -1347,13 +1387,11 @@ function subcreator_list_selected_mogrt_properties() {
 
     var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
     var properties = [];
-    var textFallback = subcreator_extract_text_from_component_properties(firstComponent ? firstComponent.properties : null);
     subcreator_collect_mogrt_visual_properties_recursive(
       firstComponent ? firstComponent.properties : null,
       "",
       "",
-      properties,
-      textFallback
+      properties
     );
 
     return subcreator_ok({

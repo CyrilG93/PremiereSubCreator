@@ -22,6 +22,7 @@ It supports:
 - Mac + Windows installers.
 - Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
 - Visual editor apply sends only modified controls, preserving untouched MOGRT parameters.
+- Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 
 ## Important product choices
 

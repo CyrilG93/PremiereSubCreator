@@ -720,6 +720,17 @@ function subcreator_visual_extract_color_hex(rawValue) {
 function subcreator_visual_is_color_label(displayName) {
   // // Detect color-like labels so panel can render native color pickers.
   var key = String(displayName || "").toLowerCase();
+  if (
+    key.indexOf("width") !== -1 ||
+    key.indexOf("size") !== -1 ||
+    key.indexOf("amount") !== -1 ||
+    key.indexOf("opacity") !== -1 ||
+    key.indexOf("position") !== -1 ||
+    key.indexOf("offset") !== -1
+  ) {
+    return false;
+  }
+
   return (
     key.indexOf("color") !== -1 ||
     key.indexOf("couleur") !== -1 ||
@@ -900,6 +911,157 @@ function subcreator_visual_extract_numeric_vector(rawValue) {
   return values;
 }
 
+function subcreator_visual_read_sequence_dimensions() {
+  // // Read active sequence dimensions for converting internal vector units to UI-friendly values.
+  var width = 1920;
+  var height = 1080;
+
+  try {
+    if (app && app.project && app.project.activeSequence) {
+      var sequence = app.project.activeSequence;
+
+      if (typeof sequence.frameSizeHorizontal !== "undefined") {
+        var frameWidth = Number(sequence.frameSizeHorizontal);
+        if (!isNaN(frameWidth) && frameWidth > 0) {
+          width = frameWidth;
+        }
+      }
+
+      if (typeof sequence.frameSizeVertical !== "undefined") {
+        var frameHeight = Number(sequence.frameSizeVertical);
+        if (!isNaN(frameHeight) && frameHeight > 0) {
+          height = frameHeight;
+        }
+      }
+
+      if (typeof sequence.getSettings === "function") {
+        var settings = sequence.getSettings();
+        if (settings) {
+          var settingsWidth = Number(settings.videoFrameWidth || settings.frameWidth || settings.width);
+          if (!isNaN(settingsWidth) && settingsWidth > 0) {
+            width = settingsWidth;
+          }
+
+          var settingsHeight = Number(settings.videoFrameHeight || settings.frameHeight || settings.height);
+          if (!isNaN(settingsHeight) && settingsHeight > 0) {
+            height = settingsHeight;
+          }
+        }
+      }
+    }
+  } catch (readSequenceError) {}
+
+  return {
+    width: width,
+    height: height
+  };
+}
+
+function subcreator_visual_detect_vector_mode(displayName, groupPath) {
+  // // Detect vector unit convention so panel can show human-friendly values.
+  var key = (String(groupPath || "") + " " + String(displayName || "")).toLowerCase();
+
+  if (key.indexOf("offset") !== -1 || key.indexOf("position") !== -1) {
+    return "offset_scaled";
+  }
+
+  if (key.indexOf("size") !== -1 || key.indexOf("scale") !== -1) {
+    return "size_percent";
+  }
+
+  return "raw";
+}
+
+function subcreator_visual_vector_to_panel_units(vectorValues, vectorMode, sequenceSize) {
+  // // Convert host-internal vector units into panel-friendly display values.
+  if (!vectorValues || !vectorValues.length) {
+    return [];
+  }
+
+  var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
+  var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
+  var converted = [];
+
+  for (var index = 0; index < vectorValues.length; index += 1) {
+    var numericValue = Number(vectorValues[index]);
+    if (isNaN(numericValue)) {
+      converted.push(0);
+      continue;
+    }
+
+    if (vectorMode === "offset_scaled") {
+      if (index === 0) {
+        converted.push(numericValue / width);
+      } else if (index === 1) {
+        converted.push(numericValue / height);
+      } else {
+        converted.push(numericValue);
+      }
+      continue;
+    }
+
+    if (vectorMode === "size_percent") {
+      if (index === 0) {
+        converted.push(numericValue * width);
+      } else if (index === 1) {
+        converted.push(numericValue * height);
+      } else {
+        converted.push(numericValue);
+      }
+      continue;
+    }
+
+    converted.push(numericValue);
+  }
+
+  return converted;
+}
+
+function subcreator_visual_vector_to_host_units(vectorValues, vectorMode, sequenceSize) {
+  // // Convert panel vector values back to host internal units before setValue.
+  if (!vectorValues || !vectorValues.length) {
+    return [];
+  }
+
+  var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
+  var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
+  var converted = [];
+
+  for (var index = 0; index < vectorValues.length; index += 1) {
+    var numericValue = Number(vectorValues[index]);
+    if (isNaN(numericValue)) {
+      converted.push(0);
+      continue;
+    }
+
+    if (vectorMode === "offset_scaled") {
+      if (index === 0) {
+        converted.push(numericValue * width);
+      } else if (index === 1) {
+        converted.push(numericValue * height);
+      } else {
+        converted.push(numericValue);
+      }
+      continue;
+    }
+
+    if (vectorMode === "size_percent") {
+      if (index === 0) {
+        converted.push(numericValue / width);
+      } else if (index === 1) {
+        converted.push(numericValue / height);
+      } else {
+        converted.push(numericValue);
+      }
+      continue;
+    }
+
+    converted.push(numericValue);
+  }
+
+  return converted;
+}
+
 function subcreator_serialize_visual_property_value(rawValue, valueType) {
   // // Serialize complex property values into text payloads usable in panel controls.
   if (valueType === "json") {
@@ -940,10 +1102,18 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   var key = String(displayName || "").toLowerCase();
   var shouldTreatAsText = subcreator_should_try_text_property(displayName, rawValue);
   var colorHex = subcreator_visual_extract_color_hex(rawValue);
+  var colorBlocked =
+    key.indexOf("width") !== -1 ||
+    key.indexOf("size") !== -1 ||
+    key.indexOf("amount") !== -1 ||
+    key.indexOf("opacity") !== -1 ||
+    key.indexOf("feather") !== -1;
+  var colorCandidate = subcreator_visual_is_color_label(displayName);
   var looksLikeColor = !!(
     colorHex &&
-    (subcreator_visual_is_color_label(displayName) ||
-      subcreator_visual_group_suggests_color(groupPath) ||
+    !colorBlocked &&
+    (colorCandidate ||
+      (subcreator_visual_group_suggests_color(groupPath) && !subcreator_visual_is_discrete_numeric_label(displayName)) ||
       key.indexOf("rgb") !== -1)
   );
   var vectorValue = subcreator_visual_extract_numeric_vector(rawValue);
@@ -1002,13 +1172,16 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   }
 
   if (vectorValue) {
+    var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
+    var sequenceSize = subcreator_visual_read_sequence_dimensions();
+    var displayVector = subcreator_visual_vector_to_panel_units(vectorValue, vectorMode, sequenceSize);
     return {
       path: currentPath,
       displayName: displayName,
       groupPath: groupPath || "General",
       valueType: "json",
       controlKind: "vector",
-      value: JSON.stringify(vectorValue)
+      value: JSON.stringify(displayVector)
     };
   }
 
@@ -1329,6 +1502,27 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   } catch (setColorError255) {}
 
   try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1], true);
+      return true;
+    }
+  } catch (setColorArrayUnitError) {}
+
+  try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue([rgb.red, rgb.green, rgb.blue, 255], true);
+      return true;
+    }
+  } catch (setColorArray255Error) {}
+
+  try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue({ red: rgb.red / 255, green: rgb.green / 255, blue: rgb.blue / 255, alpha: 1 }, true);
+      return true;
+    }
+  } catch (setColorObjectError) {}
+
+  try {
     property.setValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1], true);
     return true;
   } catch (arrayUnitError) {}
@@ -1470,6 +1664,22 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           try {
             applied = subcreator_try_set_mogrt_color_property(property, value);
           } catch (colorError) {}
+        } else if (controlKind === "vector") {
+          try {
+            var parsedVector = subcreator_normalize_visual_payload_value("json", value);
+            if (parsedVector && typeof parsedVector.length === "number") {
+              var sourceVector = [];
+              for (var vectorIndex = 0; vectorIndex < parsedVector.length; vectorIndex += 1) {
+                sourceVector.push(Number(parsedVector[vectorIndex]));
+              }
+
+              var sequenceSize = subcreator_visual_read_sequence_dimensions();
+              var vectorMode = subcreator_visual_detect_vector_mode(property.displayName || "", "");
+              var hostVector = subcreator_visual_vector_to_host_units(sourceVector, vectorMode, sequenceSize);
+              property.setValue(hostVector, true);
+              applied = true;
+            }
+          } catch (vectorError) {}
         }
 
         if (!applied) {

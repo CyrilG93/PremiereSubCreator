@@ -510,6 +510,290 @@ function subcreator_detect_visual_property_type(rawValue) {
   return "json";
 }
 
+function subcreator_visual_to_number(rawValue) {
+  // // Convert unknown scalar values to number while preserving NaN on failure.
+  var parsed = Number(rawValue);
+  return isNaN(parsed) ? NaN : parsed;
+}
+
+function subcreator_visual_clamp(value, minValue, maxValue) {
+  // // Clamp numeric values so color/range conversions stay within valid bounds.
+  var numericValue = Number(value);
+  if (isNaN(numericValue)) {
+    return Number(minValue);
+  }
+  if (numericValue < minValue) {
+    return Number(minValue);
+  }
+  if (numericValue > maxValue) {
+    return Number(maxValue);
+  }
+  return numericValue;
+}
+
+function subcreator_visual_channel_to_hex(value) {
+  // // Convert one RGB channel to a 2-char hexadecimal value.
+  var clamped = Math.round(subcreator_visual_clamp(value, 0, 255));
+  var hex = clamped.toString(16);
+  return hex.length < 2 ? "0" + hex : hex;
+}
+
+function subcreator_visual_rgb_to_hex(red, green, blue) {
+  // // Build CSS hex color from RGB channels.
+  return (
+    "#" +
+    subcreator_visual_channel_to_hex(red) +
+    subcreator_visual_channel_to_hex(green) +
+    subcreator_visual_channel_to_hex(blue)
+  );
+}
+
+function subcreator_visual_extract_rgb_triplet(rawRed, rawGreen, rawBlue) {
+  // // Normalize RGB channels from 0..1 or 0..255 formats.
+  var red = subcreator_visual_to_number(rawRed);
+  var green = subcreator_visual_to_number(rawGreen);
+  var blue = subcreator_visual_to_number(rawBlue);
+  if (isNaN(red) || isNaN(green) || isNaN(blue)) {
+    return null;
+  }
+
+  var useUnitScale = red <= 1 && green <= 1 && blue <= 1;
+  return {
+    red: useUnitScale ? subcreator_visual_clamp(red * 255, 0, 255) : subcreator_visual_clamp(red, 0, 255),
+    green: useUnitScale ? subcreator_visual_clamp(green * 255, 0, 255) : subcreator_visual_clamp(green, 0, 255),
+    blue: useUnitScale ? subcreator_visual_clamp(blue * 255, 0, 255) : subcreator_visual_clamp(blue, 0, 255),
+    unitScale: useUnitScale
+  };
+}
+
+function subcreator_visual_extract_rgb_from_value(rawValue) {
+  // // Read RGB channels from known color payload shapes.
+  if (rawValue === undefined || rawValue === null) {
+    return null;
+  }
+
+  if (typeof rawValue === "string") {
+    var text = subcreator_trim_string(String(rawValue || ""));
+    if (/^#[0-9a-f]{6}$/i.test(text)) {
+      return {
+        red: parseInt(text.substring(1, 3), 16),
+        green: parseInt(text.substring(3, 5), 16),
+        blue: parseInt(text.substring(5, 7), 16),
+        unitScale: false
+      };
+    }
+
+    if (/^#[0-9a-f]{3}$/i.test(text)) {
+      return {
+        red: parseInt(text.charAt(1) + text.charAt(1), 16),
+        green: parseInt(text.charAt(2) + text.charAt(2), 16),
+        blue: parseInt(text.charAt(3) + text.charAt(3), 16),
+        unitScale: false
+      };
+    }
+
+    if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
+      try {
+        var parsed = JSON.parse(text);
+        return subcreator_visual_extract_rgb_from_value(parsed);
+      } catch (jsonError) {}
+    }
+
+    return null;
+  }
+
+  if (typeof rawValue === "object") {
+    if (typeof rawValue.length === "number" && rawValue.length >= 3) {
+      var fromArray = subcreator_visual_extract_rgb_triplet(rawValue[0], rawValue[1], rawValue[2]);
+      if (fromArray) {
+        return fromArray;
+      }
+    }
+
+    if (
+      typeof rawValue.red !== "undefined" &&
+      typeof rawValue.green !== "undefined" &&
+      typeof rawValue.blue !== "undefined"
+    ) {
+      var fromRgbKeys = subcreator_visual_extract_rgb_triplet(rawValue.red, rawValue.green, rawValue.blue);
+      if (fromRgbKeys) {
+        return fromRgbKeys;
+      }
+    }
+
+    if (typeof rawValue.r !== "undefined" && typeof rawValue.g !== "undefined" && typeof rawValue.b !== "undefined") {
+      var fromShortKeys = subcreator_visual_extract_rgb_triplet(rawValue.r, rawValue.g, rawValue.b);
+      if (fromShortKeys) {
+        return fromShortKeys;
+      }
+    }
+
+    if (rawValue.color && typeof rawValue.color === "object") {
+      var fromNestedColor = subcreator_visual_extract_rgb_from_value(rawValue.color);
+      if (fromNestedColor) {
+        return fromNestedColor;
+      }
+    }
+  }
+
+  return null;
+}
+
+function subcreator_visual_extract_color_hex(rawValue) {
+  // // Convert color payloads to CSS hex for panel color inputs.
+  var rgb = subcreator_visual_extract_rgb_from_value(rawValue);
+  if (!rgb) {
+    return "";
+  }
+  return subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue);
+}
+
+function subcreator_visual_is_color_label(displayName) {
+  // // Detect color-like labels so panel can render native color pickers.
+  var key = String(displayName || "").toLowerCase();
+  return (
+    key.indexOf("color") !== -1 ||
+    key.indexOf("couleur") !== -1 ||
+    key.indexOf("fill") !== -1 ||
+    key.indexOf("stroke") !== -1 ||
+    key.indexOf("outline") !== -1 ||
+    key.indexOf("highlight") !== -1 ||
+    key.indexOf("tint") !== -1 ||
+    key.indexOf("shadow") !== -1
+  );
+}
+
+function subcreator_visual_is_discrete_numeric_label(displayName) {
+  // // Detect numeric menu-like fields where a raw number input is safer than slider.
+  var key = String(displayName || "").toLowerCase();
+  return (
+    key.indexOf("mode") !== -1 ||
+    key.indexOf("type") !== -1 ||
+    key.indexOf("style") !== -1 ||
+    key.indexOf("preset") !== -1 ||
+    key.indexOf("family") !== -1 ||
+    key.indexOf("based on") !== -1 ||
+    key.indexOf("align") !== -1 ||
+    key.indexOf("justif") !== -1 ||
+    key.indexOf("case") !== -1
+  );
+}
+
+function subcreator_visual_try_read_number_member(property, key) {
+  // // Read numeric properties/methods from host controls when available.
+  if (!property || !key) {
+    return NaN;
+  }
+
+  var value = NaN;
+
+  try {
+    if (typeof property[key] === "function") {
+      value = Number(property[key]());
+    } else if (typeof property[key] !== "undefined") {
+      value = Number(property[key]);
+    }
+  } catch (error) {
+    value = NaN;
+  }
+
+  return isNaN(value) ? NaN : value;
+}
+
+function subcreator_visual_guess_numeric_range(displayName, rawValue) {
+  // // Guess ergonomic slider ranges when host metadata does not expose min/max.
+  var key = String(displayName || "").toLowerCase();
+  var numericValue = subcreator_visual_to_number(rawValue);
+
+  if (isNaN(numericValue)) {
+    numericValue = 0;
+  }
+
+  if (key.indexOf("opacity") !== -1 || key.indexOf("opacite") !== -1) {
+    return { minValue: 0, maxValue: 100, stepValue: 1 };
+  }
+
+  if (key.indexOf("scale") !== -1 || key.indexOf("size") !== -1 || key.indexOf("taille") !== -1) {
+    return { minValue: 0, maxValue: 400, stepValue: 1 };
+  }
+
+  if (key.indexOf("rotation") !== -1 || key.indexOf("angle") !== -1) {
+    return { minValue: -360, maxValue: 360, stepValue: 1 };
+  }
+
+  if (key.indexOf("line") !== -1 && key.indexOf("max") !== -1) {
+    return { minValue: 1, maxValue: 6, stepValue: 1 };
+  }
+
+  if (key.indexOf("character") !== -1 || key.indexOf("chars") !== -1 || key.indexOf("letter") !== -1) {
+    return { minValue: 4, maxValue: 120, stepValue: 1 };
+  }
+
+  var delta = Math.max(Math.abs(numericValue), 50);
+  return {
+    minValue: Math.floor(numericValue - delta),
+    maxValue: Math.ceil(numericValue + delta),
+    stepValue: Number(Math.abs(numericValue % 1) > 0 ? 0.1 : 1)
+  };
+}
+
+function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
+  // // Resolve numeric ranges using host hints first, then name-based heuristics.
+  var minCandidates = ["getMinValue", "getMinimum", "getMin", "minValue", "minimum", "min"];
+  var maxCandidates = ["getMaxValue", "getMaximum", "getMax", "maxValue", "maximum", "max"];
+  var stepCandidates = ["getStepValue", "getStep", "stepValue", "step"];
+
+  var minValue = NaN;
+  var maxValue = NaN;
+  var stepValue = NaN;
+  var i = 0;
+
+  for (i = 0; i < minCandidates.length; i += 1) {
+    minValue = subcreator_visual_try_read_number_member(property, minCandidates[i]);
+    if (!isNaN(minValue)) {
+      break;
+    }
+  }
+
+  for (i = 0; i < maxCandidates.length; i += 1) {
+    maxValue = subcreator_visual_try_read_number_member(property, maxCandidates[i]);
+    if (!isNaN(maxValue)) {
+      break;
+    }
+  }
+
+  for (i = 0; i < stepCandidates.length; i += 1) {
+    stepValue = subcreator_visual_try_read_number_member(property, stepCandidates[i]);
+    if (!isNaN(stepValue)) {
+      break;
+    }
+  }
+
+  var guessed = subcreator_visual_guess_numeric_range(displayName, rawValue);
+
+  if (isNaN(minValue)) {
+    minValue = guessed.minValue;
+  }
+
+  if (isNaN(maxValue)) {
+    maxValue = guessed.maxValue;
+  }
+
+  if (isNaN(stepValue) || stepValue <= 0) {
+    stepValue = guessed.stepValue;
+  }
+
+  if (maxValue <= minValue) {
+    maxValue = minValue + Math.max(1, Number(stepValue || 1));
+  }
+
+  return {
+    minValue: minValue,
+    maxValue: maxValue,
+    stepValue: stepValue
+  };
+}
+
 function subcreator_serialize_visual_property_value(rawValue, valueType) {
   // // Serialize complex property values into text payloads usable in panel controls.
   if (valueType === "json") {
@@ -523,8 +807,141 @@ function subcreator_serialize_visual_property_value(rawValue, valueType) {
   return rawValue;
 }
 
-function subcreator_collect_mogrt_visual_properties_recursive(propertyCollection, pathPrefix, collector) {
-  // // Traverse nested Essential Graphics properties and capture editable entries.
+function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, textFallback) {
+  // // Build one panel-ready visual property entry with inferred control metadata.
+  var rawValue;
+  try {
+    rawValue = property.getValue();
+  } catch (readError) {
+    return null;
+  }
+
+  if (typeof rawValue === "undefined") {
+    return null;
+  }
+
+  var detectedType = subcreator_detect_visual_property_type(rawValue);
+  var key = String(displayName || "").toLowerCase();
+  var extractedText = subcreator_trim_string(String(subcreator_extract_text_from_property_value(rawValue) || "").replace(/\r/g, "\n"));
+  if (subcreator_is_default_caption_label(extractedText)) {
+    extractedText = "";
+  }
+
+  var shouldTreatAsText = subcreator_should_try_text_property(displayName, rawValue);
+  if (!extractedText && shouldTreatAsText && textFallback) {
+    extractedText = subcreator_trim_string(String(textFallback || "").replace(/\r/g, "\n"));
+  }
+
+  var colorHex = subcreator_visual_extract_color_hex(rawValue);
+  var looksLikeColor = !!(colorHex && (subcreator_visual_is_color_label(displayName) || key.indexOf("rgb") !== -1));
+
+  if (detectedType === "boolean") {
+    return {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "boolean",
+      controlKind: "checkbox",
+      value: !!rawValue
+    };
+  }
+
+  if (detectedType === "number") {
+    var range = subcreator_visual_read_numeric_range(property, displayName, rawValue);
+    var value = subcreator_visual_to_number(rawValue);
+    if (isNaN(value)) {
+      value = 0;
+    }
+
+    var useSlider = !subcreator_visual_is_discrete_numeric_label(displayName);
+    var descriptor = {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "number",
+      controlKind: useSlider ? "slider" : "number",
+      value: value
+    };
+
+    if (useSlider) {
+      descriptor.minValue = range.minValue;
+      descriptor.maxValue = range.maxValue;
+      descriptor.stepValue = range.stepValue;
+    }
+
+    return descriptor;
+  }
+
+  if (looksLikeColor) {
+    return {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "string",
+      controlKind: "color",
+      value: colorHex
+    };
+  }
+
+  if (shouldTreatAsText || (key === "text" && extractedText)) {
+    return {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "string",
+      controlKind: "text",
+      value: extractedText || ""
+    };
+  }
+
+  if (detectedType === "json") {
+    var serializedValue = subcreator_serialize_visual_property_value(rawValue, "json");
+    var serializedText = String(serializedValue || "");
+
+    // // Hide noisy internal payload-only fields when no readable text can be extracted.
+    if (!extractedText && key.indexOf("text") !== -1 && serializedText.indexOf("capProp") !== -1) {
+      if (textFallback) {
+        return {
+          path: currentPath,
+          displayName: displayName,
+          groupPath: groupPath || "General",
+          valueType: "string",
+          controlKind: "text",
+          value: String(textFallback || "")
+        };
+      }
+
+      return null;
+    }
+
+    return {
+      path: currentPath,
+      displayName: displayName,
+      groupPath: groupPath || "General",
+      valueType: "json",
+      controlKind: "json",
+      value: serializedText
+    };
+  }
+
+  return {
+    path: currentPath,
+    displayName: displayName,
+    groupPath: groupPath || "General",
+    valueType: "string",
+    controlKind: "string",
+    value: String(rawValue || "")
+  };
+}
+
+function subcreator_collect_mogrt_visual_properties_recursive(
+  propertyCollection,
+  pathPrefix,
+  groupPathPrefix,
+  collector,
+  textFallback
+) {
+  // // Traverse nested Essential Graphics properties and capture editable entries with group paths.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
   }
@@ -536,28 +953,33 @@ function subcreator_collect_mogrt_visual_properties_recursive(propertyCollection
     }
 
     var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
-    if (typeof property.getValue === "function" && typeof property.setValue === "function") {
-      try {
-        var rawValue = property.getValue();
-        if (typeof rawValue !== "undefined") {
-          var valueType = subcreator_detect_visual_property_type(rawValue);
-          var displayName = subcreator_trim_string(String(property.displayName || ""));
-          if (!displayName) {
-            displayName = "Property " + currentPath;
-          }
+    var displayName = subcreator_trim_string(String(property.displayName || ""));
+    if (!displayName) {
+      displayName = "Property " + currentPath;
+    }
 
-          collector.push({
-            path: currentPath,
-            displayName: displayName,
-            valueType: valueType,
-            value: subcreator_serialize_visual_property_value(rawValue, valueType)
-          });
-        }
-      } catch (readError) {}
+    if (typeof property.getValue === "function" && typeof property.setValue === "function") {
+      var descriptor = subcreator_build_visual_property_entry(
+        property,
+        currentPath,
+        displayName,
+        groupPathPrefix || "General",
+        textFallback
+      );
+      if (descriptor) {
+        collector.push(descriptor);
+      }
     }
 
     if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
-      subcreator_collect_mogrt_visual_properties_recursive(property.properties, currentPath, collector);
+      var nextGroupPath = groupPathPrefix ? groupPathPrefix + " / " + displayName : displayName;
+      subcreator_collect_mogrt_visual_properties_recursive(
+        property.properties,
+        currentPath,
+        nextGroupPath,
+        collector,
+        textFallback
+      );
     }
   }
 }
@@ -626,6 +1048,173 @@ function subcreator_normalize_visual_payload_value(valueType, rawValue) {
   return String(rawValue || "");
 }
 
+function subcreator_visual_parse_hex_color(value) {
+  // // Parse CSS hex color strings into RGB channels.
+  var text = subcreator_trim_string(String(value || ""));
+  if (!text) {
+    return null;
+  }
+
+  if (/^#[0-9a-f]{3}$/i.test(text)) {
+    return {
+      red: parseInt(text.charAt(1) + text.charAt(1), 16),
+      green: parseInt(text.charAt(2) + text.charAt(2), 16),
+      blue: parseInt(text.charAt(3) + text.charAt(3), 16)
+    };
+  }
+
+  if (/^#[0-9a-f]{6}$/i.test(text)) {
+    return {
+      red: parseInt(text.substring(1, 3), 16),
+      green: parseInt(text.substring(3, 5), 16),
+      blue: parseInt(text.substring(5, 7), 16)
+    };
+  }
+
+  return null;
+}
+
+function subcreator_visual_apply_rgb_to_payload(payload, rgb) {
+  // // Patch object/array color payloads while preserving their original numeric scale.
+  if (!payload || typeof payload !== "object" || !rgb) {
+    return false;
+  }
+
+  var updated = false;
+
+  function setTriplet(target, redKey, greenKey, blueKey) {
+    if (
+      typeof target[redKey] === "undefined" ||
+      typeof target[greenKey] === "undefined" ||
+      typeof target[blueKey] === "undefined"
+    ) {
+      return false;
+    }
+
+    var redValue = Number(target[redKey]);
+    var greenValue = Number(target[greenKey]);
+    var blueValue = Number(target[blueKey]);
+    var useUnitScale = !isNaN(redValue) && !isNaN(greenValue) && !isNaN(blueValue) && redValue <= 1 && greenValue <= 1 && blueValue <= 1;
+
+    target[redKey] = useUnitScale ? rgb.red / 255 : rgb.red;
+    target[greenKey] = useUnitScale ? rgb.green / 255 : rgb.green;
+    target[blueKey] = useUnitScale ? rgb.blue / 255 : rgb.blue;
+    return true;
+  }
+
+  if (typeof payload.length === "number" && payload.length >= 3) {
+    var c0 = Number(payload[0]);
+    var c1 = Number(payload[1]);
+    var c2 = Number(payload[2]);
+    var unitArrayScale = !isNaN(c0) && !isNaN(c1) && !isNaN(c2) && c0 <= 1 && c1 <= 1 && c2 <= 1;
+    payload[0] = unitArrayScale ? rgb.red / 255 : rgb.red;
+    payload[1] = unitArrayScale ? rgb.green / 255 : rgb.green;
+    payload[2] = unitArrayScale ? rgb.blue / 255 : rgb.blue;
+    updated = true;
+  }
+
+  if (setTriplet(payload, "red", "green", "blue")) {
+    updated = true;
+  }
+
+  if (setTriplet(payload, "r", "g", "b")) {
+    updated = true;
+  }
+
+  if (payload.color && typeof payload.color === "object") {
+    if (subcreator_visual_apply_rgb_to_payload(payload.color, rgb)) {
+      updated = true;
+    }
+  }
+
+  if (payload.value && typeof payload.value === "object") {
+    if (subcreator_visual_apply_rgb_to_payload(payload.value, rgb)) {
+      updated = true;
+    }
+  }
+
+  return updated;
+}
+
+function subcreator_try_set_mogrt_color_property(property, value) {
+  // // Apply color values from panel hex input to color-capable MOGRT controls.
+  if (!property || typeof property.setValue !== "function") {
+    return false;
+  }
+
+  var rgb = subcreator_visual_parse_hex_color(value);
+  if (!rgb) {
+    return false;
+  }
+
+  var rawValue = "";
+  if (typeof property.getValue === "function") {
+    try {
+      rawValue = property.getValue();
+    } catch (getError) {
+      rawValue = "";
+    }
+  }
+
+  if (rawValue && typeof rawValue === "object") {
+    try {
+      var objectCopy = JSON.parse(JSON.stringify(rawValue));
+      if (subcreator_visual_apply_rgb_to_payload(objectCopy, rgb)) {
+        property.setValue(objectCopy, true);
+        return true;
+      }
+    } catch (copyError) {}
+
+    try {
+      if (subcreator_visual_apply_rgb_to_payload(rawValue, rgb)) {
+        property.setValue(rawValue, true);
+        return true;
+      }
+    } catch (directError) {}
+  }
+
+  if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
+    try {
+      var parsed = JSON.parse(rawValue);
+      if (subcreator_visual_apply_rgb_to_payload(parsed, rgb)) {
+        property.setValue(JSON.stringify(parsed), true);
+        return true;
+      }
+    } catch (jsonError) {}
+  }
+
+  try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue(rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1);
+      return true;
+    }
+  } catch (setColorErrorUnit) {}
+
+  try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue(rgb.red, rgb.green, rgb.blue, 255);
+      return true;
+    }
+  } catch (setColorError255) {}
+
+  try {
+    property.setValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1], true);
+    return true;
+  } catch (arrayUnitError) {}
+
+  try {
+    property.setValue([rgb.red, rgb.green, rgb.blue, 255], true);
+    return true;
+  } catch (array255Error) {}
+
+  try {
+    property.setValue(subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue), true);
+    return true;
+  } catch (hexError) {}
+
+  return false;
+}
+
 function subcreator_list_selected_mogrt_properties() {
   // // Return editable visual properties from selected MOGRT clips in active sequence.
   try {
@@ -654,7 +1243,14 @@ function subcreator_list_selected_mogrt_properties() {
 
     var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
     var properties = [];
-    subcreator_collect_mogrt_visual_properties_recursive(firstComponent ? firstComponent.properties : null, "", properties);
+    var textFallback = subcreator_extract_text_from_component_properties(firstComponent ? firstComponent.properties : null);
+    subcreator_collect_mogrt_visual_properties_recursive(
+      firstComponent ? firstComponent.properties : null,
+      "",
+      "",
+      properties,
+      textFallback
+    );
 
     return subcreator_ok({
       selectedCount: mogrtItems.length,
@@ -709,6 +1305,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         var change = changes[changeIndex] || {};
         var path = subcreator_trim_string(String(change.path || ""));
         var valueType = subcreator_trim_string(String(change.valueType || "string")).toLowerCase();
+        var controlKind = subcreator_trim_string(String(change.controlKind || "")).toLowerCase();
         var value = change.value;
         if (!path) {
           failedCount += 1;
@@ -721,11 +1318,31 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           continue;
         }
 
-        try {
-          var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
-          property.setValue(normalizedValue, true);
+        var applied = false;
+
+        if (controlKind === "text") {
+          try {
+            applied = subcreator_try_set_mogrt_text_property(property, String(value || ""));
+          } catch (textError) {}
+        } else if (controlKind === "color") {
+          try {
+            applied = subcreator_try_set_mogrt_color_property(property, value);
+          } catch (colorError) {}
+        }
+
+        if (!applied) {
+          try {
+            var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
+            property.setValue(normalizedValue, true);
+            applied = true;
+          } catch (setError) {
+            applied = false;
+          }
+        }
+
+        if (applied) {
           updatedCount += 1;
-        } catch (setError) {
+        } else {
           failedCount += 1;
         }
       }

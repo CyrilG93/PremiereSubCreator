@@ -10,7 +10,6 @@
   "field.maxChars": "Lettres max par ligne",
   "field.linesPerCaption": "Lignes max par sous-titre",
   "field.fontSize": "Taille texte",
-  "field.uppercase": "Forcer MAJUSCULES",
   "field.mogrtFormat": "Format galerie",
   "field.mogrtGallery": "Galerie MOGRT",
   "source.srt": "Fichier SRT",

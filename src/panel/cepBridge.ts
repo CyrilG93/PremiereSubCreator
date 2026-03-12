@@ -41,8 +41,13 @@ export interface WhisperRuntimeStatus {
 export interface SelectedMogrtVisualProperty {
   path: string;
   displayName: string;
+  groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json";
   value: string | number | boolean;
+  minValue?: number;
+  maxValue?: number;
+  stepValue?: number;
 }
 
 export interface SelectedMogrtVisualPropertyList {
@@ -905,9 +910,20 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
 
     const path = String(item.path || "").trim();
     const displayName = String(item.displayName || "").trim();
+    const groupPath = String(item.groupPath || "").trim();
     const valueTypeRaw = String(item.valueType || "string").trim().toLowerCase();
     const valueType: SelectedMogrtVisualProperty["valueType"] =
       valueTypeRaw === "number" || valueTypeRaw === "boolean" || valueTypeRaw === "json" ? valueTypeRaw : "string";
+    const controlKindRaw = String(item.controlKind || valueType).trim().toLowerCase();
+    const controlKind: SelectedMogrtVisualProperty["controlKind"] =
+      controlKindRaw === "slider" ||
+      controlKindRaw === "number" ||
+      controlKindRaw === "checkbox" ||
+      controlKindRaw === "color" ||
+      controlKindRaw === "text" ||
+      controlKindRaw === "json"
+        ? controlKindRaw
+        : "string";
     if (!path || !displayName) {
       continue;
     }
@@ -924,7 +940,12 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
     properties.push({
       path,
       displayName,
+      groupPath,
       valueType,
+      controlKind,
+      minValue: Number.isFinite(Number(item.minValue)) ? Number(item.minValue) : undefined,
+      maxValue: Number.isFinite(Number(item.maxValue)) ? Number(item.maxValue) : undefined,
+      stepValue: Number.isFinite(Number(item.stepValue)) ? Number(item.stepValue) : undefined,
       value
     });
   }
@@ -947,7 +968,12 @@ export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrt
 }
 
 export async function applyVisualPropertiesToSelectedMogrts(
-  changes: Array<{ path: string; valueType: SelectedMogrtVisualProperty["valueType"]; value: string | number | boolean }>
+  changes: Array<{
+    path: string;
+    valueType: SelectedMogrtVisualProperty["valueType"];
+    controlKind: SelectedMogrtVisualProperty["controlKind"];
+    value: string | number | boolean;
+  }>
 ): Promise<ApplyVisualPropertiesResult> {
   // // Send edited property payload to host and apply values on selected MOGRT clips.
   const encodedPayload = encodeURIComponent(JSON.stringify({ changes }));

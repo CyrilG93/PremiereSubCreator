@@ -40,8 +40,13 @@ type PanelMode = "generate" | "visual";
 interface HostVisualProperty {
   path: string;
   displayName: string;
+  groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json";
   value: string | number | boolean;
+  minValue?: number;
+  maxValue?: number;
+  stepValue?: number;
 }
 
 interface PanelStateSnapshot {
@@ -55,7 +60,6 @@ interface PanelStateSnapshot {
   maxCharsPerLine: number;
   linesPerCaption: number;
   fontSize: number;
-  uppercase: boolean;
   mogrtAspectFilter: string;
   selectedMogrtId: string;
 }
@@ -81,7 +85,6 @@ const elements = {
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
   fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
-  uppercase: document.querySelector<HTMLInputElement>("#uppercase"),
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
@@ -176,7 +179,6 @@ function persistPanelState(): void {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.fontSize ||
-    !elements.uppercase ||
     !elements.mogrtAspectFilter
   ) {
     return;
@@ -193,7 +195,6 @@ function persistPanelState(): void {
     maxCharsPerLine: Number(elements.maxChars.value),
     linesPerCaption: Number(elements.linesPerCaption.value),
     fontSize: Number(elements.fontSize.value),
-    uppercase: elements.uppercase.checked,
     mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
     selectedMogrtId: selectedMogrt?.id || ""
   };
@@ -241,10 +242,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.fontSize && Number.isFinite(Number(snapshot.fontSize))) {
     elements.fontSize.value = String(snapshot.fontSize);
-  }
-
-  if (elements.uppercase && typeof snapshot.uppercase === "boolean") {
-    elements.uppercase.checked = snapshot.uppercase;
   }
 
   if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter && hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
@@ -610,52 +607,154 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return;
   }
 
+  const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
-    const row = document.createElement("div");
-    row.className = "visual-property-item";
-
-    const label = document.createElement("div");
-    label.className = "visual-property-label";
-    label.textContent = property.displayName;
-
-    const meta = document.createElement("div");
-    meta.className = "visual-property-meta";
-    meta.textContent = `${property.valueType} • ${property.path}`;
-
-    let input: HTMLInputElement | HTMLTextAreaElement;
-    if (property.valueType === "boolean") {
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = Boolean(property.value);
-      input = checkbox;
-    } else if (property.valueType === "json") {
-      const textarea = document.createElement("textarea");
-      textarea.rows = 4;
-      textarea.value = formatVisualValue(property.valueType, property.value);
-      input = textarea;
-    } else if (property.valueType === "number") {
-      const numberInput = document.createElement("input");
-      numberInput.type = "number";
-      numberInput.step = "any";
-      numberInput.value = String(property.value);
-      input = numberInput;
+    const groupKey = String(property.groupPath || "").trim() || "General";
+    const existing = grouped.get(groupKey);
+    if (existing) {
+      existing.push(property);
     } else {
-      const textInput = document.createElement("input");
-      textInput.type = "text";
-      textInput.value = formatVisualValue(property.valueType, property.value);
-      input = textInput;
+      grouped.set(groupKey, [property]);
+    }
+  }
+
+  for (const [groupName, groupProperties] of grouped.entries()) {
+    const groupNode = document.createElement("details");
+    groupNode.className = "visual-group";
+    groupNode.open = true;
+
+    const summary = document.createElement("summary");
+    summary.className = "visual-group__title";
+    summary.textContent = groupName;
+    groupNode.appendChild(summary);
+
+    const groupBody = document.createElement("div");
+    groupBody.className = "visual-group__body";
+
+    for (const property of groupProperties) {
+      const row = document.createElement("div");
+      row.className = "visual-property-item";
+
+      const label = document.createElement("label");
+      label.className = "visual-property-label";
+      label.textContent = property.displayName;
+
+      if (property.controlKind === "checkbox") {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = Boolean(property.value);
+        checkbox.dataset.visualPath = property.path;
+        checkbox.dataset.visualType = property.valueType;
+        checkbox.dataset.visualControlKind = property.controlKind;
+        checkbox.dataset.visualRole = "value";
+        row.classList.add("visual-property-item--checkbox");
+        row.append(checkbox, label);
+        groupBody.appendChild(row);
+        continue;
+      }
+
+      row.appendChild(label);
+
+      const controlWrap = document.createElement("div");
+      controlWrap.className = "visual-property-control";
+
+      if (property.controlKind === "text") {
+        const textarea = document.createElement("textarea");
+        textarea.rows = 2;
+        textarea.value = formatVisualValue(property.valueType, property.value);
+        textarea.dataset.visualPath = property.path;
+        textarea.dataset.visualType = property.valueType;
+        textarea.dataset.visualControlKind = property.controlKind;
+        textarea.dataset.visualRole = "value";
+        controlWrap.appendChild(textarea);
+      } else if (property.controlKind === "json") {
+        const textarea = document.createElement("textarea");
+        textarea.rows = 3;
+        textarea.value = formatVisualValue(property.valueType, property.value);
+        textarea.dataset.visualPath = property.path;
+        textarea.dataset.visualType = property.valueType;
+        textarea.dataset.visualControlKind = property.controlKind;
+        textarea.dataset.visualRole = "value";
+        controlWrap.appendChild(textarea);
+      } else if (property.controlKind === "color") {
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = /^#[0-9a-f]{6}$/i.test(String(property.value || "")) ? String(property.value) : "#ffffff";
+        colorInput.dataset.visualPath = property.path;
+        colorInput.dataset.visualType = property.valueType;
+        colorInput.dataset.visualControlKind = property.controlKind;
+        colorInput.dataset.visualRole = "value";
+        controlWrap.appendChild(colorInput);
+      } else if (property.controlKind === "slider") {
+        const sliderWrap = document.createElement("div");
+        sliderWrap.className = "visual-slider-row";
+
+        const rangeInput = document.createElement("input");
+        rangeInput.type = "range";
+        const fallbackValue = Number(property.value || 0);
+        const minValue = Number.isFinite(Number(property.minValue))
+          ? Number(property.minValue)
+          : Math.floor(fallbackValue - Math.max(Math.abs(fallbackValue), 50));
+        const maxValue = Number.isFinite(Number(property.maxValue))
+          ? Number(property.maxValue)
+          : Math.ceil(fallbackValue + Math.max(Math.abs(fallbackValue), 50));
+        const stepValue = Number.isFinite(Number(property.stepValue))
+          ? Number(property.stepValue)
+          : Number.isInteger(fallbackValue)
+            ? 1
+            : 0.1;
+        rangeInput.min = String(minValue);
+        rangeInput.max = String(maxValue);
+        rangeInput.step = String(stepValue);
+        rangeInput.value = String(fallbackValue);
+
+        const numberInput = document.createElement("input");
+        numberInput.type = "number";
+        numberInput.step = String(stepValue);
+        numberInput.min = String(minValue);
+        numberInput.max = String(maxValue);
+        numberInput.value = String(fallbackValue);
+        numberInput.dataset.visualPath = property.path;
+        numberInput.dataset.visualType = property.valueType;
+        numberInput.dataset.visualControlKind = property.controlKind;
+        numberInput.dataset.visualRole = "value";
+
+        rangeInput.addEventListener("input", () => {
+          numberInput.value = rangeInput.value;
+        });
+        numberInput.addEventListener("input", () => {
+          rangeInput.value = numberInput.value;
+        });
+
+        sliderWrap.append(rangeInput, numberInput);
+        controlWrap.appendChild(sliderWrap);
+      } else {
+        const input = document.createElement("input");
+        input.type = property.controlKind === "number" ? "number" : "text";
+        if (property.controlKind === "number") {
+          input.step = Number.isInteger(Number(property.value || 0)) ? "1" : "0.1";
+        }
+        input.value = formatVisualValue(property.valueType, property.value);
+        input.dataset.visualPath = property.path;
+        input.dataset.visualType = property.valueType;
+        input.dataset.visualControlKind = property.controlKind;
+        input.dataset.visualRole = "value";
+        controlWrap.appendChild(input);
+      }
+
+      row.appendChild(controlWrap);
+      groupBody.appendChild(row);
     }
 
-    input.dataset.visualPath = property.path;
-    input.dataset.visualType = property.valueType;
-    row.append(label, meta, input);
-    elements.visualPropertyList.appendChild(row);
+    groupNode.appendChild(groupBody);
+    elements.visualPropertyList.appendChild(groupNode);
   }
 }
 
 type VisualPropertyChange = {
   path: string;
   valueType: HostVisualProperty["valueType"];
+  controlKind: HostVisualProperty["controlKind"];
   value: string | number | boolean;
 };
 
@@ -666,10 +765,12 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
   }
 
   const changes: VisualPropertyChange[] = [];
-  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-visual-path]");
+  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-visual-role="value"]');
   controls.forEach((control) => {
     const path = String(control.dataset.visualPath || "");
     const valueType = (String(control.dataset.visualType || "string") as HostVisualProperty["valueType"]) || "string";
+    const controlKind =
+      (String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"]) || "string";
     if (!path) {
       return;
     }
@@ -686,6 +787,7 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
     changes.push({
       path,
       valueType,
+      controlKind,
       value
     });
   });
@@ -880,7 +982,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.animationMode ||
-    !elements.uppercase ||
     !elements.whisperAudioPath ||
     !elements.whisperModel
   ) {
@@ -901,7 +1002,7 @@ function collectBuildOptions(): CaptionBuildOptions {
       fontSize: Number(elements.fontSize.value),
       maxCharsPerLine: Number(elements.maxChars.value),
       animationMode: elements.animationMode.value as AnimationMode,
-      uppercase: elements.uppercase.checked,
+      uppercase: false,
       linesPerCaption: Number(elements.linesPerCaption.value)
     },
     extensionRootPath,
@@ -1055,9 +1156,6 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.fontSize?.addEventListener("input", () => {
-    persistPanelState();
-  });
-  elements.uppercase?.addEventListener("change", () => {
     persistPanelState();
   });
   elements.srtPath?.addEventListener("change", () => {

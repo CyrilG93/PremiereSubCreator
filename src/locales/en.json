@@ -10,7 +10,6 @@
   "field.maxChars": "Max letters per line",
   "field.linesPerCaption": "Max lines per subtitle",
   "field.fontSize": "Font size",
-  "field.uppercase": "Force UPPERCASE",
   "field.mogrtFormat": "Gallery format",
   "field.mogrtGallery": "MOGRT gallery",
   "source.srt": "SRT file",

@@ -395,26 +395,124 @@ input[type="checkbox"] {
 
 .visual-property-list {
   display: grid;
-  gap: 8px;
-}
-
-.visual-property-item {
-  border: 1px solid rgba(52, 72, 97, 0.75);
-  border-radius: 8px;
-  background: #0f1726;
-  padding: 8px;
-  display: grid;
   gap: 6px;
 }
 
-.visual-property-label {
-  font-size: 0.72rem;
-  color: var(--accent-soft);
+.visual-group {
+  border: 1px solid rgba(52, 72, 97, 0.75);
+  border-radius: 8px;
+  background: #0f1726;
+  overflow: hidden;
 }
 
-.visual-property-meta {
-  font-size: 0.64rem;
-  color: var(--text-dim);
+.visual-group__title {
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--accent-soft);
+  list-style: none;
+}
+
+.visual-group__title::-webkit-details-marker {
+  display: none;
+}
+
+.visual-group__title::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transform-origin: center;
+  transition: transform 0.12s ease;
+}
+
+.visual-group[open] > .visual-group__title::before {
+  transform: rotate(90deg);
+}
+
+.visual-group__body {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid rgba(52, 72, 97, 0.45);
+  padding: 8px;
+}
+
+.visual-property-item {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 1.6fr;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid rgba(52, 72, 97, 0.45);
+  border-radius: 7px;
+  background: rgba(18, 26, 41, 0.92);
+  padding: 6px;
+}
+
+.visual-property-label {
+  font-size: 0.68rem;
+  color: var(--accent-soft);
+  line-height: 1.25;
+  padding-top: 6px;
+}
+
+.visual-property-control {
+  min-width: 0;
+}
+
+.visual-property-control textarea {
+  min-height: 54px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.visual-property-control input[type="number"],
+.visual-property-control input[type="text"],
+.visual-property-control textarea,
+.visual-property-control select {
+  padding: 6px 7px;
+  font-size: 0.78rem;
+}
+
+.visual-property-control input[type="color"] {
+  min-height: 34px;
+  padding: 2px;
+}
+
+.visual-property-item--checkbox {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding: 6px 8px;
+  min-height: 34px;
+}
+
+.visual-property-item--checkbox .visual-property-label {
+  padding-top: 0;
+}
+
+.visual-slider-row {
+  display: grid;
+  grid-template-columns: 1fr 84px;
+  gap: 8px;
+  align-items: center;
+}
+
+.visual-slider-row input[type="range"] {
+  padding: 0;
+  height: 24px;
+}
+
+@media (max-width: 640px) {
+  .visual-property-item {
+    grid-template-columns: 1fr;
+  }
+
+  .visual-property-label {
+    padding-top: 0;
+  }
+
+  .visual-slider-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .log {

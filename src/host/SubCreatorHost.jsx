@@ -1382,10 +1382,64 @@ function subcreator_visual_read_sequence_dimensions() {
 }
 
 var subcreator_visual_group_sequence_axis_preferences = {};
+var subcreator_visual_text_style_option_cache = {
+  families: {},
+  styles: {}
+};
 
 function subcreator_visual_reset_group_sequence_axis_preferences() {
   // // Reset per-group vector scaling hints before reading a new selection.
   subcreator_visual_group_sequence_axis_preferences = {};
+}
+
+function subcreator_visual_reset_text_style_option_cache() {
+  // // Reset discovered font/style options before reading a new selection.
+  subcreator_visual_text_style_option_cache = {
+    families: {},
+    styles: {}
+  };
+}
+
+function subcreator_visual_register_text_style_option(optionType, value) {
+  // // Keep a global deduplicated cache of font families/styles found in current selection.
+  var normalizedType = subcreator_trim_string(String(optionType || "")).toLowerCase();
+  var text = subcreator_trim_string(String(value || ""));
+  if (!text) {
+    return;
+  }
+
+  if (normalizedType === "family") {
+    subcreator_visual_text_style_option_cache.families[text.toLowerCase()] = text;
+  } else if (normalizedType === "style") {
+    subcreator_visual_text_style_option_cache.styles[text.toLowerCase()] = text;
+  }
+}
+
+function subcreator_visual_read_text_style_option_cache(optionType) {
+  // // Read sorted options from the current read-session cache.
+  var normalizedType = subcreator_trim_string(String(optionType || "")).toLowerCase();
+  var source = normalizedType === "style" ? subcreator_visual_text_style_option_cache.styles : subcreator_visual_text_style_option_cache.families;
+  var result = [];
+
+  for (var key in source) {
+    if (source.hasOwnProperty(key)) {
+      result.push(source[key]);
+    }
+  }
+
+  result.sort(function (left, right) {
+    var a = String(left || "").toLowerCase();
+    var b = String(right || "").toLowerCase();
+    if (a < b) {
+      return -1;
+    }
+    if (a > b) {
+      return 1;
+    }
+    return 0;
+  });
+
+  return result;
 }
 
 function subcreator_visual_group_sequence_axis_key(groupPath) {
@@ -1846,6 +1900,94 @@ function subcreator_visual_join_font_token(family, style, fallbackToken) {
   return normalizedFamily + "-" + normalizedStyle;
 }
 
+function subcreator_visual_push_unique_option(list, value) {
+  // // Push one option text value without duplicates.
+  if (!list) {
+    return;
+  }
+  var text = subcreator_trim_string(String(value || ""));
+  if (!text) {
+    return;
+  }
+  var key = text.toLowerCase();
+  for (var index = 0; index < list.length; index += 1) {
+    if (String(list[index] || "").toLowerCase() === key) {
+      return;
+    }
+  }
+  list.push(text);
+}
+
+function subcreator_visual_extract_string_options(value) {
+  // // Extract candidate string options from scalar/array payload values.
+  var result = [];
+  if (typeof value === "string") {
+    subcreator_visual_push_unique_option(result, value);
+    return result;
+  }
+
+  if (value && typeof value.length === "number" && value.length > 0) {
+    for (var index = 0; index < value.length; index += 1) {
+      if (typeof value[index] === "string") {
+        subcreator_visual_push_unique_option(result, value[index]);
+      }
+    }
+  }
+
+  return result;
+}
+
+function subcreator_visual_extract_first_boolean(value) {
+  // // Extract boolean-like values from scalar/array payloads.
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (value === 0 || value === 1) {
+      return value === 1;
+    }
+    return null;
+  }
+
+  if (typeof value === "string") {
+    var normalized = subcreator_trim_string(value).toLowerCase();
+    if (normalized === "true" || normalized === "1") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false;
+    }
+    return null;
+  }
+
+  if (value && typeof value.length === "number" && value.length > 0) {
+    for (var index = 0; index < value.length; index += 1) {
+      var fromItem = subcreator_visual_extract_first_boolean(value[index]);
+      if (typeof fromItem === "boolean") {
+        return fromItem;
+      }
+    }
+  }
+
+  return null;
+}
+
+function subcreator_visual_is_font_flag_key(normalizedKey, flagKey) {
+  // // Detect boolean font-style toggle keys in text payloads.
+  var key = String(normalizedKey || "");
+  var flag = String(flagKey || "");
+  if (!key || !flag) {
+    return false;
+  }
+
+  if (key === flag + "value" || key === flag + "editvalue" || key === "m" + flag + "value" || key === "m" + flag + "editvalue") {
+    return true;
+  }
+
+  return key.indexOf(flag) !== -1;
+}
+
 function subcreator_visual_extract_text_style_from_value(rawValue) {
   // // Extract editable text style fields from text-document JSON payloads.
   var payload = rawValue;
@@ -1867,7 +2009,13 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
   var result = {
     fontFamily: "",
     fontStyle: "",
-    fontSize: NaN
+    fontSize: NaN,
+    fontFamilyOptions: [],
+    fontStyleOptions: [],
+    fontFsBold: null,
+    fontFsItalic: null,
+    fontFsAllCaps: null,
+    fontFsSmallCaps: null
   };
 
   function scanNode(node, depth) {
@@ -1901,11 +2049,27 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
           }
         }
       }
+      if (subcreator_visual_is_generic_font_family_key(normalizedKey)) {
+        var tokenOptions = subcreator_visual_extract_string_options(value);
+        for (var tokenIndex = 0; tokenIndex < tokenOptions.length; tokenIndex += 1) {
+          var tokenPartsOption = subcreator_visual_split_font_token(tokenOptions[tokenIndex]);
+          subcreator_visual_push_unique_option(result.fontFamilyOptions, tokenPartsOption.family);
+          if (tokenPartsOption.style) {
+            subcreator_visual_push_unique_option(result.fontStyleOptions, tokenPartsOption.style);
+          }
+        }
+      }
 
       if (!result.fontFamily && subcreator_visual_is_font_family_key(normalizedKey)) {
         var familyValue = subcreator_visual_extract_first_string(value);
         if (familyValue) {
           result.fontFamily = familyValue;
+        }
+      }
+      if (subcreator_visual_is_font_family_key(normalizedKey)) {
+        var familyOptions = subcreator_visual_extract_string_options(value);
+        for (var familyIndex = 0; familyIndex < familyOptions.length; familyIndex += 1) {
+          subcreator_visual_push_unique_option(result.fontFamilyOptions, familyOptions[familyIndex]);
         }
       }
 
@@ -1915,10 +2079,22 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
           result.fontStyle = styleValue;
         }
       }
+      if (subcreator_visual_is_font_style_key(normalizedKey)) {
+        var styleOptions = subcreator_visual_extract_string_options(value);
+        for (var styleIndex = 0; styleIndex < styleOptions.length; styleIndex += 1) {
+          subcreator_visual_push_unique_option(result.fontStyleOptions, styleOptions[styleIndex]);
+        }
+      }
       if (!result.fontStyle && subcreator_visual_is_generic_font_style_key(normalizedKey)) {
         var genericStyleValue = subcreator_visual_extract_first_string(value);
         if (genericStyleValue) {
           result.fontStyle = genericStyleValue;
+        }
+      }
+      if (subcreator_visual_is_generic_font_style_key(normalizedKey)) {
+        var genericStyleOptions = subcreator_visual_extract_string_options(value);
+        for (var genericStyleIndex = 0; genericStyleIndex < genericStyleOptions.length; genericStyleIndex += 1) {
+          subcreator_visual_push_unique_option(result.fontStyleOptions, genericStyleOptions[genericStyleIndex]);
         }
       }
 
@@ -1935,6 +2111,19 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
         }
       }
 
+      if (result.fontFsBold === null && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsbold")) {
+        result.fontFsBold = subcreator_visual_extract_first_boolean(value);
+      }
+      if (result.fontFsItalic === null && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsitalic")) {
+        result.fontFsItalic = subcreator_visual_extract_first_boolean(value);
+      }
+      if (result.fontFsAllCaps === null && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsallcaps")) {
+        result.fontFsAllCaps = subcreator_visual_extract_first_boolean(value);
+      }
+      if (result.fontFsSmallCaps === null && subcreator_visual_is_font_flag_key(normalizedKey, "fontfssmallcaps")) {
+        result.fontFsSmallCaps = subcreator_visual_extract_first_boolean(value);
+      }
+
       if (value && typeof value === "object") {
         scanNode(value, depth + 1);
       }
@@ -1943,7 +2132,22 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
 
   scanNode(payload, 0);
 
-  if (!result.fontFamily && !result.fontStyle && isNaN(result.fontSize)) {
+  if (result.fontFamily) {
+    subcreator_visual_push_unique_option(result.fontFamilyOptions, result.fontFamily);
+  }
+  if (result.fontStyle) {
+    subcreator_visual_push_unique_option(result.fontStyleOptions, result.fontStyle);
+  }
+
+  if (
+    !result.fontFamily &&
+    !result.fontStyle &&
+    isNaN(result.fontSize) &&
+    result.fontFsBold === null &&
+    result.fontFsItalic === null &&
+    result.fontFsAllCaps === null &&
+    result.fontFsSmallCaps === null
+  ) {
     return null;
   }
 
@@ -1957,6 +2161,44 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
     return [];
   }
 
+  function buildStringSelectOptions(primaryOptions, cacheOptions, fallbackOptions) {
+    // // Merge primary/cache/fallback string options into panel select option descriptors.
+    var merged = [];
+    var sourceLists = [primaryOptions || [], cacheOptions || [], fallbackOptions || []];
+    for (var listIndex = 0; listIndex < sourceLists.length; listIndex += 1) {
+      var currentList = sourceLists[listIndex];
+      for (var itemIndex = 0; itemIndex < currentList.length; itemIndex += 1) {
+        subcreator_visual_push_unique_option(merged, currentList[itemIndex]);
+      }
+    }
+
+    var descriptors = [];
+    for (var optionIndex = 0; optionIndex < merged.length; optionIndex += 1) {
+      descriptors.push({
+        value: merged[optionIndex],
+        label: merged[optionIndex]
+      });
+    }
+    return descriptors;
+  }
+
+  if (styleValues.fontFamily) {
+    subcreator_visual_register_text_style_option("family", styleValues.fontFamily);
+  }
+  if (styleValues.fontStyle) {
+    subcreator_visual_register_text_style_option("style", styleValues.fontStyle);
+  }
+  for (var styleFamilyIndex = 0; styleFamilyIndex < styleValues.fontFamilyOptions.length; styleFamilyIndex += 1) {
+    subcreator_visual_register_text_style_option("family", styleValues.fontFamilyOptions[styleFamilyIndex]);
+  }
+  for (var styleNameIndex = 0; styleNameIndex < styleValues.fontStyleOptions.length; styleNameIndex += 1) {
+    subcreator_visual_register_text_style_option("style", styleValues.fontStyleOptions[styleNameIndex]);
+  }
+
+  var cachedFamilies = subcreator_visual_read_text_style_option_cache("family");
+  var cachedStyles = subcreator_visual_read_text_style_option_cache("style");
+  var commonStyleFallback = ["Regular", "Medium", "Semibold", "Bold", "Italic", "Bold Italic", "Black", "ExtraBold"];
+
   var entries = [];
   var targetGroup = groupPath || "General";
 
@@ -1966,7 +2208,8 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       displayName: "Font Family",
       groupPath: targetGroup,
       valueType: "string",
-      controlKind: "string",
+      controlKind: "select",
+      options: buildStringSelectOptions(styleValues.fontFamilyOptions, cachedFamilies, []),
       value: styleValues.fontFamily
     });
   }
@@ -1977,7 +2220,8 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       displayName: "Font Style",
       groupPath: targetGroup,
       valueType: "string",
-      controlKind: "string",
+      controlKind: "select",
+      options: buildStringSelectOptions(styleValues.fontStyleOptions, cachedStyles, commonStyleFallback),
       value: styleValues.fontStyle
     });
   }
@@ -1993,6 +2237,50 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       maxValue: 500,
       stepValue: 0.1,
       value: styleValues.fontSize
+    });
+  }
+
+  if (typeof styleValues.fontFsBold === "boolean") {
+    entries.push({
+      path: currentPath + "::textstyle.fontFsBold",
+      displayName: "Bold",
+      groupPath: targetGroup,
+      valueType: "boolean",
+      controlKind: "checkbox",
+      value: styleValues.fontFsBold
+    });
+  }
+
+  if (typeof styleValues.fontFsItalic === "boolean") {
+    entries.push({
+      path: currentPath + "::textstyle.fontFsItalic",
+      displayName: "Italic",
+      groupPath: targetGroup,
+      valueType: "boolean",
+      controlKind: "checkbox",
+      value: styleValues.fontFsItalic
+    });
+  }
+
+  if (typeof styleValues.fontFsAllCaps === "boolean") {
+    entries.push({
+      path: currentPath + "::textstyle.fontFsAllCaps",
+      displayName: "All Caps",
+      groupPath: targetGroup,
+      valueType: "boolean",
+      controlKind: "checkbox",
+      value: styleValues.fontFsAllCaps
+    });
+  }
+
+  if (typeof styleValues.fontFsSmallCaps === "boolean") {
+    entries.push({
+      path: currentPath + "::textstyle.fontFsSmallCaps",
+      displayName: "Small Caps",
+      groupPath: targetGroup,
+      valueType: "boolean",
+      controlKind: "checkbox",
+      value: styleValues.fontFsSmallCaps
     });
   }
 
@@ -2449,6 +2737,25 @@ function subcreator_visual_normalize_text_style_change(styleKey, value) {
     return null;
   }
 
+  if (
+    normalizedStyleKey === "fontFsBold" ||
+    normalizedStyleKey === "fontFsItalic" ||
+    normalizedStyleKey === "fontFsAllCaps" ||
+    normalizedStyleKey === "fontFsSmallCaps"
+  ) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    var boolText = subcreator_trim_string(String(value || "")).toLowerCase();
+    if (boolText === "true" || boolText === "1" || boolText === "yes") {
+      return true;
+    }
+    if (boolText === "false" || boolText === "0" || boolText === "no") {
+      return false;
+    }
+    return null;
+  }
+
   if (normalizedStyleKey === "fontSize") {
     var sizeValue = Number(value);
     if (isNaN(sizeValue) || sizeValue <= 0 || sizeValue > 2000) {
@@ -2492,7 +2799,43 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       var value = node[key];
       var normalizedKey = subcreator_visual_normalize_text_style_key(key);
 
-      if (styleKey === "fontFamily" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
+      if (styleKey === "fontFsBold" && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsbold")) {
+        if (typeof value === "boolean") {
+          node[key] = styleValue === true;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = styleValue === true;
+        } else {
+          node[key] = [styleValue === true];
+        }
+        updated = true;
+      } else if (styleKey === "fontFsItalic" && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsitalic")) {
+        if (typeof value === "boolean") {
+          node[key] = styleValue === true;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = styleValue === true;
+        } else {
+          node[key] = [styleValue === true];
+        }
+        updated = true;
+      } else if (styleKey === "fontFsAllCaps" && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsallcaps")) {
+        if (typeof value === "boolean") {
+          node[key] = styleValue === true;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = styleValue === true;
+        } else {
+          node[key] = [styleValue === true];
+        }
+        updated = true;
+      } else if (styleKey === "fontFsSmallCaps" && subcreator_visual_is_font_flag_key(normalizedKey, "fontfssmallcaps")) {
+        if (typeof value === "boolean") {
+          node[key] = styleValue === true;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = styleValue === true;
+        } else {
+          node[key] = [styleValue === true];
+        }
+        updated = true;
+      } else if (styleKey === "fontFamily" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var currentToken = subcreator_visual_extract_first_string(value);
         var currentParts = subcreator_visual_split_font_token(currentToken);
         var rebuiltToken = subcreator_visual_join_font_token(styleValue, currentParts.style, currentToken);
@@ -2587,6 +2930,14 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
     ];
   } else if (styleKey === "fontSize") {
     keyList = ["fontSize", "mFontSize", "fontSizeValue", "fontSizeEditValue", "mFontSizeValue", "mFontSizeEditValue"];
+  } else if (styleKey === "fontFsBold") {
+    keyList = ["fontFSBoldValue", "fontFSBoldEditValue", "mFontFSBoldValue", "mFontFSBoldEditValue"];
+  } else if (styleKey === "fontFsItalic") {
+    keyList = ["fontFSItalicValue", "fontFSItalicEditValue", "mFontFSItalicValue", "mFontFSItalicEditValue"];
+  } else if (styleKey === "fontFsAllCaps") {
+    keyList = ["fontFSAllCapsValue", "fontFSAllCapsEditValue", "mFontFSAllCapsValue", "mFontFSAllCapsEditValue"];
+  } else if (styleKey === "fontFsSmallCaps") {
+    keyList = ["fontFSSmallCapsValue", "fontFSSmallCapsEditValue", "mFontFSSmallCapsValue", "mFontFSSmallCapsEditValue"];
   }
 
   for (var keyIndex = 0; keyIndex < keyList.length; keyIndex += 1) {
@@ -2611,6 +2962,19 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
           }
           return '"' + keyName + '":[' + JSON.stringify(rebuiltToken) + "]";
         });
+        continue;
+      }
+      if (
+        styleKey === "fontFsBold" ||
+        styleKey === "fontFsItalic" ||
+        styleKey === "fontFsAllCaps" ||
+        styleKey === "fontFsSmallCaps"
+      ) {
+        var boolValue = styleValue === true ? "true" : "false";
+        var boolRegex = new RegExp('"' + keyName + '"\\s*:\\s*(true|false|0|1)', "g");
+        patched = patched.replace(boolRegex, '"' + keyName + '":' + boolValue);
+        var boolArrayRegex = new RegExp('"' + keyName + '"\\s*:\\s*\\[[^\\]]*\\]', "g");
+        patched = patched.replace(boolArrayRegex, '"' + keyName + '":[' + boolValue + "]");
         continue;
       }
       var stringRegex = new RegExp('"' + keyName + '"\\s*:\\s*"([^"\\\\]|\\\\.)*"', "g");
@@ -3373,6 +3737,7 @@ function subcreator_list_selected_mogrt_properties() {
     var properties = [];
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
     subcreator_visual_reset_group_sequence_axis_preferences();
+    subcreator_visual_reset_text_style_option_cache();
     subcreator_collect_mogrt_visual_properties_recursive(
       firstComponent ? firstComponent.properties : null,
       "",

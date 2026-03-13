@@ -1371,6 +1371,21 @@ function subcreator_visual_detect_vector_mode(displayName, groupPath) {
   return "raw";
 }
 
+function subcreator_visual_vector_looks_normalized_position(vectorValues) {
+  // // Detect normalized position vectors (0..1-ish) that should be displayed in sequence pixels.
+  if (!vectorValues || vectorValues.length < 2) {
+    return false;
+  }
+
+  var x = Number(vectorValues[0]);
+  var y = Number(vectorValues[1]);
+  if (isNaN(x) || isNaN(y)) {
+    return false;
+  }
+
+  return x >= -0.2 && x <= 1.2 && y >= -0.2 && y <= 1.2;
+}
+
 function subcreator_visual_score_vector_candidate(panelValues, minPreferred, maxPreferred, idealValue) {
   // // Score candidate panel-unit vectors and keep values in practical edit ranges.
   if (!panelValues || !panelValues.length) {
@@ -1424,9 +1439,26 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
   var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
   var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
   var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
+  var displayKey = String(displayName || "").toLowerCase();
 
   var candidates = [];
   if (vectorMode === "offset_scaled") {
+    var looksLikePosition = displayKey.indexOf("position") !== -1;
+    if (looksLikePosition && subcreator_visual_vector_looks_normalized_position(vectorValues)) {
+      // // Position controls often report normalized coordinates; expose them as absolute sequence pixels in panel.
+      var normalizedScale = [width, height, 1, 1];
+      var normalizedFinalScales = [];
+      for (var normalizedIndex = 0; normalizedIndex < vectorValues.length; normalizedIndex += 1) {
+        normalizedFinalScales.push(Number(normalizedScale[normalizedIndex] || 1));
+      }
+      return {
+        mode: vectorMode,
+        scale: normalizedFinalScales,
+        candidateId: "position_normalized_axis",
+        score: 0
+      };
+    }
+
     candidates.push({ id: "offset_raw", scales: [1, 1, 1, 1], minPreferred: 0.05, maxPreferred: 200, idealValue: 35 });
     candidates.push({
       id: "offset_div_axis",

@@ -1059,8 +1059,37 @@ async function copyLogsToClipboard(): Promise<void> {
   }
 
   if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-    await navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // // Continue with CEP/runtime fallback when browser clipboard permission is denied.
+    }
+  }
+
+  const runtimeWindow = window as Window & {
+    cep?: {
+      util?: {
+        copyToClipboard?: (value: string) => void;
+      };
+    };
+    __adobe_cep__?: {
+      invokeSync?: (command: string, payload: string) => unknown;
+    };
+  };
+
+  if (runtimeWindow.cep?.util?.copyToClipboard) {
+    runtimeWindow.cep.util.copyToClipboard(text);
     return;
+  }
+
+  if (runtimeWindow.__adobe_cep__?.invokeSync) {
+    try {
+      runtimeWindow.__adobe_cep__.invokeSync("setClipboard", text);
+      return;
+    } catch {
+      // // Keep fallback path active if CEP bridge clipboard command fails.
+    }
   }
 
   const helper = document.createElement("textarea");
@@ -1069,8 +1098,11 @@ async function copyLogsToClipboard(): Promise<void> {
   helper.style.opacity = "0";
   document.body.appendChild(helper);
   helper.select();
-  document.execCommand("copy");
+  const copied = document.execCommand("copy");
   helper.remove();
+  if (!copied) {
+    throw new Error("Clipboard copy failed in CEP runtime.");
+  }
 }
 
 async function loadMogrtCatalog(): Promise<void> {

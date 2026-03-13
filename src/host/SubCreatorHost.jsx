@@ -552,6 +552,15 @@ function subcreator_visual_to_number(rawValue) {
   return isNaN(parsed) ? NaN : parsed;
 }
 
+function subcreator_visual_is_numeric_string(rawValue) {
+  // // Detect numeric strings so slider/select controls can stay numeric instead of color/string.
+  if (typeof rawValue !== "string") {
+    return false;
+  }
+
+  return /^-?\d+(?:[.,]\d+)?$/.test(subcreator_trim_string(rawValue));
+}
+
 function subcreator_visual_clamp(value, minValue, maxValue) {
   // // Clamp numeric values so color/range conversions stay within valid bounds.
   var numericValue = Number(value);
@@ -602,44 +611,68 @@ function subcreator_visual_extract_rgb_triplet(rawRed, rawGreen, rawBlue) {
   };
 }
 
-function subcreator_visual_extract_rgb_from_value(rawValue) {
+function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
+  // // Decode packed numeric color payloads used by some Essential Graphics controls.
+  var numericColor = Math.floor(Math.abs(Number(rawNumber)));
+  if (isNaN(numericColor)) {
+    return null;
+  }
+
+  if (numericColor <= 1) {
+    var grayUnit = subcreator_visual_clamp(numericColor * 255, 0, 255);
+    return {
+      red: grayUnit,
+      green: grayUnit,
+      blue: grayUnit,
+      unitScale: true
+    };
+  }
+
+  // // 64-bit packed shape (example: a60007002f00fe10) stores each channel on 16 bits.
+  var rawHex = numericColor.toString(16);
+  if (rawHex.length > 8) {
+    while (rawHex.length < 16) {
+      rawHex = "0" + rawHex;
+    }
+    if (rawHex.length >= 16) {
+      var r16 = parseInt(rawHex.substring(0, 4), 16);
+      var g16 = parseInt(rawHex.substring(4, 8), 16);
+      var b16 = parseInt(rawHex.substring(8, 12), 16);
+      if (!isNaN(r16) && !isNaN(g16) && !isNaN(b16)) {
+        return {
+          red: r16 > 255 ? Math.floor(r16 / 256) : r16,
+          green: g16 > 255 ? Math.floor(g16 / 256) : g16,
+          blue: b16 > 255 ? Math.floor(b16 / 256) : b16,
+          unitScale: false
+        };
+      }
+    }
+  }
+
+  if (numericColor > 4294967295) {
+    return null;
+  }
+
+  var packed = numericColor % 16777216;
+  return {
+    red: Math.floor(packed / 65536) % 256,
+    green: Math.floor(packed / 256) % 256,
+    blue: packed % 256,
+    unitScale: false
+  };
+}
+
+function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) {
   // // Read RGB channels from known color payload shapes.
   if (rawValue === undefined || rawValue === null) {
     return null;
   }
 
   if (typeof rawValue === "number") {
-    var numericColor = Math.floor(Math.abs(Number(rawValue)));
-    if (isNaN(numericColor)) {
+    if (!allowPackedNumbers) {
       return null;
     }
-
-    if (numericColor <= 1) {
-      var grayUnit = subcreator_visual_clamp(numericColor * 255, 0, 255);
-      return {
-        red: grayUnit,
-        green: grayUnit,
-        blue: grayUnit,
-        unitScale: true
-      };
-    }
-
-    // // Ignore oversized numeric payloads (often non-color packed structs with precision loss).
-    if (numericColor > 4294967295) {
-      return null;
-    }
-
-    // // Use low 24 bits as RGB for compact packed color integers.
-    var packed = numericColor % 16777216;
-    var redPacked = Math.floor(packed / 65536) % 256;
-    var greenPacked = Math.floor(packed / 256) % 256;
-    var bluePacked = packed % 256;
-    return {
-      red: redPacked,
-      green: greenPacked,
-      blue: bluePacked,
-      unitScale: false
-    };
+    return subcreator_visual_extract_rgb_from_packed_number(rawValue);
   }
 
   if (typeof rawValue === "string") {
@@ -662,10 +695,10 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
       };
     }
 
-    if (/^\d+$/.test(text)) {
+    if (/^\d+$/.test(text) && allowPackedNumbers) {
       var asNumber = Number(text);
-      if (!isNaN(asNumber) && asNumber <= 4294967295) {
-        return subcreator_visual_extract_rgb_from_value(asNumber);
+      if (!isNaN(asNumber)) {
+        return subcreator_visual_extract_rgb_from_packed_number(asNumber);
       }
       return null;
     }
@@ -673,7 +706,7 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
     if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
       try {
         var parsed = JSON.parse(text);
-        return subcreator_visual_extract_rgb_from_value(parsed);
+        return subcreator_visual_extract_rgb_from_value(parsed, allowPackedNumbers);
       } catch (jsonError) {}
     }
 
@@ -707,7 +740,7 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
     }
 
     if (rawValue.color && typeof rawValue.color === "object") {
-      var fromNestedColor = subcreator_visual_extract_rgb_from_value(rawValue.color);
+      var fromNestedColor = subcreator_visual_extract_rgb_from_value(rawValue.color, allowPackedNumbers);
       if (fromNestedColor) {
         return fromNestedColor;
       }
@@ -717,33 +750,28 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
   return null;
 }
 
-function subcreator_visual_extract_color_hex(rawValue) {
+function subcreator_visual_extract_color_hex(rawValue, allowPackedNumbers) {
   // // Convert color payloads to CSS hex for panel color inputs.
-  var rgb = subcreator_visual_extract_rgb_from_value(rawValue);
+  var rgb = subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers === true);
   if (!rgb) {
     return "";
   }
   return subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue);
 }
 
-function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue) {
+function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue, allowPackedNumbers) {
   // // Read color directly from color-capable APIs when available to avoid numeric payload ambiguity.
-  var fromFallback = subcreator_visual_extract_color_hex(rawFallbackValue);
-
   if (property && typeof property.getColorValue === "function") {
     try {
       var colorValue = property.getColorValue();
-      var fromColorMethod = subcreator_visual_extract_color_hex(colorValue);
+      var fromColorMethod = subcreator_visual_extract_color_hex(colorValue, true);
       if (fromColorMethod) {
-        if (fromColorMethod === "#000000" && fromFallback && fromFallback !== "#000000") {
-          return fromFallback;
-        }
         return fromColorMethod;
       }
     } catch (colorReadError) {}
   }
 
-  return fromFallback;
+  return subcreator_visual_extract_color_hex(rawFallbackValue, allowPackedNumbers);
 }
 
 function subcreator_visual_is_likely_color_payload(rawValue) {
@@ -810,7 +838,6 @@ function subcreator_visual_is_color_label(displayName) {
     key.indexOf("fill") !== -1 ||
     key.indexOf("stroke") !== -1 ||
     key.indexOf("outline") !== -1 ||
-    key.indexOf("highlight") !== -1 ||
     key.indexOf("tint") !== -1 ||
     key.indexOf("shadow") !== -1
   );
@@ -1107,7 +1134,18 @@ function subcreator_visual_read_sequence_dimensions() {
 
 function subcreator_visual_detect_vector_mode(displayName, groupPath) {
   // // Detect vector unit convention so panel can show human-friendly values.
-  var key = (String(groupPath || "") + " " + String(displayName || "")).toLowerCase();
+  var displayKey = String(displayName || "").toLowerCase();
+  var groupKey = String(groupPath || "").toLowerCase();
+
+  if (displayKey.indexOf("size") !== -1 || displayKey.indexOf("scale") !== -1) {
+    return "size_percent";
+  }
+
+  if (displayKey.indexOf("offset") !== -1 || displayKey.indexOf("position") !== -1) {
+    return "offset_scaled";
+  }
+
+  var key = groupKey + " " + displayKey;
 
   if (key.indexOf("offset") !== -1 || key.indexOf("position") !== -1) {
     return "offset_scaled";
@@ -1194,8 +1232,22 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
   } else if (vectorMode === "size_percent") {
     candidates.push({ id: "size_raw", scales: [1, 1, 1, 1], minPreferred: 1, maxPreferred: 400, idealValue: 100 });
     candidates.push({
+      id: "size_fixed_1920",
+      scales: [1920, 1080, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+    candidates.push({
       id: "size_axis",
       scales: [width, height, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+    candidates.push({
+      id: "size_axis_half",
+      scales: [width * 0.5, height * 0.5, 1, 1],
       minPreferred: 1,
       maxPreferred: 400,
       idealValue: 100
@@ -1323,20 +1375,31 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   var detectedType = subcreator_detect_visual_property_type(rawValue);
   var key = String(displayName || "").toLowerCase();
   var shouldTreatAsText = subcreator_should_try_text_property(displayName, rawValue);
-  var colorHex = subcreator_visual_try_read_property_color_hex(property, rawValue);
+  if (detectedType === "string" && subcreator_visual_is_numeric_string(rawValue)) {
+    detectedType = "number";
+  }
+
+  var hasColorApi = !!(property && (typeof property.getColorValue === "function" || typeof property.setColorValue === "function"));
+  var groupSuggestsColor = subcreator_visual_group_suggests_color(groupPath);
+  var colorCandidate = subcreator_visual_is_color_label(displayName);
+  var allowPackedColor = colorCandidate || groupSuggestsColor;
+  var colorHex = allowPackedColor ? subcreator_visual_try_read_property_color_hex(property, rawValue, true) : "";
   var colorBlocked =
     key.indexOf("width") !== -1 ||
     key.indexOf("size") !== -1 ||
     key.indexOf("amount") !== -1 ||
     key.indexOf("opacity") !== -1 ||
+    key.indexOf("based on") !== -1 ||
+    key.indexOf("paragraph") !== -1 ||
+    key.indexOf("align") !== -1 ||
+    key.indexOf("start") !== -1 ||
+    key.indexOf("end") !== -1 ||
     key.indexOf("feather") !== -1;
-  var colorCandidate = subcreator_visual_is_color_label(displayName);
   var looksLikeColor = !!(
     colorHex &&
     !colorBlocked &&
     (colorCandidate ||
-      (subcreator_visual_group_suggests_color(groupPath) && subcreator_visual_is_likely_color_payload(rawValue)) ||
-      (property && (typeof property.getColorValue === "function" || typeof property.setColorValue === "function")) ||
+      (groupSuggestsColor && (subcreator_visual_is_likely_color_payload(rawValue) || hasColorApi)) ||
       key.indexOf("rgb") !== -1)
   );
   var vectorValue = subcreator_visual_extract_numeric_vector(rawValue);
@@ -1626,6 +1689,45 @@ function subcreator_visual_parse_hex_color(value) {
   return null;
 }
 
+function subcreator_visual_try_read_property_rgb(property, allowPackedFallback) {
+  // // Read RGB channels from getColorValue first, then getValue fallback when needed.
+  if (!property) {
+    return null;
+  }
+
+  if (typeof property.getColorValue === "function") {
+    try {
+      var colorValue = property.getColorValue();
+      var fromColorApi = subcreator_visual_extract_rgb_from_value(colorValue, true);
+      if (fromColorApi) {
+        return fromColorApi;
+      }
+    } catch (colorApiReadError) {}
+  }
+
+  if (typeof property.getValue === "function") {
+    try {
+      var rawValue = property.getValue();
+      return subcreator_visual_extract_rgb_from_value(rawValue, allowPackedFallback === true);
+    } catch (valueReadError) {}
+  }
+
+  return null;
+}
+
+function subcreator_visual_color_distance(leftRgb, rightRgb) {
+  // // Compute per-channel absolute distance to validate color writes.
+  if (!leftRgb || !rightRgb) {
+    return 9999;
+  }
+
+  return (
+    Math.abs(Number(leftRgb.red) - Number(rightRgb.red)) +
+    Math.abs(Number(leftRgb.green) - Number(rightRgb.green)) +
+    Math.abs(Number(leftRgb.blue) - Number(rightRgb.blue))
+  );
+}
+
 function subcreator_visual_apply_rgb_to_payload(payload, rgb) {
   // // Patch object/array color payloads while preserving their original numeric scale.
   if (!payload || typeof payload !== "object" || !rgb) {
@@ -1690,13 +1792,43 @@ function subcreator_visual_apply_rgb_to_payload(payload, rgb) {
 
 function subcreator_try_set_mogrt_color_property(property, value) {
   // // Apply color values from panel hex input to color-capable MOGRT controls.
-  if (!property || typeof property.setValue !== "function") {
+  if (!property || (typeof property.setValue !== "function" && typeof property.setColorValue !== "function")) {
     return false;
   }
 
   var rgb = subcreator_visual_parse_hex_color(value);
   if (!rgb) {
     return false;
+  }
+
+  var fallbackRgb = {
+    red: rgb.blue,
+    green: rgb.green,
+    blue: rgb.red
+  };
+
+  var colorOrders = [rgb, fallbackRgb];
+  var colorDistanceThreshold = 8;
+
+  function applyAndVerify(applyCallback) {
+    // // Apply one write strategy and verify readback when host API can expose a color.
+    var attempted = false;
+    try {
+      attempted = applyCallback() !== false;
+    } catch (applyError) {
+      return false;
+    }
+
+    if (!attempted) {
+      return false;
+    }
+
+    var readback = subcreator_visual_try_read_property_rgb(property, true);
+    if (!readback) {
+      return true;
+    }
+
+    return subcreator_visual_color_distance(readback, rgb) <= colorDistanceThreshold;
   }
 
   var rawValue = "";
@@ -1720,34 +1852,8 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     }
   }
 
-  if (rawValue && typeof rawValue === "object") {
-    try {
-      var objectCopy = JSON.parse(JSON.stringify(rawValue));
-      if (subcreator_visual_apply_rgb_to_payload(objectCopy, rgb)) {
-        property.setValue(objectCopy, true);
-        return true;
-      }
-    } catch (copyError) {}
-
-    try {
-      if (subcreator_visual_apply_rgb_to_payload(rawValue, rgb)) {
-        property.setValue(rawValue, true);
-        return true;
-      }
-    } catch (directError) {}
-  }
-
-  if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
-    try {
-      var parsed = JSON.parse(rawValue);
-      if (subcreator_visual_apply_rgb_to_payload(parsed, rgb)) {
-        property.setValue(JSON.stringify(parsed), true);
-        return true;
-      }
-    } catch (jsonError) {}
-  }
-
-  function trySetColorByApiShape(referenceValue) {
+  function trySetColorByApiShape(referenceValue, candidateRgb) {
+    // // Match native setColorValue payload shape to avoid unsupported host writes.
     if (typeof property.setColorValue !== "function") {
       return false;
     }
@@ -1767,9 +1873,9 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var alpha255 = !isNaN(v3) && v3 > 1 ? v3 : 255;
 
         if (useUnitScale) {
-          property.setColorValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, alphaUnit], true);
+          property.setColorValue([candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255, alphaUnit], true);
         } else {
-          property.setColorValue([rgb.red, rgb.green, rgb.blue, alpha255], true);
+          property.setColorValue([candidateRgb.red, candidateRgb.green, candidateRgb.blue, alpha255], true);
         }
         return true;
       }
@@ -1788,9 +1894,25 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var objectUsesUnit = !isNaN(red) && !isNaN(green) && !isNaN(blue) && red <= 1 && green <= 1 && blue <= 1;
 
         if (objectUsesUnit) {
-          property.setColorValue({ red: rgb.red / 255, green: rgb.green / 255, blue: rgb.blue / 255, alpha: isNaN(alpha) ? 1 : alpha }, true);
+          property.setColorValue(
+            {
+              red: candidateRgb.red / 255,
+              green: candidateRgb.green / 255,
+              blue: candidateRgb.blue / 255,
+              alpha: isNaN(alpha) ? 1 : alpha
+            },
+            true
+          );
         } else {
-          property.setColorValue({ red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: isNaN(alpha) ? 255 : alpha }, true);
+          property.setColorValue(
+            {
+              red: candidateRgb.red,
+              green: candidateRgb.green,
+              blue: candidateRgb.blue,
+              alpha: isNaN(alpha) ? 255 : alpha
+            },
+            true
+          );
         }
         return true;
       }
@@ -1799,71 +1921,193 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     return false;
   }
 
-  if (hasColorApiValue && trySetColorByApiShape(colorApiValue)) {
-    return true;
+  function tryApplyStructuredPayload(structuredValue, stringifyJson) {
+    // // Try object/json payload rewrites with RGB then BGR fallback.
+    if (!structuredValue || typeof structuredValue !== "object") {
+      return false;
+    }
+
+    for (var colorOrderIndex = 0; colorOrderIndex < colorOrders.length; colorOrderIndex += 1) {
+      var candidateRgb = colorOrders[colorOrderIndex];
+      try {
+        var payloadCopy = JSON.parse(JSON.stringify(structuredValue));
+        if (!subcreator_visual_apply_rgb_to_payload(payloadCopy, candidateRgb)) {
+          continue;
+        }
+
+        if (
+          applyAndVerify(function () {
+            if (typeof property.setValue !== "function") {
+              return false;
+            }
+            property.setValue(stringifyJson ? JSON.stringify(payloadCopy) : payloadCopy, true);
+            return true;
+          })
+        ) {
+          return true;
+        }
+      } catch (payloadError) {}
+    }
+
+    return false;
   }
 
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue(rgb.red, rgb.green, rgb.blue, 255);
+  if (rawValue && typeof rawValue === "object") {
+    if (tryApplyStructuredPayload(rawValue, false)) {
       return true;
     }
-  } catch (setColorError255) {}
+  }
 
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue(rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1);
-      return true;
-    }
-  } catch (setColorErrorUnit) {}
-
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1], true);
-      return true;
-    }
-  } catch (setColorArrayUnitError) {}
-
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue([rgb.red, rgb.green, rgb.blue, 255], true);
-      return true;
-    }
-  } catch (setColorArray255Error) {}
-
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue({ red: rgb.red / 255, green: rgb.green / 255, blue: rgb.blue / 255, alpha: 1 }, true);
-      return true;
-    }
-  } catch (setColorObjectError) {}
-
-  try {
-    property.setValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1], true);
-    return true;
-  } catch (arrayUnitError) {}
-
-  try {
-    property.setValue([rgb.red, rgb.green, rgb.blue, 255], true);
-    return true;
-  } catch (array255Error) {}
-
-  try {
-    property.setValue(subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue), true);
-    return true;
-  } catch (hexError) {}
-
-  if (typeof rawValue === "number") {
-    var packedRgb = rgb.red * 65536 + rgb.green * 256 + rgb.blue;
+  if (typeof rawValue === "string" && (rawValue.indexOf("{") !== -1 || rawValue.indexOf("[") !== -1)) {
     try {
-      property.setValue(packedRgb, true);
-      return true;
-    } catch (packedRgbError) {}
+      var parsed = JSON.parse(rawValue);
+      if (tryApplyStructuredPayload(parsed, true)) {
+        return true;
+      }
+    } catch (jsonError) {}
+  }
 
-    try {
-      property.setValue(255 * 16777216 + packedRgb, true);
+  if (hasColorApiValue) {
+    for (var apiOrderIndex = 0; apiOrderIndex < colorOrders.length; apiOrderIndex += 1) {
+      var apiRgb = colorOrders[apiOrderIndex];
+      if (
+        applyAndVerify(function () {
+          return trySetColorByApiShape(colorApiValue, apiRgb);
+        })
+      ) {
+        return true;
+      }
+    }
+  }
+
+  for (var fallbackOrderIndex = 0; fallbackOrderIndex < colorOrders.length; fallbackOrderIndex += 1) {
+    var fallbackRgbValue = colorOrders[fallbackOrderIndex];
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setColorValue !== "function") {
+          return false;
+        }
+        property.setColorValue(fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255);
+        return true;
+      })
+    ) {
       return true;
-    } catch (packedArgbError) {}
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setColorValue !== "function") {
+          return false;
+        }
+        property.setColorValue(
+          [fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1],
+          true
+        );
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setColorValue !== "function") {
+          return false;
+        }
+        property.setColorValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], true);
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setColorValue !== "function") {
+          return false;
+        }
+        property.setColorValue(
+          {
+            red: fallbackRgbValue.red / 255,
+            green: fallbackRgbValue.green / 255,
+            blue: fallbackRgbValue.blue / 255,
+            alpha: 1
+          },
+          true
+        );
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setValue !== "function") {
+          return false;
+        }
+        property.setValue([fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1], true);
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setValue !== "function") {
+          return false;
+        }
+        property.setValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], true);
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (
+      applyAndVerify(function () {
+        if (typeof property.setValue !== "function") {
+          return false;
+        }
+        property.setValue(
+          subcreator_visual_rgb_to_hex(fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue),
+          true
+        );
+        return true;
+      })
+    ) {
+      return true;
+    }
+
+    if (typeof rawValue === "number") {
+      var packedRgb = fallbackRgbValue.red * 65536 + fallbackRgbValue.green * 256 + fallbackRgbValue.blue;
+
+      if (
+        applyAndVerify(function () {
+          if (typeof property.setValue !== "function") {
+            return false;
+          }
+          property.setValue(packedRgb, true);
+          return true;
+        })
+      ) {
+        return true;
+      }
+
+      if (
+        applyAndVerify(function () {
+          if (typeof property.setValue !== "function") {
+            return false;
+          }
+          property.setValue(255 * 16777216 + packedRgb, true);
+          return true;
+        })
+      ) {
+        return true;
+      }
+    }
   }
 
   return false;

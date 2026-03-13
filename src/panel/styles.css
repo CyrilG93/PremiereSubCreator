@@ -402,7 +402,7 @@ input[type="checkbox"] {
   border: 1px solid rgba(52, 72, 97, 0.75);
   border-radius: 8px;
   background: #0f1726;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .visual-group__title {
@@ -476,6 +476,8 @@ input[type="checkbox"] {
 .visual-property-control input[type="color"] {
   min-height: 30px;
   padding: 2px;
+  position: relative;
+  z-index: 2;
 }
 
 .visual-property-item--checkbox {

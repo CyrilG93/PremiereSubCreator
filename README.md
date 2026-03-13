@@ -22,6 +22,8 @@ It supports:
 - Mac + Windows installers.
 - Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
 - Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`, faux style toggles) without exposing editable caption text.
+- Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
+- Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 - Normalized `Position` vectors (`0..1` style values) are automatically shown in sequence pixels (for example `1920 / 1080` on 4K timelines).
@@ -35,7 +37,7 @@ It supports:
 - Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
 - Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.
 - Ambiguous 4-channel arrays (alpha markers on first and last slot) now default to `ARGB`, which fixes common `Stroke Color` mismatches.
-- Visual editor color controls use `HEX` + `RGB` fields and open the native CEP/browser color palette when clicking the swatch.
+- Visual editor color controls use swatch + `HEX` only and open the native CEP/browser color palette when clicking the swatch.
 - Color layout calibration now keeps read-layout and write-layout caches separate to improve consistency on controls like `Stroke Color`.
 - Visual editor now reapplies current style values even when unchanged locally, so the same settings can be pushed to newly selected MOGRT clips.
 - After visual apply, Sub Creator nudges/restores the playhead to force an immediate Program Monitor refresh for color updates.

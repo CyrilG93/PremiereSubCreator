@@ -44,6 +44,7 @@ interface HostVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   options?: Array<{ value: number | string; label: string }>;
+  styleOptionsByFamily?: Record<string, string[]>;
   vectorScale?: number[];
   vectorMode?: string;
   value: string | number | boolean;
@@ -600,48 +601,6 @@ function normalizeColorHex(value: string | number | boolean): string {
   return "";
 }
 
-type RgbColor = {
-  red: number;
-  green: number;
-  blue: number;
-};
-
-function clampColorChannel(value: number): number {
-  // // Clamp RGB channel values to 0..255.
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  if (value < 0) {
-    return 0;
-  }
-  if (value > 255) {
-    return 255;
-  }
-  return Math.round(value);
-}
-
-function hexToRgbColor(value: string): RgbColor | null {
-  // // Convert #rrggbb hex values to numeric RGB channels.
-  const hex = normalizeColorHex(value);
-  if (!hex) {
-    return null;
-  }
-
-  return {
-    red: parseInt(hex.slice(1, 3), 16),
-    green: parseInt(hex.slice(3, 5), 16),
-    blue: parseInt(hex.slice(5, 7), 16)
-  };
-}
-
-function rgbColorToHex(color: RgbColor): string {
-  // // Convert RGB channel values to canonical lowercase #rrggbb.
-  const red = clampColorChannel(color.red).toString(16).padStart(2, "0");
-  const green = clampColorChannel(color.green).toString(16).padStart(2, "0");
-  const blue = clampColorChannel(color.blue).toString(16).padStart(2, "0");
-  return `#${red}${green}${blue}`;
-}
-
 function looksLikeGuidList(value: string): boolean {
   // // Detect Premiere internal GUID-list artifacts to avoid exposing them as group labels.
   return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(String(value || "").trim());
@@ -772,6 +731,115 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return;
   }
 
+  const textStyleFamilySelectByBasePath = new Map<string, HTMLSelectElement>();
+  const textStyleStyleSelectByBasePath = new Map<string, HTMLSelectElement>();
+  const textStyleStylesByFamilyByBasePath = new Map<string, Record<string, string[]>>();
+  const textStyleFlagCheckboxesByBasePath = new Map<string, { allCaps?: HTMLInputElement; smallCaps?: HTMLInputElement }>();
+
+  const parseTextStyleVirtualPath = (path: string): { basePath: string; styleKey: string } | null => {
+    // // Decode virtual text-style control paths emitted by host (`4::textstyle.fontStyle`).
+    const marker = "::textstyle.";
+    const markerIndex = String(path || "").indexOf(marker);
+    if (markerIndex <= 0) {
+      return null;
+    }
+    const basePath = String(path || "").slice(0, markerIndex).trim();
+    const styleKey = String(path || "").slice(markerIndex + marker.length).trim();
+    if (!basePath || !styleKey) {
+      return null;
+    }
+    return { basePath, styleKey };
+  };
+
+  const normalizeStyleMap = (value: unknown): Record<string, string[]> => {
+    // // Normalize host style-map payload into lowercase-keyed arrays for quick lookups.
+    const normalized: Record<string, string[]> = {};
+    if (!value || typeof value !== "object") {
+      return normalized;
+    }
+    for (const [rawFamily, rawStyles] of Object.entries(value as Record<string, unknown>)) {
+      const family = String(rawFamily || "").trim();
+      if (!family || !Array.isArray(rawStyles)) {
+        continue;
+      }
+      const uniqueStyles: string[] = [];
+      for (const styleValue of rawStyles) {
+        const styleText = String(styleValue || "").trim();
+        if (!styleText) {
+          continue;
+        }
+        if (!uniqueStyles.some((item) => item.toLowerCase() === styleText.toLowerCase())) {
+          uniqueStyles.push(styleText);
+        }
+      }
+      if (uniqueStyles.length > 0) {
+        normalized[family.toLowerCase()] = uniqueStyles;
+      }
+    }
+    return normalized;
+  };
+
+  const replaceSelectOptions = (select: HTMLSelectElement, options: string[], preferredValue: string): void => {
+    // // Replace select items while preserving currently selected value when possible.
+    const deduped: string[] = [];
+    for (const optionText of options) {
+      const normalized = String(optionText || "").trim();
+      if (!normalized) {
+        continue;
+      }
+      if (!deduped.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+        deduped.push(normalized);
+      }
+    }
+
+    const currentValue = String(preferredValue || select.value || "").trim();
+    const previousValue = select.value;
+    select.innerHTML = "";
+    for (const optionText of deduped) {
+      const option = document.createElement("option");
+      option.value = optionText;
+      option.textContent = optionText;
+      select.appendChild(option);
+    }
+
+    const targetValue = currentValue || previousValue;
+    if (!targetValue) {
+      return;
+    }
+    for (const option of Array.from(select.options)) {
+      if (String(option.value).toLowerCase() === targetValue.toLowerCase()) {
+        select.value = option.value;
+        return;
+      }
+    }
+    if (!select.value && select.options.length > 0) {
+      select.selectedIndex = 0;
+    }
+  };
+
+  const refreshStyleSelectForFamily = (basePath: string): void => {
+    // // Keep font-style options aligned with currently selected font family when map is available.
+    const familySelect = textStyleFamilySelectByBasePath.get(basePath);
+    const styleSelect = textStyleStyleSelectByBasePath.get(basePath);
+    const styleMap = textStyleStylesByFamilyByBasePath.get(basePath);
+    if (!familySelect || !styleSelect || !styleMap) {
+      return;
+    }
+
+    const selectedFamily = String(familySelect.value || "").trim().toLowerCase();
+    if (!selectedFamily) {
+      return;
+    }
+
+    const mappedOptions = styleMap[selectedFamily];
+    if (!Array.isArray(mappedOptions) || mappedOptions.length === 0) {
+      return;
+    }
+
+    const currentStyle = String(styleSelect.value || "").trim();
+    replaceSelectOptions(styleSelect, mappedOptions, currentStyle);
+  };
+
   const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
@@ -829,6 +897,34 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         checkbox.dataset.visualType = property.valueType;
         checkbox.dataset.visualControlKind = property.controlKind;
         checkbox.dataset.visualRole = "value";
+
+        const textStylePath = parseTextStyleVirtualPath(property.path);
+        if (textStylePath && (textStylePath.styleKey === "fontFsAllCaps" || textStylePath.styleKey === "fontFsSmallCaps")) {
+          // // Mirror Premiere mutual exclusivity between All Caps and Small Caps in editor state.
+          const existing = textStyleFlagCheckboxesByBasePath.get(textStylePath.basePath) || {};
+          if (textStylePath.styleKey === "fontFsAllCaps") {
+            existing.allCaps = checkbox;
+          } else {
+            existing.smallCaps = checkbox;
+          }
+          textStyleFlagCheckboxesByBasePath.set(textStylePath.basePath, existing);
+          checkbox.addEventListener("change", () => {
+            if (!checkbox.checked) {
+              return;
+            }
+            const pair = textStyleFlagCheckboxesByBasePath.get(textStylePath.basePath);
+            if (!pair) {
+              return;
+            }
+            if (textStylePath.styleKey === "fontFsAllCaps" && pair.smallCaps) {
+              pair.smallCaps.checked = false;
+            }
+            if (textStylePath.styleKey === "fontFsSmallCaps" && pair.allCaps) {
+              pair.allCaps.checked = false;
+            }
+          });
+        }
+
         row.classList.add("visual-property-item--checkbox");
         row.append(checkbox, label);
         groupBody.appendChild(row);
@@ -875,21 +971,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hexInput.autocapitalize = "off";
         hexInput.autocomplete = "off";
 
-        const rgbRow = document.createElement("div");
-        rgbRow.className = "visual-color-rgb-row";
-
         const nativeColorInput = document.createElement("input");
         nativeColorInput.type = "color";
         nativeColorInput.className = "visual-color-native";
         nativeColorInput.tabIndex = -1;
         nativeColorInput.setAttribute("aria-hidden", "true");
-
-        const rgbChannels: Array<keyof RgbColor> = ["red", "green", "blue"];
-        const rgbInputs: Record<keyof RgbColor, HTMLInputElement> = {
-          red: document.createElement("input"),
-          green: document.createElement("input"),
-          blue: document.createElement("input")
-        };
 
         const hiddenInput = document.createElement("input");
         hiddenInput.type = "hidden";
@@ -901,20 +987,16 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         let syncing = false;
 
         const setColorState = (nextHex: string): void => {
-          // // Keep swatch/native picker/hex/RGB controls synchronized from one canonical hex color.
+          // // Keep swatch/native picker/hex controls synchronized from one canonical hex color.
           if (syncing) {
             return;
           }
           syncing = true;
           const normalized = normalizeColorHex(nextHex) || "#ffffff";
-          const rgb = hexToRgbColor(normalized) || { red: 255, green: 255, blue: 255 };
           hiddenInput.value = normalized;
           hexInput.value = normalized;
           colorSwatch.style.backgroundColor = normalized;
           nativeColorInput.value = normalized;
-          rgbInputs.red.value = String(rgb.red);
-          rgbInputs.green.value = String(rgb.green);
-          rgbInputs.blue.value = String(rgb.blue);
           syncing = false;
         };
 
@@ -932,37 +1014,19 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           setColorState(hiddenInput.value || initialHex);
         });
 
-        rgbChannels.forEach((channel) => {
-          const channelInput = rgbInputs[channel];
-          channelInput.type = "number";
-          channelInput.className = "visual-color-rgb-input";
-          channelInput.min = "0";
-          channelInput.max = "255";
-          channelInput.step = "1";
-          channelInput.addEventListener("input", () => {
-            const red = clampColorChannel(Number(rgbInputs.red.value));
-            const green = clampColorChannel(Number(rgbInputs.green.value));
-            const blue = clampColorChannel(Number(rgbInputs.blue.value));
-            setColorState(rgbColorToHex({ red, green, blue }));
-          });
-          rgbRow.appendChild(channelInput);
-        });
-
         colorSwatch.addEventListener("click", () => {
-          // // Re-anchor hidden color input before opening so native picker can open upward when needed.
+          // // Re-anchor hidden color input so native picker can open even near lower viewport edge.
           const swatchRect = colorSwatch.getBoundingClientRect();
           const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
           const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
           const estimatedPaletteHeight = 320;
+          const estimatedPaletteWidth = 320;
           const margin = 8;
           const hasRoomBelow = viewportHeight - swatchRect.bottom >= estimatedPaletteHeight;
           const targetTop = hasRoomBelow
             ? Math.min(viewportHeight - margin, swatchRect.bottom + margin)
-            : Math.max(margin, swatchRect.top - margin);
-          const targetLeft = Math.min(
-            Math.max(margin, swatchRect.left + swatchRect.width / 2),
-            Math.max(margin, viewportWidth - margin)
-          );
+            : Math.max(margin, swatchRect.top - estimatedPaletteHeight - margin);
+          const targetLeft = Math.min(Math.max(margin, swatchRect.left), Math.max(margin, viewportWidth - estimatedPaletteWidth));
 
           nativeColorInput.style.left = `${Math.round(targetLeft)}px`;
           nativeColorInput.style.top = `${Math.round(targetTop)}px`;
@@ -983,7 +1047,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         });
 
         colorWrap.append(colorSwatch, hexInput, nativeColorInput);
-        controlWrap.append(colorWrap, rgbRow, hiddenInput);
+        controlWrap.append(colorWrap, hiddenInput);
       } else if (property.controlKind === "slider") {
         const sliderWrap = document.createElement("div");
         sliderWrap.className = "visual-slider-row";
@@ -1074,12 +1138,13 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         controlWrap.append(vectorWrap, hiddenInput);
       } else if (property.controlKind === "select" && Array.isArray(property.options) && property.options.length > 0) {
         const select = document.createElement("select");
-        const currentValue = Number(property.value);
+        const currentValue = String(property.value ?? "");
+        const currentValueNormalized = currentValue.toLowerCase();
         property.options.forEach((option) => {
           const node = document.createElement("option");
           node.value = String(option.value);
           node.textContent = option.label;
-          if (Number(option.value) === currentValue || String(option.value) === String(property.value)) {
+          if (String(option.value).toLowerCase() === currentValueNormalized) {
             node.selected = true;
           }
           select.appendChild(node);
@@ -1088,6 +1153,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         select.dataset.visualType = property.valueType;
         select.dataset.visualControlKind = property.controlKind;
         select.dataset.visualRole = "value";
+
+        const textStylePath = parseTextStyleVirtualPath(property.path);
+        if (textStylePath && property.styleOptionsByFamily) {
+          const normalizedMap = normalizeStyleMap(property.styleOptionsByFamily);
+          if (Object.keys(normalizedMap).length > 0) {
+            textStyleStylesByFamilyByBasePath.set(textStylePath.basePath, normalizedMap);
+          }
+        }
+        if (textStylePath?.styleKey === "fontFamily") {
+          textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
+          select.addEventListener("change", () => {
+            refreshStyleSelectForFamily(textStylePath.basePath);
+          });
+        } else if (textStylePath?.styleKey === "fontStyle") {
+          textStyleStyleSelectByBasePath.set(textStylePath.basePath, select);
+        }
+
         controlWrap.appendChild(select);
       } else {
         const input = document.createElement("input");
@@ -1109,6 +1191,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
     groupNode.appendChild(groupBody);
     elements.visualPropertyList.appendChild(groupNode);
+  }
+
+  for (const basePath of textStyleStyleSelectByBasePath.keys()) {
+    // // Run one initial sync so style list follows currently selected family on first render.
+    refreshStyleSelectForFamily(basePath);
   }
 }
 

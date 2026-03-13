@@ -1973,6 +1973,80 @@ function subcreator_visual_extract_first_boolean(value) {
   return null;
 }
 
+function subcreator_visual_register_style_for_family(styleMap, family, style) {
+  // // Register one style entry under a font family without duplicates.
+  if (!styleMap || typeof styleMap !== "object") {
+    return;
+  }
+
+  var normalizedFamily = subcreator_trim_string(String(family || ""));
+  var normalizedStyle = subcreator_trim_string(String(style || ""));
+  if (!normalizedFamily || !normalizedStyle) {
+    return;
+  }
+
+  var targetFamilyKey = "";
+  var normalizedFamilyKey = normalizedFamily.toLowerCase();
+  for (var existingFamilyKey in styleMap) {
+    if (!styleMap.hasOwnProperty(existingFamilyKey)) {
+      continue;
+    }
+    if (String(existingFamilyKey || "").toLowerCase() === normalizedFamilyKey) {
+      targetFamilyKey = existingFamilyKey;
+      break;
+    }
+  }
+  if (!targetFamilyKey) {
+    targetFamilyKey = normalizedFamily;
+  }
+
+  if (!styleMap[targetFamilyKey] || typeof styleMap[targetFamilyKey].length !== "number") {
+    styleMap[targetFamilyKey] = [];
+  }
+
+  var bucket = styleMap[targetFamilyKey];
+  subcreator_visual_push_unique_option(bucket, normalizedStyle);
+}
+
+function subcreator_visual_build_style_map_output(styleMap) {
+  // // Export style-map cache using display family names with sorted style lists.
+  var output = {};
+  if (!styleMap || typeof styleMap !== "object") {
+    return output;
+  }
+
+  for (var familyKey in styleMap) {
+    if (!styleMap.hasOwnProperty(familyKey)) {
+      continue;
+    }
+    var familyBucket = styleMap[familyKey];
+    if (!familyBucket || typeof familyBucket.length !== "number" || familyBucket.length === 0) {
+      continue;
+    }
+    var styles = [];
+    for (var styleIndex = 0; styleIndex < familyBucket.length; styleIndex += 1) {
+      subcreator_visual_push_unique_option(styles, familyBucket[styleIndex]);
+    }
+    if (!styles.length) {
+      continue;
+    }
+    styles.sort(function (left, right) {
+      var a = String(left || "").toLowerCase();
+      var b = String(right || "").toLowerCase();
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    });
+    output[String(familyKey)] = styles;
+  }
+
+  return output;
+}
+
 function subcreator_visual_is_font_flag_key(normalizedKey, flagKey) {
   // // Detect boolean font-style toggle keys in text payloads.
   var key = String(normalizedKey || "");
@@ -2012,6 +2086,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
     fontSize: NaN,
     fontFamilyOptions: [],
     fontStyleOptions: [],
+    fontStylesByFamily: {},
     fontFsBold: null,
     fontFsItalic: null,
     fontFsAllCaps: null,
@@ -2056,6 +2131,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
           subcreator_visual_push_unique_option(result.fontFamilyOptions, tokenPartsOption.family);
           if (tokenPartsOption.style) {
             subcreator_visual_push_unique_option(result.fontStyleOptions, tokenPartsOption.style);
+            subcreator_visual_register_style_for_family(result.fontStylesByFamily, tokenPartsOption.family, tokenPartsOption.style);
           }
         }
       }
@@ -2083,6 +2159,9 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
         var styleOptions = subcreator_visual_extract_string_options(value);
         for (var styleIndex = 0; styleIndex < styleOptions.length; styleIndex += 1) {
           subcreator_visual_push_unique_option(result.fontStyleOptions, styleOptions[styleIndex]);
+          if (result.fontFamily) {
+            subcreator_visual_register_style_for_family(result.fontStylesByFamily, result.fontFamily, styleOptions[styleIndex]);
+          }
         }
       }
       if (!result.fontStyle && subcreator_visual_is_generic_font_style_key(normalizedKey)) {
@@ -2095,6 +2174,9 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
         var genericStyleOptions = subcreator_visual_extract_string_options(value);
         for (var genericStyleIndex = 0; genericStyleIndex < genericStyleOptions.length; genericStyleIndex += 1) {
           subcreator_visual_push_unique_option(result.fontStyleOptions, genericStyleOptions[genericStyleIndex]);
+          if (result.fontFamily) {
+            subcreator_visual_register_style_for_family(result.fontStylesByFamily, result.fontFamily, genericStyleOptions[genericStyleIndex]);
+          }
         }
       }
 
@@ -2138,6 +2220,11 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
   if (result.fontStyle) {
     subcreator_visual_push_unique_option(result.fontStyleOptions, result.fontStyle);
   }
+  if (result.fontFamily && result.fontStyle) {
+    subcreator_visual_register_style_for_family(result.fontStylesByFamily, result.fontFamily, result.fontStyle);
+  }
+
+  result.fontStylesByFamily = subcreator_visual_build_style_map_output(result.fontStylesByFamily);
 
   if (
     !result.fontFamily &&
@@ -2210,6 +2297,7 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       valueType: "string",
       controlKind: "select",
       options: buildStringSelectOptions(styleValues.fontFamilyOptions, cachedFamilies, []),
+      styleOptionsByFamily: styleValues.fontStylesByFamily,
       value: styleValues.fontFamily
     });
   }
@@ -2222,6 +2310,7 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       valueType: "string",
       controlKind: "select",
       options: buildStringSelectOptions(styleValues.fontStyleOptions, cachedStyles, commonStyleFallback),
+      styleOptionsByFamily: styleValues.fontStylesByFamily,
       value: styleValues.fontStyle
     });
   }
@@ -3007,6 +3096,14 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     return false;
   }
 
+  var exclusiveCompanionStyleKey = "";
+  // // Keep faux-style exclusive toggles aligned with Premiere behavior.
+  if (normalizedStyleKey === "fontFsAllCaps" && normalizedStyleValue === true) {
+    exclusiveCompanionStyleKey = "fontFsSmallCaps";
+  } else if (normalizedStyleKey === "fontFsSmallCaps" && normalizedStyleValue === true) {
+    exclusiveCompanionStyleKey = "fontFsAllCaps";
+  }
+
   var rawValue = "";
   if (typeof property.getValue === "function") {
     try {
@@ -3026,14 +3123,22 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
   if (rawValue && typeof rawValue === "object") {
     try {
       var objectCopy = JSON.parse(JSON.stringify(rawValue));
-      if (subcreator_visual_apply_text_style_to_payload(objectCopy, normalizedStyleKey, normalizedStyleValue)) {
+      var didPatchCopy = subcreator_visual_apply_text_style_to_payload(objectCopy, normalizedStyleKey, normalizedStyleValue);
+      if (didPatchCopy && exclusiveCompanionStyleKey) {
+        subcreator_visual_apply_text_style_to_payload(objectCopy, exclusiveCompanionStyleKey, false);
+      }
+      if (didPatchCopy) {
         property.setValue(objectCopy, true);
         return true;
       }
     } catch (copyError) {}
 
     try {
-      if (subcreator_visual_apply_text_style_to_payload(rawValue, normalizedStyleKey, normalizedStyleValue)) {
+      var didPatchDirect = subcreator_visual_apply_text_style_to_payload(rawValue, normalizedStyleKey, normalizedStyleValue);
+      if (didPatchDirect && exclusiveCompanionStyleKey) {
+        subcreator_visual_apply_text_style_to_payload(rawValue, exclusiveCompanionStyleKey, false);
+      }
+      if (didPatchDirect) {
         property.setValue(rawValue, true);
         return true;
       }
@@ -3043,7 +3148,11 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
   if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
     try {
       var parsed = JSON.parse(rawValue);
-      if (subcreator_visual_apply_text_style_to_payload(parsed, normalizedStyleKey, normalizedStyleValue)) {
+      var didPatchParsed = subcreator_visual_apply_text_style_to_payload(parsed, normalizedStyleKey, normalizedStyleValue);
+      if (didPatchParsed && exclusiveCompanionStyleKey) {
+        subcreator_visual_apply_text_style_to_payload(parsed, exclusiveCompanionStyleKey, false);
+      }
+      if (didPatchParsed) {
         property.setValue(JSON.stringify(parsed), true);
         return true;
       }
@@ -3051,6 +3160,9 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
 
     try {
       var patchedRaw = subcreator_try_patch_text_style_json_string(rawValue, normalizedStyleKey, normalizedStyleValue);
+      if (patchedRaw && exclusiveCompanionStyleKey) {
+        patchedRaw = subcreator_try_patch_text_style_json_string(patchedRaw, exclusiveCompanionStyleKey, false) || patchedRaw;
+      }
       if (patchedRaw) {
         property.setValue(patchedRaw, true);
         return true;

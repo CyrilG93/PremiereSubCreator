@@ -515,17 +515,6 @@ input[type="checkbox"] {
   z-index: 9999;
 }
 
-.visual-color-rgb-row {
-  margin-top: 4px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.visual-color-rgb-input {
-  text-align: center;
-}
-
 .visual-property-item--checkbox {
   grid-template-columns: auto 1fr;
   align-items: center;

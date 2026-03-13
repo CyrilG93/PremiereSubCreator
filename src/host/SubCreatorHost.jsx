@@ -1915,6 +1915,39 @@ function subcreator_visual_join_font_token(family, style, fallbackToken) {
   return normalizedFamily + "-" + normalizedStyle;
 }
 
+function subcreator_visual_normalize_font_compare_key(value) {
+  // // Build comparison key for font family matching across display/internal naming variants.
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function subcreator_visual_font_family_matches_value(rawValue, expectedFamily) {
+  // // Check whether readback payload resolves to requested font family.
+  var expectedKey = subcreator_visual_normalize_font_compare_key(expectedFamily);
+  if (!expectedKey) {
+    return null;
+  }
+
+  var extracted = subcreator_visual_extract_text_style_from_value(rawValue);
+  if (extracted && extracted.fontFamily) {
+    var extractedKey = subcreator_visual_normalize_font_compare_key(extracted.fontFamily);
+    if (!extractedKey) {
+      return null;
+    }
+    return extractedKey === expectedKey;
+  }
+
+  if (typeof rawValue === "string") {
+    var rawKey = subcreator_visual_normalize_font_compare_key(rawValue);
+    if (rawKey && rawKey.indexOf(expectedKey) !== -1) {
+      return true;
+    }
+  }
+
+  return null;
+}
+
 function subcreator_visual_push_unique_option(list, value) {
   // // Push one option text value without duplicates.
   if (!list) {
@@ -2875,7 +2908,7 @@ function subcreator_visual_normalize_text_style_change(styleKey, value) {
   return textValue;
 }
 
-function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleValue) {
+function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleValue, applyOptions) {
   // // Apply one style field recursively to known text JSON keys.
   if (!payload || typeof payload !== "object") {
     return false;
@@ -2942,7 +2975,12 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       } else if (styleKey === "fontFamily" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var currentToken = subcreator_visual_extract_first_string(value);
         var currentParts = subcreator_visual_split_font_token(currentToken);
-        var rebuiltToken = subcreator_visual_join_font_token(styleValue, currentParts.style, currentToken);
+        var styleOverrideProvided =
+          applyOptions &&
+          Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenStyleOverride") &&
+          typeof applyOptions.fontTokenStyleOverride === "string";
+        var styleForToken = styleOverrideProvided ? applyOptions.fontTokenStyleOverride : currentParts.style;
+        var rebuiltToken = subcreator_visual_join_font_token(styleValue, styleForToken, currentToken);
         if (typeof value === "string") {
           node[key] = rebuiltToken;
         } else if (value && typeof value.length === "number" && value.length > 0) {
@@ -3008,7 +3046,7 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
   return updated;
 }
 
-function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleValue) {
+function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleValue, applyOptions) {
   // // Fallback patch for JSON-like strings when `JSON.parse` is unavailable on host payloads.
   var raw = String(rawValue || "");
   if (!raw || raw.indexOf("{") === -1) {
@@ -3017,6 +3055,11 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
 
   var patched = raw;
   var styleString = JSON.stringify(String(styleValue));
+  var styleOverrideProvided =
+    applyOptions &&
+    Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenStyleOverride") &&
+    typeof applyOptions.fontTokenStyleOverride === "string";
+  var styleOverrideValue = styleOverrideProvided ? applyOptions.fontTokenStyleOverride : "";
   var keyList = [];
 
   if (styleKey === "fontFamily") {
@@ -3058,7 +3101,8 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
           var tokenParts = subcreator_visual_split_font_token(String(tokenValue || ""));
           var rebuiltToken = "";
           if (styleKey === "fontFamily") {
-            rebuiltToken = subcreator_visual_join_font_token(String(styleValue), tokenParts.style, tokenValue);
+            var styleForToken = styleOverrideProvided ? styleOverrideValue : tokenParts.style;
+            rebuiltToken = subcreator_visual_join_font_token(String(styleValue), styleForToken, tokenValue);
           } else if (styleKey === "fontStyle") {
             rebuiltToken = subcreator_visual_join_font_token(tokenParts.family, String(styleValue), tokenValue);
           } else {
@@ -3135,57 +3179,169 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     return false;
   }
 
-  if (rawValue && typeof rawValue === "object") {
-    try {
-      var objectCopy = JSON.parse(JSON.stringify(rawValue));
-      var didPatchCopy = subcreator_visual_apply_text_style_to_payload(objectCopy, normalizedStyleKey, normalizedStyleValue);
-      if (didPatchCopy && exclusiveCompanionStyleKey) {
-        subcreator_visual_apply_text_style_to_payload(objectCopy, exclusiveCompanionStyleKey, false);
-      }
-      if (didPatchCopy) {
-        property.setValue(objectCopy, true);
-        return true;
-      }
-    } catch (copyError) {}
+  var extractedStyleValues = subcreator_visual_extract_text_style_from_value(rawValue);
 
-    try {
-      var didPatchDirect = subcreator_visual_apply_text_style_to_payload(rawValue, normalizedStyleKey, normalizedStyleValue);
-      if (didPatchDirect && exclusiveCompanionStyleKey) {
-        subcreator_visual_apply_text_style_to_payload(rawValue, exclusiveCompanionStyleKey, false);
-      }
-      if (didPatchDirect) {
-        property.setValue(rawValue, true);
-        return true;
-      }
-    } catch (directError) {}
+  function applyOnce(fontTokenStyleOverride) {
+    // // Try one text-style patch strategy for the current property value.
+    var applyOptions = null;
+    if (typeof fontTokenStyleOverride === "string") {
+      applyOptions = {
+        fontTokenStyleOverride: fontTokenStyleOverride
+      };
+    }
+
+    if (rawValue && typeof rawValue === "object") {
+      try {
+        var objectCopy = JSON.parse(JSON.stringify(rawValue));
+        var didPatchCopy = subcreator_visual_apply_text_style_to_payload(
+          objectCopy,
+          normalizedStyleKey,
+          normalizedStyleValue,
+          applyOptions
+        );
+        if (didPatchCopy && exclusiveCompanionStyleKey) {
+          subcreator_visual_apply_text_style_to_payload(objectCopy, exclusiveCompanionStyleKey, false, applyOptions);
+        }
+        if (didPatchCopy) {
+          property.setValue(objectCopy, true);
+          return true;
+        }
+      } catch (copyError) {}
+
+      try {
+        var didPatchDirect = subcreator_visual_apply_text_style_to_payload(
+          rawValue,
+          normalizedStyleKey,
+          normalizedStyleValue,
+          applyOptions
+        );
+        if (didPatchDirect && exclusiveCompanionStyleKey) {
+          subcreator_visual_apply_text_style_to_payload(rawValue, exclusiveCompanionStyleKey, false, applyOptions);
+        }
+        if (didPatchDirect) {
+          property.setValue(rawValue, true);
+          return true;
+        }
+      } catch (directError) {}
+    }
+
+    if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
+      try {
+        var parsed = JSON.parse(rawValue);
+        var didPatchParsed = subcreator_visual_apply_text_style_to_payload(
+          parsed,
+          normalizedStyleKey,
+          normalizedStyleValue,
+          applyOptions
+        );
+        if (didPatchParsed && exclusiveCompanionStyleKey) {
+          subcreator_visual_apply_text_style_to_payload(parsed, exclusiveCompanionStyleKey, false, applyOptions);
+        }
+        if (didPatchParsed) {
+          property.setValue(JSON.stringify(parsed), true);
+          return true;
+        }
+      } catch (jsonError) {}
+
+      try {
+        var patchedRaw = subcreator_try_patch_text_style_json_string(
+          rawValue,
+          normalizedStyleKey,
+          normalizedStyleValue,
+          applyOptions
+        );
+        if (patchedRaw && exclusiveCompanionStyleKey) {
+          patchedRaw =
+            subcreator_try_patch_text_style_json_string(patchedRaw, exclusiveCompanionStyleKey, false, applyOptions) || patchedRaw;
+        }
+        if (patchedRaw) {
+          property.setValue(patchedRaw, true);
+          return true;
+        }
+      } catch (patchError) {}
+    }
+
+    return false;
   }
 
-  if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
+  function readbackMatchesExpectedFamily(expectedFamily) {
+    // // Validate family write result; return `false` only when mismatch is explicit.
+    if (typeof property.getValue !== "function") {
+      return null;
+    }
     try {
-      var parsed = JSON.parse(rawValue);
-      var didPatchParsed = subcreator_visual_apply_text_style_to_payload(parsed, normalizedStyleKey, normalizedStyleValue);
-      if (didPatchParsed && exclusiveCompanionStyleKey) {
-        subcreator_visual_apply_text_style_to_payload(parsed, exclusiveCompanionStyleKey, false);
-      }
-      if (didPatchParsed) {
-        property.setValue(JSON.stringify(parsed), true);
-        return true;
-      }
-    } catch (jsonError) {}
-
-    try {
-      var patchedRaw = subcreator_try_patch_text_style_json_string(rawValue, normalizedStyleKey, normalizedStyleValue);
-      if (patchedRaw && exclusiveCompanionStyleKey) {
-        patchedRaw = subcreator_try_patch_text_style_json_string(patchedRaw, exclusiveCompanionStyleKey, false) || patchedRaw;
-      }
-      if (patchedRaw) {
-        property.setValue(patchedRaw, true);
-        return true;
-      }
-    } catch (patchError) {}
+      var afterValue = property.getValue();
+      return subcreator_visual_font_family_matches_value(afterValue, expectedFamily);
+    } catch (readError) {
+      return null;
+    }
   }
 
-  return false;
+  if (normalizedStyleKey === "fontFamily") {
+    var requestedFamily = String(normalizedStyleValue || "");
+    var requestedFamilyKey = subcreator_visual_normalize_font_compare_key(requestedFamily);
+    var styleOverrides = [];
+
+    function pushStyleOverride(value) {
+      // // Keep fallback style overrides unique while preserving insertion order.
+      var text = subcreator_trim_string(String(value || ""));
+      var normalized = text.toLowerCase();
+      for (var idx = 0; idx < styleOverrides.length; idx += 1) {
+        if (String(styleOverrides[idx] || "").toLowerCase() === normalized) {
+          return;
+        }
+      }
+      styleOverrides.push(text);
+    }
+
+    if (extractedStyleValues && extractedStyleValues.fontStyle) {
+      pushStyleOverride(extractedStyleValues.fontStyle);
+    }
+
+    if (extractedStyleValues && extractedStyleValues.fontStylesByFamily && requestedFamilyKey) {
+      for (var familyKey in extractedStyleValues.fontStylesByFamily) {
+        if (!extractedStyleValues.fontStylesByFamily.hasOwnProperty(familyKey)) {
+          continue;
+        }
+        if (subcreator_visual_normalize_font_compare_key(familyKey) !== requestedFamilyKey) {
+          continue;
+        }
+        var styleBucket = extractedStyleValues.fontStylesByFamily[familyKey];
+        if (!styleBucket || typeof styleBucket.length !== "number") {
+          continue;
+        }
+        for (var styleIndex = 0; styleIndex < styleBucket.length; styleIndex += 1) {
+          pushStyleOverride(styleBucket[styleIndex]);
+        }
+      }
+    }
+
+    // // Try no-style + common aliases to avoid invalid `family-style` tokens that trigger host fallback fonts.
+    pushStyleOverride("");
+    pushStyleOverride("Regular");
+    pushStyleOverride("Book");
+    pushStyleOverride("Medium");
+    pushStyleOverride("Roman");
+
+    if (!styleOverrides.length) {
+      pushStyleOverride("");
+    }
+
+    for (var overrideIndex = 0; overrideIndex < styleOverrides.length; overrideIndex += 1) {
+      var styleOverride = styleOverrides[overrideIndex];
+      if (!applyOnce(styleOverride)) {
+        continue;
+      }
+      var readbackMatch = readbackMatchesExpectedFamily(requestedFamily);
+      if (readbackMatch === false) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  return applyOnce();
 }
 
 function subcreator_normalize_visual_payload_value(valueType, rawValue) {

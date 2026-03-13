@@ -21,7 +21,8 @@ It supports:
 - Persisted panel settings (source, style, limits, language, and selected MOGRT).
 - Mac + Windows installers.
 - Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
-- Visual editor apply sends only modified controls, preserving untouched MOGRT parameters.
+- Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`) without exposing editable caption text.
+- Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 - Normalized `Position` vectors (`0..1` style values) are automatically shown in sequence pixels (for example `1920 / 1080` on 4K timelines).
 - Size vectors now include 1920/1080 compatibility scaling so common subtitle templates display `100%`-style values in editor.

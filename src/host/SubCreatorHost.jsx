@@ -1594,6 +1594,166 @@ function subcreator_serialize_visual_property_value(rawValue, valueType) {
   return rawValue;
 }
 
+function subcreator_visual_normalize_text_style_key(key) {
+  // // Normalize style-field keys for resilient matching across MOGRT JSON variants.
+  return String(key || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function subcreator_visual_is_font_family_key(normalizedKey) {
+  // // Identify known JSON keys that carry font family/name values.
+  return (
+    normalizedKey === "fontname" ||
+    normalizedKey === "mfontname" ||
+    normalizedKey === "fontfamily" ||
+    normalizedKey === "mfontfamily"
+  );
+}
+
+function subcreator_visual_is_font_style_key(normalizedKey) {
+  // // Identify known JSON keys that carry font style values.
+  return (
+    normalizedKey === "fontstyle" ||
+    normalizedKey === "mfontstyle" ||
+    normalizedKey === "fontstylename" ||
+    normalizedKey === "mfontstylename"
+  );
+}
+
+function subcreator_visual_is_font_size_key(normalizedKey) {
+  // // Identify known JSON keys that carry font size values.
+  return normalizedKey === "fontsize" || normalizedKey === "mfontsize";
+}
+
+function subcreator_visual_extract_text_style_from_value(rawValue) {
+  // // Extract editable text style fields from text-document JSON payloads.
+  var payload = rawValue;
+  if (typeof payload === "string") {
+    if (payload.indexOf("{") === -1) {
+      return null;
+    }
+    try {
+      payload = JSON.parse(payload);
+    } catch (parseError) {
+      return null;
+    }
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  var result = {
+    fontFamily: "",
+    fontStyle: "",
+    fontSize: NaN
+  };
+
+  function scanNode(node, depth) {
+    if (!node || typeof node !== "object" || depth > 12) {
+      return;
+    }
+
+    if (typeof node.length === "number") {
+      for (var arrIndex = 0; arrIndex < node.length; arrIndex += 1) {
+        scanNode(node[arrIndex], depth + 1);
+      }
+      return;
+    }
+
+    for (var key in node) {
+      if (!node.hasOwnProperty(key)) {
+        continue;
+      }
+      var value = node[key];
+      var normalizedKey = subcreator_visual_normalize_text_style_key(key);
+
+      if (!result.fontFamily && subcreator_visual_is_font_family_key(normalizedKey)) {
+        var familyValue = subcreator_trim_string(String(value || ""));
+        if (familyValue) {
+          result.fontFamily = familyValue;
+        }
+      }
+
+      if (!result.fontStyle && subcreator_visual_is_font_style_key(normalizedKey)) {
+        var styleValue = subcreator_trim_string(String(value || ""));
+        if (styleValue) {
+          result.fontStyle = styleValue;
+        }
+      }
+
+      if (isNaN(result.fontSize) && subcreator_visual_is_font_size_key(normalizedKey)) {
+        var sizeValue = Number(value);
+        if (!isNaN(sizeValue) && sizeValue > 0 && sizeValue < 2000) {
+          result.fontSize = sizeValue;
+        }
+      }
+
+      if (value && typeof value === "object") {
+        scanNode(value, depth + 1);
+      }
+    }
+  }
+
+  scanNode(payload, 0);
+
+  if (!result.fontFamily && !result.fontStyle && isNaN(result.fontSize)) {
+    return null;
+  }
+
+  return result;
+}
+
+function subcreator_visual_build_text_style_entries(rawValue, currentPath, groupPath) {
+  // // Build synthetic visual-editor entries for font family/style/size from text payloads.
+  var styleValues = subcreator_visual_extract_text_style_from_value(rawValue);
+  if (!styleValues) {
+    return [];
+  }
+
+  var entries = [];
+  var targetGroup = groupPath || "General";
+
+  if (styleValues.fontFamily) {
+    entries.push({
+      path: currentPath + "::textstyle.fontFamily",
+      displayName: "Font Family",
+      groupPath: targetGroup,
+      valueType: "string",
+      controlKind: "string",
+      value: styleValues.fontFamily
+    });
+  }
+
+  if (styleValues.fontStyle) {
+    entries.push({
+      path: currentPath + "::textstyle.fontStyle",
+      displayName: "Font Style",
+      groupPath: targetGroup,
+      valueType: "string",
+      controlKind: "string",
+      value: styleValues.fontStyle
+    });
+  }
+
+  if (!isNaN(styleValues.fontSize)) {
+    entries.push({
+      path: currentPath + "::textstyle.fontSize",
+      displayName: "Font Size",
+      groupPath: targetGroup,
+      valueType: "number",
+      controlKind: "slider",
+      minValue: 1,
+      maxValue: 500,
+      stepValue: 0.1,
+      value: styleValues.fontSize
+    });
+  }
+
+  return entries;
+}
+
 function subcreator_build_visual_property_entry(property, currentPath, displayName, groupPath, hasChildren, rawValueOverride) {
   // // Build one panel-ready visual property entry with inferred control metadata.
   var rawValue = typeof rawValueOverride !== "undefined" ? rawValueOverride : undefined;
@@ -1827,6 +1987,17 @@ function subcreator_collect_mogrt_visual_properties_recursive(
     var resolvedGroupPath = activeSiblingGroupPath || groupPathPrefix || "General";
 
     if (typeof property.getValue === "function" && typeof property.setValue === "function") {
+      if (hasValue && subcreator_should_try_text_property(displayName, rawValue)) {
+        // // Expose style-only controls from text payloads while keeping actual caption text hidden.
+        var textStyleEntries = subcreator_visual_build_text_style_entries(rawValue, currentPath, resolvedGroupPath);
+        for (var styleIndex = 0; styleIndex < textStyleEntries.length; styleIndex += 1) {
+          collector.push(textStyleEntries[styleIndex]);
+        }
+        if (textStyleEntries.length > 0) {
+          continue;
+        }
+      }
+
       var descriptor = subcreator_build_visual_property_entry(
         property,
         currentPath,
@@ -1886,6 +2057,202 @@ function subcreator_find_property_by_path(propertyCollection, pathValue) {
   }
 
   return null;
+}
+
+function subcreator_visual_parse_text_style_virtual_path(pathValue) {
+  // // Decode synthetic visual-editor paths like `4::textstyle.fontSize`.
+  var pathText = subcreator_trim_string(String(pathValue || ""));
+  var marker = "::textstyle.";
+  var markerIndex = pathText.indexOf(marker);
+  if (markerIndex <= 0) {
+    return null;
+  }
+
+  var basePath = subcreator_trim_string(pathText.substring(0, markerIndex));
+  var styleKey = subcreator_trim_string(pathText.substring(markerIndex + marker.length));
+  if (!basePath || !styleKey) {
+    return null;
+  }
+
+  return {
+    basePath: basePath,
+    styleKey: styleKey
+  };
+}
+
+function subcreator_visual_normalize_text_style_change(styleKey, value) {
+  // // Normalize incoming style values before patching text-document payloads.
+  var normalizedStyleKey = subcreator_trim_string(String(styleKey || ""));
+  if (!normalizedStyleKey) {
+    return null;
+  }
+
+  if (normalizedStyleKey === "fontSize") {
+    var sizeValue = Number(value);
+    if (isNaN(sizeValue) || sizeValue <= 0 || sizeValue > 2000) {
+      return null;
+    }
+    return sizeValue;
+  }
+
+  var textValue = subcreator_trim_string(String(value || ""));
+  if (!textValue) {
+    return null;
+  }
+  return textValue;
+}
+
+function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleValue) {
+  // // Apply one style field recursively to known text JSON keys.
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  var updated = false;
+
+  function patchNode(node, depth) {
+    if (!node || typeof node !== "object" || depth > 12) {
+      return;
+    }
+
+    if (typeof node.length === "number") {
+      for (var arrIndex = 0; arrIndex < node.length; arrIndex += 1) {
+        patchNode(node[arrIndex], depth + 1);
+      }
+      return;
+    }
+
+    for (var key in node) {
+      if (!node.hasOwnProperty(key)) {
+        continue;
+      }
+
+      var value = node[key];
+      var normalizedKey = subcreator_visual_normalize_text_style_key(key);
+
+      if (styleKey === "fontFamily" && subcreator_visual_is_font_family_key(normalizedKey)) {
+        node[key] = String(styleValue);
+        updated = true;
+      } else if (styleKey === "fontStyle" && subcreator_visual_is_font_style_key(normalizedKey)) {
+        node[key] = String(styleValue);
+        updated = true;
+      } else if (styleKey === "fontSize" && subcreator_visual_is_font_size_key(normalizedKey)) {
+        node[key] = Number(styleValue);
+        updated = true;
+      }
+
+      if (value && typeof value === "object") {
+        patchNode(value, depth + 1);
+      }
+    }
+  }
+
+  patchNode(payload, 0);
+  return updated;
+}
+
+function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleValue) {
+  // // Fallback patch for JSON-like strings when `JSON.parse` is unavailable on host payloads.
+  var raw = String(rawValue || "");
+  if (!raw || raw.indexOf("{") === -1) {
+    return "";
+  }
+
+  var patched = raw;
+  var styleString = JSON.stringify(String(styleValue));
+  var keyList = [];
+
+  if (styleKey === "fontFamily") {
+    keyList = ["fontName", "mFontName", "fontFamily", "mFontFamily"];
+  } else if (styleKey === "fontStyle") {
+    keyList = ["fontStyle", "mFontStyle", "fontStyleName", "mFontStyleName"];
+  } else if (styleKey === "fontSize") {
+    keyList = ["fontSize", "mFontSize"];
+  }
+
+  for (var keyIndex = 0; keyIndex < keyList.length; keyIndex += 1) {
+    var keyName = keyList[keyIndex];
+    if (styleKey === "fontSize") {
+      var numericRegex = new RegExp('"' + keyName + '"\\s*:\\s*("([^"\\\\]|\\\\.)*"|-?\\d+(?:\\.\\d+)?)', "g");
+      patched = patched.replace(numericRegex, '"' + keyName + '":' + String(Number(styleValue)));
+    } else {
+      var stringRegex = new RegExp('"' + keyName + '"\\s*:\\s*"([^"\\\\]|\\\\.)*"', "g");
+      patched = patched.replace(stringRegex, '"' + keyName + '":' + styleString);
+    }
+  }
+
+  if (patched === raw) {
+    return "";
+  }
+
+  return patched;
+}
+
+function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleValue) {
+  // // Apply editable style-only text controls without mutating subtitle content.
+  if (!property || typeof property.setValue !== "function") {
+    return false;
+  }
+
+  var normalizedStyleKey = subcreator_trim_string(String(styleKey || ""));
+  if (!normalizedStyleKey) {
+    return false;
+  }
+
+  var normalizedStyleValue = subcreator_visual_normalize_text_style_change(normalizedStyleKey, styleValue);
+  if (normalizedStyleValue === null) {
+    return false;
+  }
+
+  var rawValue = "";
+  if (typeof property.getValue === "function") {
+    try {
+      rawValue = property.getValue();
+    } catch (getError) {
+      rawValue = "";
+    }
+  }
+
+  if (!subcreator_should_try_text_property(property.displayName || "", rawValue)) {
+    return false;
+  }
+
+  if (rawValue && typeof rawValue === "object") {
+    try {
+      var objectCopy = JSON.parse(JSON.stringify(rawValue));
+      if (subcreator_visual_apply_text_style_to_payload(objectCopy, normalizedStyleKey, normalizedStyleValue)) {
+        property.setValue(objectCopy, true);
+        return true;
+      }
+    } catch (copyError) {}
+
+    try {
+      if (subcreator_visual_apply_text_style_to_payload(rawValue, normalizedStyleKey, normalizedStyleValue)) {
+        property.setValue(rawValue, true);
+        return true;
+      }
+    } catch (directError) {}
+  }
+
+  if (typeof rawValue === "string" && rawValue.indexOf("{") !== -1) {
+    try {
+      var parsed = JSON.parse(rawValue);
+      if (subcreator_visual_apply_text_style_to_payload(parsed, normalizedStyleKey, normalizedStyleValue)) {
+        property.setValue(JSON.stringify(parsed), true);
+        return true;
+      }
+    } catch (jsonError) {}
+
+    try {
+      var patchedRaw = subcreator_try_patch_text_style_json_string(rawValue, normalizedStyleKey, normalizedStyleValue);
+      if (patchedRaw) {
+        property.setValue(patchedRaw, true);
+        return true;
+      }
+    } catch (patchError) {}
+  }
+
+  return false;
 }
 
 function subcreator_normalize_visual_payload_value(valueType, rawValue) {
@@ -2689,6 +3056,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         var path = subcreator_trim_string(String(change.path || ""));
         var valueType = subcreator_trim_string(String(change.valueType || "string")).toLowerCase();
         var controlKind = subcreator_trim_string(String(change.controlKind || "")).toLowerCase();
+        var virtualTextStyleTarget = subcreator_visual_parse_text_style_virtual_path(path);
+        var resolvedPath = virtualTextStyleTarget ? virtualTextStyleTarget.basePath : path;
         var value = change.value;
         var vectorScale = null;
         if (change.vectorScale && Object.prototype.toString.call(change.vectorScale) === "[object Array]") {
@@ -2699,7 +3068,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           continue;
         }
 
-        var property = subcreator_find_property_by_path(component.properties, path);
+        var property = subcreator_find_property_by_path(component.properties, resolvedPath);
         if (!property || typeof property.setValue !== "function") {
           failedCount += 1;
           continue;
@@ -2707,11 +3076,15 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
         var applied = false;
         var displayName = subcreator_trim_string(String(property.displayName || ""));
+        if (virtualTextStyleTarget) {
+          displayName += " (" + virtualTextStyleTarget.styleKey + ")";
+        }
         if (
           controlKind === "vector" ||
           controlKind === "color" ||
           controlKind === "select" ||
-          String(displayName || "").toLowerCase().indexOf("size") !== -1
+          String(displayName || "").toLowerCase().indexOf("size") !== -1 ||
+          !!virtualTextStyleTarget
         ) {
           debugLines.push(
             "change path=" +
@@ -2722,11 +3095,16 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               controlKind +
               " in=" +
               String(value) +
+              (virtualTextStyleTarget ? " virtualStyle=" + virtualTextStyleTarget.styleKey : "") +
               (vectorScale ? " scale=" + String(vectorScale) : "")
           );
         }
 
-        if (controlKind === "text") {
+        if (virtualTextStyleTarget) {
+          try {
+            applied = subcreator_try_set_mogrt_text_style_property(property, virtualTextStyleTarget.styleKey, value);
+          } catch (textStyleError) {}
+        } else if (controlKind === "text") {
           try {
             applied = subcreator_try_set_mogrt_text_property(property, String(value || ""));
           } catch (textError) {}
@@ -2751,7 +3129,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           } catch (vectorError) {}
         }
 
-        if (!applied && controlKind !== "color") {
+        if (!applied && controlKind !== "color" && !virtualTextStyleTarget) {
           try {
             var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
             property.setValue(normalizedValue, true);
@@ -2761,6 +3139,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           }
         } else if (!applied && controlKind === "color") {
           debugLines.push("color apply failed without generic setValue fallback");
+        } else if (!applied && virtualTextStyleTarget) {
+          debugLines.push("text style apply failed without generic setValue fallback");
         }
 
         if (applied) {

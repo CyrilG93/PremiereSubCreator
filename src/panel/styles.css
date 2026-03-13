@@ -502,7 +502,9 @@ input[type="checkbox"] {
 }
 
 .visual-color-native {
-  position: absolute;
+  position: fixed;
+  left: 0;
+  top: 0;
   width: 1px;
   height: 1px;
   opacity: 0;
@@ -510,6 +512,7 @@ input[type="checkbox"] {
   border: 0;
   padding: 0;
   margin: 0;
+  z-index: 9999;
 }
 
 .visual-color-rgb-row {

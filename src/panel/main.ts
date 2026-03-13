@@ -949,7 +949,30 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         });
 
         colorSwatch.addEventListener("click", () => {
-          // // Open the native CEP/browser color picker anchored to the swatch.
+          // // Re-anchor hidden color input before opening so native picker can open upward when needed.
+          const swatchRect = colorSwatch.getBoundingClientRect();
+          const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+          const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+          const estimatedPaletteHeight = 320;
+          const margin = 8;
+          const hasRoomBelow = viewportHeight - swatchRect.bottom >= estimatedPaletteHeight;
+          const targetTop = hasRoomBelow
+            ? Math.min(viewportHeight - margin, swatchRect.bottom + margin)
+            : Math.max(margin, swatchRect.top - margin);
+          const targetLeft = Math.min(
+            Math.max(margin, swatchRect.left + swatchRect.width / 2),
+            Math.max(margin, viewportWidth - margin)
+          );
+
+          nativeColorInput.style.left = `${Math.round(targetLeft)}px`;
+          nativeColorInput.style.top = `${Math.round(targetTop)}px`;
+
+          // // Prefer showPicker when available; fallback to click for older CEP runtimes.
+          const picker = nativeColorInput as HTMLInputElement & { showPicker?: () => void };
+          if (typeof picker.showPicker === "function") {
+            picker.showPicker();
+            return;
+          }
           nativeColorInput.click();
         });
         nativeColorInput.addEventListener("input", () => {
@@ -1099,6 +1122,7 @@ type VisualPropertyChange = {
 
 function collectVisualPropertyChanges(): VisualPropertyChange[] {
   // // Build payload from rendered editor controls for host-side property updates.
+  // // Always include current values so styles can be re-applied to any newly selected MOGRT clips.
   if (!elements.visualPropertyList) {
     return [];
   }
@@ -1134,12 +1158,6 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
       value = Number(control.value);
     } else {
       value = control.value;
-    }
-
-    const currentComparable = canonicalizeVisualValue(controlKind, valueType, value);
-    const originalComparable = visualOriginalValuesByPath.get(path);
-    if (typeof originalComparable === "string" && currentComparable === originalComparable) {
-      return;
     }
 
     changes.push({

@@ -2452,6 +2452,56 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   return false;
 }
 
+function subcreator_force_sequence_visual_refresh(sequence) {
+  // // Force Program Monitor redraw by nudging and restoring the playhead position.
+  if (!sequence || typeof sequence.getPlayerPosition !== "function" || typeof sequence.setPlayerPosition !== "function") {
+    return false;
+  }
+
+  try {
+    var currentPosition = sequence.getPlayerPosition();
+    var currentSeconds = subcreator_to_seconds(currentPosition);
+    if (isNaN(currentSeconds)) {
+      return false;
+    }
+
+    var currentTicks = "";
+    if (currentPosition && typeof currentPosition.ticks !== "undefined") {
+      currentTicks = String(currentPosition.ticks || "");
+    }
+
+    var sequenceEndSeconds = subcreator_to_seconds(sequence.end);
+    var nudgeSeconds = 1 / 30;
+    var targetSeconds = currentSeconds + nudgeSeconds;
+    if (!isNaN(sequenceEndSeconds) && targetSeconds > sequenceEndSeconds) {
+      targetSeconds = Math.max(0, currentSeconds - nudgeSeconds);
+    }
+
+    var nudgeTime = new Time();
+    nudgeTime.seconds = targetSeconds;
+    sequence.setPlayerPosition(String(nudgeTime.ticks));
+
+    if (currentTicks) {
+      sequence.setPlayerPosition(currentTicks);
+      return true;
+    }
+
+    var restoreTime = new Time();
+    restoreTime.seconds = currentSeconds;
+    sequence.setPlayerPosition(String(restoreTime.ticks));
+    return true;
+  } catch (refreshError) {}
+
+  try {
+    if (app && typeof app.refresh === "function") {
+      app.refresh();
+      return true;
+    }
+  } catch (appRefreshError) {}
+
+  return false;
+}
+
 function subcreator_list_selected_mogrt_properties() {
   // // Return editable visual properties from selected MOGRT clips in active sequence.
   try {
@@ -2713,6 +2763,9 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         }
       }
     }
+
+    var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);
+    debugLines.push("ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
 
     return subcreator_ok({
       selectedCount: mogrtItems.length,

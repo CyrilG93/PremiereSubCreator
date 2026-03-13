@@ -39,6 +39,7 @@ It supports:
 - Visual editor now reapplies current style values even when unchanged locally, so the same settings can be pushed to newly selected MOGRT clips.
 - After visual apply, Sub Creator nudges/restores the playhead to force an immediate Program Monitor refresh for color updates.
 - Slider fallback ranges now better distinguish `0..100` controls from true signed offset/position sliders.
+- Opacity-like controls (`opacity` / `opacité`) are now normalized to `0..100` in visual editor even when host metadata reports a wider range.
 
 ## Important product choices
 

@@ -1074,6 +1074,19 @@ function subcreator_visual_is_discrete_numeric_label(displayName) {
   );
 }
 
+function subcreator_visual_normalize_label_key(label) {
+  // // Normalize labels for robust matching across accents/typos/localized variants.
+  return String(label || "")
+    .toLowerCase()
+    .replace(/[àáâãäå]/g, "a")
+    .replace(/[èéêë]/g, "e")
+    .replace(/[ìíîï]/g, "i")
+    .replace(/[òóôõö]/g, "o")
+    .replace(/[ùúûü]/g, "u")
+    .replace(/ç/g, "c")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 function subcreator_visual_try_read_number_member(property, key) {
   // // Read numeric properties/methods from host controls when available.
   if (!property || !key) {
@@ -1098,13 +1111,20 @@ function subcreator_visual_try_read_number_member(property, key) {
 function subcreator_visual_guess_numeric_range(displayName, rawValue) {
   // // Guess ergonomic slider ranges when host metadata does not expose min/max.
   var key = String(displayName || "").toLowerCase();
+  var normalizedKey = subcreator_visual_normalize_label_key(displayName);
   var numericValue = subcreator_visual_to_number(rawValue);
 
   if (isNaN(numericValue)) {
     numericValue = 0;
   }
 
-  if (key.indexOf("opacity") !== -1 || key.indexOf("opacite") !== -1) {
+  if (
+    key.indexOf("opacity") !== -1 ||
+    key.indexOf("opacite") !== -1 ||
+    normalizedKey.indexOf("opacity") !== -1 ||
+    normalizedKey.indexOf("opacite") !== -1 ||
+    normalizedKey.indexOf("ocapite") !== -1
+  ) {
     return { minValue: 0, maxValue: 100, stepValue: 1 };
   }
 
@@ -1192,6 +1212,22 @@ function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
 
   if (isNaN(stepValue) || stepValue <= 0) {
     stepValue = guessed.stepValue;
+  }
+
+  var normalizedKey = subcreator_visual_normalize_label_key(displayName);
+  var isOpacityLike =
+    String(displayName || "").toLowerCase().indexOf("opacity") !== -1 ||
+    String(displayName || "").toLowerCase().indexOf("opacite") !== -1 ||
+    normalizedKey.indexOf("opacity") !== -1 ||
+    normalizedKey.indexOf("opacite") !== -1 ||
+    normalizedKey.indexOf("ocapite") !== -1;
+  if (isOpacityLike) {
+    // // Some MOGRT metadata reports oversized max values for opacity while UI is effectively clamped to 100.
+    minValue = 0;
+    maxValue = 100;
+    if (isNaN(stepValue) || stepValue <= 0) {
+      stepValue = 1;
+    }
   }
 
   if (maxValue <= minValue) {
@@ -1676,6 +1712,27 @@ function subcreator_visual_is_font_size_key(normalizedKey) {
   return normalizedKey === "fontsize" || normalizedKey === "mfontsize";
 }
 
+function subcreator_visual_is_generic_font_family_key(normalizedKey) {
+  // // Catch additional template-specific keys (for example `capPropFontEditValue`).
+  return (
+    normalizedKey.indexOf("font") !== -1 &&
+    normalizedKey.indexOf("style") === -1 &&
+    normalizedKey.indexOf("size") === -1 &&
+    normalizedKey.indexOf("runlength") === -1 &&
+    normalizedKey.indexOf("faux") === -1
+  );
+}
+
+function subcreator_visual_is_generic_font_style_key(normalizedKey) {
+  // // Catch additional template-specific style keys (for example `fontStyleEditValue`).
+  return normalizedKey.indexOf("font") !== -1 && normalizedKey.indexOf("style") !== -1;
+}
+
+function subcreator_visual_is_generic_font_size_key(normalizedKey) {
+  // // Catch additional template-specific size keys (for example `fontSizeEditValue`).
+  return normalizedKey.indexOf("font") !== -1 && normalizedKey.indexOf("size") !== -1;
+}
+
 function subcreator_visual_extract_text_style_from_value(rawValue) {
   // // Extract editable text style fields from text-document JSON payloads.
   var payload = rawValue;
@@ -1725,6 +1782,12 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
           result.fontFamily = familyValue;
         }
       }
+      if (!result.fontFamily && subcreator_visual_is_generic_font_family_key(normalizedKey) && typeof value === "string") {
+        var genericFamilyValue = subcreator_trim_string(String(value || ""));
+        if (genericFamilyValue && genericFamilyValue.length <= 120) {
+          result.fontFamily = genericFamilyValue;
+        }
+      }
 
       if (!result.fontStyle && subcreator_visual_is_font_style_key(normalizedKey)) {
         var styleValue = subcreator_trim_string(String(value || ""));
@@ -1732,11 +1795,23 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
           result.fontStyle = styleValue;
         }
       }
+      if (!result.fontStyle && subcreator_visual_is_generic_font_style_key(normalizedKey) && typeof value === "string") {
+        var genericStyleValue = subcreator_trim_string(String(value || ""));
+        if (genericStyleValue && genericStyleValue.length <= 120) {
+          result.fontStyle = genericStyleValue;
+        }
+      }
 
       if (isNaN(result.fontSize) && subcreator_visual_is_font_size_key(normalizedKey)) {
         var sizeValue = Number(value);
         if (!isNaN(sizeValue) && sizeValue > 0 && sizeValue < 2000) {
           result.fontSize = sizeValue;
+        }
+      }
+      if (isNaN(result.fontSize) && subcreator_visual_is_generic_font_size_key(normalizedKey)) {
+        var genericSizeValue = Number(value);
+        if (!isNaN(genericSizeValue) && genericSizeValue > 0 && genericSizeValue < 2000) {
+          result.fontSize = genericSizeValue;
         }
       }
 
@@ -2073,6 +2148,118 @@ function subcreator_collect_mogrt_visual_properties_recursive(
   }
 }
 
+function subcreator_visual_preview_debug_value(rawValue, maxLength) {
+  // // Build compact readable previews for debug logs.
+  var limit = Math.max(Number(maxLength || 280), 40);
+  var preview = "";
+  try {
+    if (typeof rawValue === "string") {
+      preview = rawValue;
+    } else {
+      preview = JSON.stringify(rawValue);
+    }
+  } catch (error) {
+    preview = String(rawValue);
+  }
+
+  preview = String(preview || "").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  if (preview.length > limit) {
+    preview = preview.substring(0, limit) + "...";
+  }
+  return preview;
+}
+
+function subcreator_collect_text_style_debug_candidates(propertyCollection, pathPrefix, groupPathPrefix, outList, maxItems) {
+  // // Gather text-style detection hints (including skipped properties) to debug template-specific payloads.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number" || !outList) {
+    return;
+  }
+
+  var activeSiblingGroupPath = String(groupPathPrefix || "");
+  var limit = Math.max(Number(maxItems || 20), 1);
+
+  for (var index = 0; index < propertyCollection.numItems; index += 1) {
+    if (outList.length >= limit) {
+      return;
+    }
+
+    var property = propertyCollection[index];
+    if (!property) {
+      continue;
+    }
+
+    var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
+    var displayName = subcreator_trim_string(String(property.displayName || ""));
+    if (!displayName) {
+      displayName = "Property " + currentPath;
+    }
+
+    var rawValue = undefined;
+    var hasValue = false;
+    if (typeof property.getValue === "function") {
+      try {
+        rawValue = property.getValue();
+        hasValue = true;
+      } catch (readError) {
+        hasValue = false;
+      }
+    }
+
+    var hasChildren = !!(
+      property.properties &&
+      typeof property.properties.numItems === "number" &&
+      property.properties.numItems > 0
+    );
+    if (subcreator_visual_is_guid_list_string(displayName)) {
+      displayName = "Group " + String(index + 1);
+    }
+
+    if (hasValue && subcreator_visual_is_guid_list_string(rawValue)) {
+      activeSiblingGroupPath = groupPathPrefix ? groupPathPrefix + " / " + displayName : displayName;
+      if (hasChildren) {
+        subcreator_collect_text_style_debug_candidates(
+          property.properties,
+          currentPath,
+          activeSiblingGroupPath,
+          outList,
+          limit
+        );
+      }
+      continue;
+    }
+
+    var resolvedGroupPath = activeSiblingGroupPath || groupPathPrefix || "General";
+    if (hasValue) {
+      var styleValues = subcreator_visual_extract_text_style_from_value(rawValue);
+      var textCandidate = subcreator_should_try_text_property(displayName, rawValue);
+      var nameKey = subcreator_visual_normalize_label_key(displayName);
+      var maybeTextByLabel =
+        nameKey.indexOf("text") !== -1 ||
+        nameKey.indexOf("title") !== -1 ||
+        nameKey.indexOf("name") !== -1 ||
+        nameKey.indexOf("source") !== -1;
+
+      if (styleValues || textCandidate || maybeTextByLabel) {
+        outList.push({
+          path: currentPath,
+          name: displayName,
+          group: resolvedGroupPath,
+          hasChildren: hasChildren,
+          hasSetter: typeof property.setValue === "function",
+          rawType: typeof rawValue,
+          rawPreview: subcreator_visual_preview_debug_value(rawValue, 260),
+          styleDetected: styleValues || null
+        });
+      }
+    }
+
+    if (hasChildren) {
+      var nextGroupPath = resolvedGroupPath ? resolvedGroupPath + " / " + displayName : displayName;
+      subcreator_collect_text_style_debug_candidates(property.properties, currentPath, nextGroupPath, outList, limit);
+    }
+  }
+}
+
 function subcreator_find_property_by_path(propertyCollection, pathValue) {
   // // Resolve nested property by index-path notation (`0.2.4`) from panel payload.
   var pathText = subcreator_trim_string(String(pathValue || ""));
@@ -2183,10 +2370,31 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       if (styleKey === "fontFamily" && subcreator_visual_is_font_family_key(normalizedKey)) {
         node[key] = String(styleValue);
         updated = true;
+      } else if (
+        styleKey === "fontFamily" &&
+        subcreator_visual_is_generic_font_family_key(normalizedKey) &&
+        typeof value === "string"
+      ) {
+        node[key] = String(styleValue);
+        updated = true;
       } else if (styleKey === "fontStyle" && subcreator_visual_is_font_style_key(normalizedKey)) {
         node[key] = String(styleValue);
         updated = true;
+      } else if (
+        styleKey === "fontStyle" &&
+        subcreator_visual_is_generic_font_style_key(normalizedKey) &&
+        typeof value === "string"
+      ) {
+        node[key] = String(styleValue);
+        updated = true;
       } else if (styleKey === "fontSize" && subcreator_visual_is_font_size_key(normalizedKey)) {
+        node[key] = Number(styleValue);
+        updated = true;
+      } else if (
+        styleKey === "fontSize" &&
+        subcreator_visual_is_generic_font_size_key(normalizedKey) &&
+        !isNaN(Number(value))
+      ) {
         node[key] = Number(styleValue);
         updated = true;
       }
@@ -2997,7 +3205,8 @@ function subcreator_list_selected_mogrt_properties() {
       vectorCount: 0,
       colorCount: 0,
       selectCount: 0,
-      sample: []
+      sample: [],
+      textStyleCandidates: []
     };
     for (var propertyIndex = 0; propertyIndex < properties.length; propertyIndex += 1) {
       var item = properties[propertyIndex];
@@ -3050,6 +3259,10 @@ function subcreator_list_selected_mogrt_properties() {
 
         debug.sample.push(sampleEntry);
       }
+    }
+
+    if (firstComponent && firstComponent.properties) {
+      subcreator_collect_text_style_debug_candidates(firstComponent.properties, "", "", debug.textStyleCandidates, 20);
     }
 
     return subcreator_ok({

@@ -624,7 +624,12 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
       };
     }
 
-    // // Use low 24 bits as RGB to support packed integer color payloads.
+    // // Ignore oversized numeric payloads (often non-color packed structs with precision loss).
+    if (numericColor > 4294967295) {
+      return null;
+    }
+
+    // // Use low 24 bits as RGB for compact packed color integers.
     var packed = numericColor % 16777216;
     var redPacked = Math.floor(packed / 65536) % 256;
     var greenPacked = Math.floor(packed / 256) % 256;
@@ -658,7 +663,11 @@ function subcreator_visual_extract_rgb_from_value(rawValue) {
     }
 
     if (/^\d+$/.test(text)) {
-      return subcreator_visual_extract_rgb_from_value(Number(text));
+      var asNumber = Number(text);
+      if (!isNaN(asNumber) && asNumber <= 4294967295) {
+        return subcreator_visual_extract_rgb_from_value(asNumber);
+      }
+      return null;
     }
 
     if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
@@ -719,17 +728,66 @@ function subcreator_visual_extract_color_hex(rawValue) {
 
 function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue) {
   // // Read color directly from color-capable APIs when available to avoid numeric payload ambiguity.
+  var fromFallback = subcreator_visual_extract_color_hex(rawFallbackValue);
+
   if (property && typeof property.getColorValue === "function") {
     try {
       var colorValue = property.getColorValue();
       var fromColorMethod = subcreator_visual_extract_color_hex(colorValue);
       if (fromColorMethod) {
+        if (fromColorMethod === "#000000" && fromFallback && fromFallback !== "#000000") {
+          return fromFallback;
+        }
         return fromColorMethod;
       }
     } catch (colorReadError) {}
   }
 
-  return subcreator_visual_extract_color_hex(rawFallbackValue);
+  return fromFallback;
+}
+
+function subcreator_visual_is_likely_color_payload(rawValue) {
+  // // Detect payload shapes that genuinely look like color values.
+  if (rawValue === undefined || rawValue === null) {
+    return false;
+  }
+
+  if (typeof rawValue === "string") {
+    var text = subcreator_trim_string(rawValue);
+    if (/^#[0-9a-f]{3,6}$/i.test(text)) {
+      return true;
+    }
+    if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
+      var parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch (parseError) {
+        parsed = null;
+      }
+      if (parsed) {
+        return subcreator_visual_is_likely_color_payload(parsed);
+      }
+    }
+    return false;
+  }
+
+  if (typeof rawValue === "object") {
+    if (typeof rawValue.length === "number" && rawValue.length >= 3) {
+      return true;
+    }
+    if (
+      typeof rawValue.red !== "undefined" ||
+      typeof rawValue.green !== "undefined" ||
+      typeof rawValue.blue !== "undefined" ||
+      typeof rawValue.r !== "undefined" ||
+      typeof rawValue.g !== "undefined" ||
+      typeof rawValue.b !== "undefined"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function subcreator_visual_is_color_label(displayName) {
@@ -1062,91 +1120,165 @@ function subcreator_visual_detect_vector_mode(displayName, groupPath) {
   return "raw";
 }
 
-function subcreator_visual_vector_to_panel_units(vectorValues, vectorMode, sequenceSize) {
-  // // Convert host-internal vector units into panel-friendly display values.
-  if (!vectorValues || !vectorValues.length) {
-    return [];
+function subcreator_visual_score_vector_candidate(panelValues, minPreferred, maxPreferred, idealValue) {
+  // // Score candidate panel-unit vectors and keep values in practical edit ranges.
+  if (!panelValues || !panelValues.length) {
+    return 999999;
   }
 
-  var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
-  var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
-  var converted = [];
-
-  for (var index = 0; index < vectorValues.length; index += 1) {
-    var numericValue = Number(vectorValues[index]);
-    if (isNaN(numericValue)) {
-      converted.push(0);
+  var score = 0;
+  for (var index = 0; index < panelValues.length; index += 1) {
+    var value = Number(panelValues[index]);
+    if (isNaN(value)) {
+      score += 10000;
       continue;
     }
 
-    if (vectorMode === "offset_scaled") {
-      if (index === 0) {
-        converted.push(numericValue / width);
-      } else if (index === 1) {
-        converted.push(numericValue / height);
-      } else {
-        converted.push(numericValue);
-      }
-      continue;
+    var absValue = Math.abs(value);
+    if (absValue > maxPreferred * 20) {
+      score += 500;
+    } else if (absValue > maxPreferred * 3) {
+      score += 60;
+    } else if (absValue > maxPreferred) {
+      score += 20;
     }
 
-    if (vectorMode === "size_percent") {
-      if (index === 0) {
-        converted.push(numericValue * width);
-      } else if (index === 1) {
-        converted.push(numericValue * height);
-      } else {
-        converted.push(numericValue);
-      }
-      continue;
+    if (absValue < minPreferred) {
+      score += 15;
     }
 
-    converted.push(numericValue);
+    score += Math.abs(absValue - idealValue) / Math.max(idealValue, 1) * 0.5;
   }
 
-  return converted;
+  return score;
 }
 
-function subcreator_visual_vector_to_host_units(vectorValues, vectorMode, sequenceSize) {
-  // // Convert panel vector values back to host internal units before setValue.
+function subcreator_visual_apply_vector_scale(vectorValues, scales) {
+  // // Apply per-component scalar conversion.
+  var output = [];
+  for (var index = 0; index < vectorValues.length; index += 1) {
+    var value = Number(vectorValues[index]);
+    var scale = Number(scales[index]);
+    if (isNaN(value) || isNaN(scale)) {
+      output.push(0);
+      continue;
+    }
+    output.push(value * scale);
+  }
+  return output;
+}
+
+function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorValues, sequenceSize) {
+  // // Infer best per-axis conversion scales for vector values (offset/size/raw).
+  var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
+  var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
+  var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
+
+  var candidates = [];
+  if (vectorMode === "offset_scaled") {
+    candidates.push({ id: "offset_raw", scales: [1, 1, 1, 1], minPreferred: 0.05, maxPreferred: 200, idealValue: 35 });
+    candidates.push({
+      id: "offset_div_axis",
+      scales: [1 / width, 1 / height, 1, 1],
+      minPreferred: 0.05,
+      maxPreferred: 200,
+      idealValue: 35
+    });
+    candidates.push({
+      id: "offset_mul_axis",
+      scales: [width, height, 1, 1],
+      minPreferred: 0.05,
+      maxPreferred: 200,
+      idealValue: 35
+    });
+  } else if (vectorMode === "size_percent") {
+    candidates.push({ id: "size_raw", scales: [1, 1, 1, 1], minPreferred: 1, maxPreferred: 400, idealValue: 100 });
+    candidates.push({
+      id: "size_axis",
+      scales: [width, height, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+    candidates.push({
+      id: "size_axis_x2",
+      scales: [width * 2, height * 2, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+    candidates.push({
+      id: "size_percent_100",
+      scales: [100, 100, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+    candidates.push({
+      id: "size_area",
+      scales: [width * height, width * height, 1, 1],
+      minPreferred: 1,
+      maxPreferred: 400,
+      idealValue: 100
+    });
+  } else {
+    candidates.push({ id: "raw", scales: [1, 1, 1, 1], minPreferred: 0.05, maxPreferred: 5000, idealValue: 50 });
+  }
+
+  var bestCandidate = candidates[0];
+  var bestScore = 999999;
+
+  for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    var candidate = candidates[candidateIndex];
+    var projected = subcreator_visual_apply_vector_scale(vectorValues, candidate.scales);
+    var score = subcreator_visual_score_vector_candidate(
+      projected,
+      candidate.minPreferred,
+      candidate.maxPreferred,
+      candidate.idealValue
+    );
+    if (score < bestScore) {
+      bestScore = score;
+      bestCandidate = candidate;
+    }
+  }
+
+  var finalScales = [];
+  for (var valueIndex = 0; valueIndex < vectorValues.length; valueIndex += 1) {
+    finalScales.push(Number(bestCandidate.scales[valueIndex] || 1));
+  }
+
+  return {
+    mode: vectorMode,
+    scale: finalScales,
+    candidateId: bestCandidate.id,
+    score: bestScore
+  };
+}
+
+function subcreator_visual_vector_to_panel_units(vectorValues, vectorScale) {
+  // // Convert host vector values into panel units using inferred scale.
   if (!vectorValues || !vectorValues.length) {
     return [];
   }
 
-  var width = Math.max(Number(sequenceSize && sequenceSize.width) || 1920, 1);
-  var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
-  var converted = [];
+  return subcreator_visual_apply_vector_scale(vectorValues, vectorScale || []);
+}
 
+function subcreator_visual_vector_to_host_units(vectorValues, vectorScale) {
+  // // Convert panel vector values back to host units using inverse inferred scale.
+  if (!vectorValues || !vectorValues.length) {
+    return [];
+  }
+  var converted = [];
   for (var index = 0; index < vectorValues.length; index += 1) {
     var numericValue = Number(vectorValues[index]);
-    if (isNaN(numericValue)) {
+    var scale = Number(vectorScale && vectorScale[index] ? vectorScale[index] : 1);
+    if (isNaN(numericValue) || isNaN(scale) || scale === 0) {
       converted.push(0);
       continue;
     }
-
-    if (vectorMode === "offset_scaled") {
-      if (index === 0) {
-        converted.push(numericValue * width);
-      } else if (index === 1) {
-        converted.push(numericValue * height);
-      } else {
-        converted.push(numericValue);
-      }
-      continue;
-    }
-
-    if (vectorMode === "size_percent") {
-      if (index === 0) {
-        converted.push(numericValue / width);
-      } else if (index === 1) {
-        converted.push(numericValue / height);
-      } else {
-        converted.push(numericValue);
-      }
-      continue;
-    }
-
-    converted.push(numericValue);
+    converted.push(numericValue / scale);
   }
 
   return converted;
@@ -1203,7 +1335,8 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
     colorHex &&
     !colorBlocked &&
     (colorCandidate ||
-      (subcreator_visual_group_suggests_color(groupPath) && !subcreator_visual_is_discrete_numeric_label(displayName)) ||
+      (subcreator_visual_group_suggests_color(groupPath) && subcreator_visual_is_likely_color_payload(rawValue)) ||
+      (property && (typeof property.getColorValue === "function" || typeof property.setColorValue === "function")) ||
       key.indexOf("rgb") !== -1)
   );
   var vectorValue = subcreator_visual_extract_numeric_vector(rawValue);
@@ -1275,16 +1408,28 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   }
 
   if (vectorValue) {
-    var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
-    var displayVector = subcreator_visual_vector_to_panel_units(vectorValue, vectorMode, sequenceSize);
+    var vectorMeta = subcreator_visual_choose_vector_scale(displayName, groupPath, vectorValue, sequenceSize);
+    var displayVector = subcreator_visual_vector_to_panel_units(vectorValue, vectorMeta.scale);
     return {
       path: currentPath,
       displayName: displayName,
       groupPath: groupPath || "General",
       valueType: "json",
       controlKind: "vector",
-      value: JSON.stringify(displayVector)
+      value: JSON.stringify(displayVector),
+      vectorScale: vectorMeta.scale,
+      vectorMode: vectorMeta.mode,
+      debugVector: {
+        mode: vectorMeta.mode,
+        candidateId: vectorMeta.candidateId,
+        score: vectorMeta.score,
+        raw: vectorValue,
+        scale: vectorMeta.scale,
+        panel: displayVector,
+        sequenceWidth: sequenceSize.width,
+        sequenceHeight: sequenceSize.height
+      }
     };
   }
 
@@ -1563,6 +1708,18 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     }
   }
 
+  var colorApiValue = null;
+  var hasColorApiValue = false;
+  if (typeof property.getColorValue === "function") {
+    try {
+      colorApiValue = property.getColorValue();
+      hasColorApiValue = true;
+    } catch (getColorError) {
+      hasColorApiValue = false;
+      colorApiValue = null;
+    }
+  }
+
   if (rawValue && typeof rawValue === "object") {
     try {
       var objectCopy = JSON.parse(JSON.stringify(rawValue));
@@ -1590,12 +1747,61 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     } catch (jsonError) {}
   }
 
-  try {
-    if (typeof property.setColorValue === "function") {
-      property.setColorValue(rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1);
-      return true;
+  function trySetColorByApiShape(referenceValue) {
+    if (typeof property.setColorValue !== "function") {
+      return false;
     }
-  } catch (setColorErrorUnit) {}
+
+    if (!referenceValue) {
+      return false;
+    }
+
+    try {
+      if (typeof referenceValue.length === "number" && referenceValue.length >= 3) {
+        var v0 = Number(referenceValue[0]);
+        var v1 = Number(referenceValue[1]);
+        var v2 = Number(referenceValue[2]);
+        var v3 = Number(referenceValue[3]);
+        var useUnitScale = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
+        var alphaUnit = !isNaN(v3) && v3 <= 1 ? v3 : 1;
+        var alpha255 = !isNaN(v3) && v3 > 1 ? v3 : 255;
+
+        if (useUnitScale) {
+          property.setColorValue([rgb.red / 255, rgb.green / 255, rgb.blue / 255, alphaUnit], true);
+        } else {
+          property.setColorValue([rgb.red, rgb.green, rgb.blue, alpha255], true);
+        }
+        return true;
+      }
+    } catch (arrayShapeError) {}
+
+    try {
+      if (
+        typeof referenceValue.red !== "undefined" ||
+        typeof referenceValue.green !== "undefined" ||
+        typeof referenceValue.blue !== "undefined"
+      ) {
+        var red = Number(referenceValue.red);
+        var green = Number(referenceValue.green);
+        var blue = Number(referenceValue.blue);
+        var alpha = Number(referenceValue.alpha);
+        var objectUsesUnit = !isNaN(red) && !isNaN(green) && !isNaN(blue) && red <= 1 && green <= 1 && blue <= 1;
+
+        if (objectUsesUnit) {
+          property.setColorValue({ red: rgb.red / 255, green: rgb.green / 255, blue: rgb.blue / 255, alpha: isNaN(alpha) ? 1 : alpha }, true);
+        } else {
+          property.setColorValue({ red: rgb.red, green: rgb.green, blue: rgb.blue, alpha: isNaN(alpha) ? 255 : alpha }, true);
+        }
+        return true;
+      }
+    } catch (objectShapeError) {}
+
+    return false;
+  }
+
+  if (hasColorApiValue && trySetColorByApiShape(colorApiValue)) {
+    return true;
+  }
 
   try {
     if (typeof property.setColorValue === "function") {
@@ -1603,6 +1809,13 @@ function subcreator_try_set_mogrt_color_property(property, value) {
       return true;
     }
   } catch (setColorError255) {}
+
+  try {
+    if (typeof property.setColorValue === "function") {
+      property.setColorValue(rgb.red / 255, rgb.green / 255, rgb.blue / 255, 1);
+      return true;
+    }
+  } catch (setColorErrorUnit) {}
 
   try {
     if (typeof property.setColorValue === "function") {
@@ -1684,6 +1897,7 @@ function subcreator_list_selected_mogrt_properties() {
 
     var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
     var properties = [];
+    var sequenceSize = subcreator_visual_read_sequence_dimensions();
     subcreator_collect_mogrt_visual_properties_recursive(
       firstComponent ? firstComponent.properties : null,
       "",
@@ -1691,10 +1905,48 @@ function subcreator_list_selected_mogrt_properties() {
       properties
     );
 
+    var debug = {
+      sequenceWidth: sequenceSize.width,
+      sequenceHeight: sequenceSize.height,
+      vectorCount: 0,
+      colorCount: 0,
+      selectCount: 0,
+      sample: []
+    };
+    for (var propertyIndex = 0; propertyIndex < properties.length; propertyIndex += 1) {
+      var item = properties[propertyIndex];
+      if (!item) {
+        continue;
+      }
+      if (item.controlKind === "vector") {
+        debug.vectorCount += 1;
+      } else if (item.controlKind === "color") {
+        debug.colorCount += 1;
+      } else if (item.controlKind === "select") {
+        debug.selectCount += 1;
+      }
+
+      if (
+        debug.sample.length < 20 &&
+        (item.controlKind === "vector" || item.controlKind === "color" || item.controlKind === "select")
+      ) {
+        debug.sample.push({
+          path: item.path,
+          name: item.displayName,
+          group: item.groupPath,
+          kind: item.controlKind,
+          value: item.value,
+          vectorScale: item.vectorScale || null,
+          vectorMode: item.vectorMode || null
+        });
+      }
+    }
+
     return subcreator_ok({
       selectedCount: mogrtItems.length,
       editableCount: properties.length,
-      properties: properties
+      properties: properties,
+      debug: debug
     });
   } catch (error) {
     return subcreator_error(error);
@@ -1731,6 +1983,9 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
     var updatedCount = 0;
     var failedCount = 0;
+    var debugLines = [];
+    var applySequenceSize = subcreator_visual_read_sequence_dimensions();
+    debugLines.push("sequence=" + applySequenceSize.width + "x" + applySequenceSize.height);
 
     for (var clipIndex = 0; clipIndex < mogrtItems.length; clipIndex += 1) {
       var clip = mogrtItems[clipIndex];
@@ -1746,6 +2001,10 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         var valueType = subcreator_trim_string(String(change.valueType || "string")).toLowerCase();
         var controlKind = subcreator_trim_string(String(change.controlKind || "")).toLowerCase();
         var value = change.value;
+        var vectorScale = null;
+        if (change.vectorScale && Object.prototype.toString.call(change.vectorScale) === "[object Array]") {
+          vectorScale = change.vectorScale;
+        }
         if (!path) {
           failedCount += 1;
           continue;
@@ -1758,6 +2017,25 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         }
 
         var applied = false;
+        var displayName = subcreator_trim_string(String(property.displayName || ""));
+        if (
+          controlKind === "vector" ||
+          controlKind === "color" ||
+          controlKind === "select" ||
+          String(displayName || "").toLowerCase().indexOf("size") !== -1
+        ) {
+          debugLines.push(
+            "change path=" +
+              path +
+              " name=" +
+              displayName +
+              " kind=" +
+              controlKind +
+              " in=" +
+              String(value) +
+              (vectorScale ? " scale=" + String(vectorScale) : "")
+          );
+        }
 
         if (controlKind === "text") {
           try {
@@ -1776,10 +2054,9 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
                 sourceVector.push(Number(parsedVector[vectorIndex]));
               }
 
-              var sequenceSize = subcreator_visual_read_sequence_dimensions();
-              var vectorMode = subcreator_visual_detect_vector_mode(property.displayName || "", "");
-              var hostVector = subcreator_visual_vector_to_host_units(sourceVector, vectorMode, sequenceSize);
+              var hostVector = subcreator_visual_vector_to_host_units(sourceVector, vectorScale || [1, 1, 1, 1]);
               property.setValue(hostVector, true);
+              debugLines.push("vector out=" + String(hostVector));
               applied = true;
             }
           } catch (vectorError) {}
@@ -1796,8 +2073,30 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         }
 
         if (applied) {
+          if (controlKind === "color") {
+            try {
+              var afterColorValue = typeof property.getColorValue === "function" ? property.getColorValue() : "<no getColorValue>";
+              var afterRawValue = typeof property.getValue === "function" ? property.getValue() : "<no getValue>";
+              var afterColorText = "";
+              var afterRawText = "";
+              try {
+                afterColorText = typeof afterColorValue === "string" ? afterColorValue : JSON.stringify(afterColorValue);
+              } catch (afterColorSerializeError) {
+                afterColorText = String(afterColorValue);
+              }
+              try {
+                afterRawText = typeof afterRawValue === "string" ? afterRawValue : JSON.stringify(afterRawValue);
+              } catch (afterRawSerializeError) {
+                afterRawText = String(afterRawValue);
+              }
+              debugLines.push("color readback color=" + afterColorText + " raw=" + afterRawText);
+            } catch (colorReadbackError) {
+              debugLines.push("color readback failed: " + String(colorReadbackError));
+            }
+          }
           updatedCount += 1;
         } else {
+          debugLines.push("failed path=" + path + " name=" + displayName + " kind=" + controlKind);
           failedCount += 1;
         }
       }
@@ -1806,7 +2105,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
     return subcreator_ok({
       selectedCount: mogrtItems.length,
       updatedCount: updatedCount,
-      failedCount: failedCount
+      failedCount: failedCount,
+      debug: debugLines
     });
   } catch (error) {
     return subcreator_error(error);

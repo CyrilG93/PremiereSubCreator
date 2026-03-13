@@ -44,6 +44,8 @@ interface HostVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   options?: Array<{ value: number | string; label: string }>;
+  vectorScale?: number[];
+  vectorMode?: string;
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -91,6 +93,7 @@ const elements = {
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
+  copyLogsButton: document.querySelector<HTMLButtonElement>("#copyLogsButton"),
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   pingButton: document.querySelector<HTMLButtonElement>("#pingButton"),
@@ -876,6 +879,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hiddenInput.dataset.visualType = property.valueType;
         hiddenInput.dataset.visualControlKind = property.controlKind;
         hiddenInput.dataset.visualRole = "value";
+        if (Array.isArray(property.vectorScale) && property.vectorScale.length > 0) {
+          hiddenInput.dataset.visualVectorScale = JSON.stringify(property.vectorScale);
+        }
         hiddenInput.value = JSON.stringify(vectorValues);
 
         const componentInputs: HTMLInputElement[] = [];
@@ -951,6 +957,7 @@ type VisualPropertyChange = {
   path: string;
   valueType: HostVisualProperty["valueType"];
   controlKind: HostVisualProperty["controlKind"];
+  vectorScale?: number[];
   value: string | number | boolean;
 };
 
@@ -969,6 +976,17 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
     const valueType = (String(control.dataset.visualType || "string") as HostVisualProperty["valueType"]) || "string";
     const controlKind =
       (String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"]) || "string";
+    const vectorScaleRaw = String(control.dataset.visualVectorScale || "");
+    const vectorScale = vectorScaleRaw
+      ? (() => {
+          try {
+            const parsed = JSON.parse(vectorScaleRaw) as unknown;
+            return Array.isArray(parsed) ? parsed.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry)) : undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
     if (!path) {
       return;
     }
@@ -992,6 +1010,7 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
       path,
       valueType,
       controlKind,
+      vectorScale,
       value
     });
   });
@@ -999,10 +1018,13 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
   return changes;
 }
 
-async function loadVisualPropertiesFromSelection(): Promise<void> {
+async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
   const result = await readSelectedMogrtVisualProperties();
   renderVisualPropertyEditor(result.properties);
+  if (emitHostLog) {
+    setLog(`${translate("log.hostResult")}\n${JSON.stringify(result, null, 2)}`);
+  }
   if (result.properties.length > 0) {
     updateVisualSelectionSummary(
       translateTemplate("visual.selectionSummary", {
@@ -1027,6 +1049,28 @@ async function applyVisualChangesToSelection(): Promise<void> {
   const response = await applyVisualPropertiesToSelectedMogrts(changes);
   setLog(`${translate("log.visualApplyDone")}\n${JSON.stringify(response, null, 2)}`);
   await loadVisualPropertiesFromSelection();
+}
+
+async function copyLogsToClipboard(): Promise<void> {
+  // // Copy debug log output for quick troubleshooting sharing.
+  const text = String(elements.logOutput?.textContent || "");
+  if (!text) {
+    return;
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.appendChild(helper);
+  helper.select();
+  document.execCommand("copy");
+  helper.remove();
 }
 
 async function loadMogrtCatalog(): Promise<void> {
@@ -1392,7 +1436,7 @@ async function initialize(): Promise<void> {
 
   elements.visualReadButton?.addEventListener("click", async () => {
     try {
-      await loadVisualPropertiesFromSelection();
+      await loadVisualPropertiesFromSelection(true);
     } catch (error) {
       setLog(String(error), true);
     }
@@ -1402,6 +1446,15 @@ async function initialize(): Promise<void> {
     try {
       await applyVisualChangesToSelection();
       persistPanelState();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
+  elements.copyLogsButton?.addEventListener("click", async () => {
+    try {
+      await copyLogsToClipboard();
+      setLog(`${translate("log.ready")}\n${translate("log.logsCopied")}`);
     } catch (error) {
       setLog(String(error), true);
     }

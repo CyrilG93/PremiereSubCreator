@@ -45,6 +45,8 @@ export interface SelectedMogrtVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   options?: Array<{ value: number | string; label: string }>;
+  vectorScale?: number[];
+  vectorMode?: string;
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -55,12 +57,14 @@ export interface SelectedMogrtVisualPropertyList {
   selectedCount: number;
   editableCount: number;
   properties: SelectedMogrtVisualProperty[];
+  debug?: unknown;
 }
 
 export interface ApplyVisualPropertiesResult {
   selectedCount: number;
   updatedCount: number;
   failedCount: number;
+  debug?: string[];
 }
 
 interface CepNodeModules {
@@ -964,6 +968,10 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
             })
             .filter((option): option is { value: number | string; label: string } => Boolean(option))
         : undefined,
+      vectorScale: Array.isArray(item.vectorScale)
+        ? item.vectorScale.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry))
+        : undefined,
+      vectorMode: typeof item.vectorMode === "string" ? item.vectorMode : undefined,
       minValue: Number.isFinite(Number(item.minValue)) ? Number(item.minValue) : undefined,
       maxValue: Number.isFinite(Number(item.maxValue)) ? Number(item.maxValue) : undefined,
       stepValue: Number.isFinite(Number(item.stepValue)) ? Number(item.stepValue) : undefined,
@@ -974,7 +982,8 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
   return {
     selectedCount: Number(payload.selectedCount || 0),
     editableCount: Number(payload.editableCount || properties.length),
-    properties
+    properties,
+    debug: payload.debug
   };
 }
 
@@ -993,6 +1002,7 @@ export async function applyVisualPropertiesToSelectedMogrts(
     path: string;
     valueType: SelectedMogrtVisualProperty["valueType"];
     controlKind: SelectedMogrtVisualProperty["controlKind"];
+    vectorScale?: number[];
     value: string | number | boolean;
   }>
 ): Promise<ApplyVisualPropertiesResult> {
@@ -1008,7 +1018,8 @@ export async function applyVisualPropertiesToSelectedMogrts(
   return {
     selectedCount: Number(response.data?.selectedCount || 0),
     updatedCount: Number(response.data?.updatedCount || 0),
-    failedCount: Number(response.data?.failedCount || 0)
+    failedCount: Number(response.data?.failedCount || 0),
+    debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined
   };
 }
 

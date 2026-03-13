@@ -24,6 +24,7 @@ It supports:
 - Visual editor apply sends only modified controls, preserving untouched MOGRT parameters.
 - Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 - Known menu-like controls (for example alignment/paragraph/based-on) are rendered as dropdowns when detected.
+- Visual editor includes richer host debug payloads and a `Copy logs` button for troubleshooting.
 
 ## Important product choices
 

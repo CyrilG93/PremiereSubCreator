@@ -611,10 +611,19 @@ function subcreator_visual_extract_rgb_triplet(rawRed, rawGreen, rawBlue) {
   };
 }
 
-function subcreator_visual_is_alpha_first_color_array(rawArray) {
-  // // Detect color arrays shaped like [alpha, red, green, blue] returned by some MOGRT controls.
-  if (!rawArray || typeof rawArray.length !== "number" || rawArray.length < 4) {
-    return false;
+function subcreator_visual_detect_color_array_layout(rawArray) {
+  // // Detect whether a color array uses RGB, RGBA, or ARGB channel order.
+  if (!rawArray || typeof rawArray.length !== "number") {
+    return "unknown";
+  }
+
+  var size = Number(rawArray.length || 0);
+  if (size < 3) {
+    return "unknown";
+  }
+
+  if (size === 3) {
+    return "rgb";
   }
 
   var alpha = subcreator_visual_to_number(rawArray[0]);
@@ -623,22 +632,44 @@ function subcreator_visual_is_alpha_first_color_array(rawArray) {
   var blue = subcreator_visual_to_number(rawArray[3]);
 
   if (isNaN(alpha) || isNaN(red) || isNaN(green) || isNaN(blue)) {
-    return false;
+    return "unknown";
   }
 
-  if (alpha < 0 || alpha > 1.0001) {
-    return false;
+  var firstIsUnitAlpha = alpha >= 0 && alpha <= 1.0001 && (red > 1 || green > 1 || blue > 1);
+  if (firstIsUnitAlpha) {
+    return "argb";
   }
 
-  if (red > 1 || green > 1 || blue > 1) {
-    return true;
+  var lastIsUnitAlpha = blue >= 0 && blue <= 1.0001 && (alpha > 1 || red > 1 || green > 1);
+  if (lastIsUnitAlpha) {
+    return "rgba";
   }
 
-  if (red === 0 && green === 0 && blue === 0) {
-    return true;
+  var firstLooksLikeAlphaMarker = alpha === 255 || alpha === 1 || alpha === 0;
+  var lastLooksLikeAlphaMarker = blue === 255 || blue === 1 || blue === 0;
+
+  if (firstLooksLikeAlphaMarker && !lastLooksLikeAlphaMarker) {
+    return "argb";
   }
 
-  return false;
+  if (lastLooksLikeAlphaMarker && !firstLooksLikeAlphaMarker) {
+    return "rgba";
+  }
+
+  if (alpha === 255 || alpha === 1) {
+    return "argb";
+  }
+
+  if (blue === 255 || blue === 1) {
+    return "rgba";
+  }
+
+  return "rgb";
+}
+
+function subcreator_visual_is_alpha_first_color_array(rawArray) {
+  // // Backward-compatible helper for existing call sites that need ARGB detection.
+  return subcreator_visual_detect_color_array_layout(rawArray) === "argb";
 }
 
 function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
@@ -752,10 +783,16 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
 
   if (typeof rawValue === "object") {
     if (typeof rawValue.length === "number" && rawValue.length >= 3) {
-      if (subcreator_visual_is_alpha_first_color_array(rawValue)) {
+      var arrayLayout = subcreator_visual_detect_color_array_layout(rawValue);
+      if (arrayLayout === "argb") {
         var fromAlphaFirstArray = subcreator_visual_extract_rgb_triplet(rawValue[1], rawValue[2], rawValue[3]);
         if (fromAlphaFirstArray) {
           return fromAlphaFirstArray;
+        }
+      } else if (arrayLayout === "rgba") {
+        var fromRgbaArray = subcreator_visual_extract_rgb_triplet(rawValue[0], rawValue[1], rawValue[2]);
+        if (fromRgbaArray) {
+          return fromRgbaArray;
         }
       }
 
@@ -1924,86 +1961,56 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var v1 = Number(referenceValue[1]);
         var v2 = Number(referenceValue[2]);
         var v3 = Number(referenceValue[3]);
-        var alphaFirstLayout = subcreator_visual_is_alpha_first_color_array(referenceValue);
-        var useUnitScale = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
-        var alphaUnit = !isNaN(v3) && v3 <= 1 ? v3 : 1;
-        var alpha255 = !isNaN(v3) && v3 > 1 ? v3 : 255;
+        var arrayLayout = subcreator_visual_detect_color_array_layout(referenceValue);
+        var hasFourChannels = typeof referenceValue.length === "number" && referenceValue.length >= 4;
+        var channelsUseUnit = false;
+        var alphaSource = 1;
 
-        if (alphaFirstLayout) {
-          var firstAlpha = !isNaN(v0) && v0 >= 0 ? v0 : 1;
-          var channelsAreUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
-          var alphaFirstValue = channelsAreUnit ? (firstAlpha <= 1 ? firstAlpha : firstAlpha / 255) : firstAlpha <= 1 ? firstAlpha : 255;
-          var alphaFirstRed = channelsAreUnit ? candidateRgb.red / 255 : candidateRgb.red;
-          var alphaFirstGreen = channelsAreUnit ? candidateRgb.green / 255 : candidateRgb.green;
-          var alphaFirstBlue = channelsAreUnit ? candidateRgb.blue / 255 : candidateRgb.blue;
-          var alphaFirstPayload = [alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue];
-
-          try {
-            property.setColorValue(alphaFirstPayload, true);
-            return true;
-          } catch (alphaFirstArrayUiError) {}
-
-          try {
-            property.setColorValue(alphaFirstPayload);
-            return true;
-          } catch (alphaFirstArrayError) {}
-
-          if (channelsAreUnit) {
-            try {
-              property.setColorValue(alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue);
-              return true;
-            } catch (alphaFirstPositionalUnitError) {}
-
-            try {
-              property.setColorValue(alphaFirstRed, alphaFirstGreen, alphaFirstBlue, alphaFirstValue);
-              return true;
-            } catch (rgbaPositionalUnitError) {}
-          } else {
-            try {
-              property.setColorValue(alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue);
-              return true;
-            } catch (alphaFirstPositionalError) {}
-
-            try {
-              property.setColorValue(alphaFirstRed, alphaFirstGreen, alphaFirstBlue, alphaFirstValue);
-              return true;
-            } catch (rgbaPositionalError) {}
-          }
-
-          return false;
-        } else if (useUnitScale) {
-          var unitPayload = [candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255, alphaUnit];
-          try {
-            property.setColorValue(unitPayload, true);
-            return true;
-          } catch (unitArrayUiError) {}
-
-          try {
-            property.setColorValue(unitPayload);
-            return true;
-          } catch (unitArrayError) {}
-
-          try {
-            property.setColorValue(unitPayload[0], unitPayload[1], unitPayload[2], unitPayload[3]);
-            return true;
-          } catch (unitPositionalError) {}
+        if (arrayLayout === "argb") {
+          channelsUseUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
+          alphaSource = !isNaN(v0) ? v0 : 1;
+        } else if (arrayLayout === "rgba") {
+          channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
+          alphaSource = !isNaN(v3) ? v3 : 1;
         } else {
-          var bytePayload = [candidateRgb.red, candidateRgb.green, candidateRgb.blue, alpha255];
-          try {
-            property.setColorValue(bytePayload, true);
-            return true;
-          } catch (byteArrayUiError) {}
-
-          try {
-            property.setColorValue(bytePayload);
-            return true;
-          } catch (byteArrayError) {}
-
-          try {
-            property.setColorValue(bytePayload[0], bytePayload[1], bytePayload[2], bytePayload[3]);
-            return true;
-          } catch (bytePositionalError) {}
+          channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
+          alphaSource = 1;
         }
+
+        var alphaAsUnit = alphaSource <= 1;
+        var alphaUnit = alphaAsUnit ? alphaSource : alphaSource / 255;
+        var alpha255 = alphaAsUnit ? Math.round(alphaSource * 255) : alphaSource;
+        var redPayload = channelsUseUnit ? candidateRgb.red / 255 : candidateRgb.red;
+        var greenPayload = channelsUseUnit ? candidateRgb.green / 255 : candidateRgb.green;
+        var bluePayload = channelsUseUnit ? candidateRgb.blue / 255 : candidateRgb.blue;
+        var payload = [redPayload, greenPayload, bluePayload];
+
+        if (hasFourChannels) {
+          if (arrayLayout === "argb") {
+            payload = [channelsUseUnit ? alphaUnit : alpha255, redPayload, greenPayload, bluePayload];
+          } else {
+            payload = [redPayload, greenPayload, bluePayload, channelsUseUnit ? alphaUnit : alpha255];
+          }
+        }
+
+        try {
+          property.setColorValue(payload, true);
+          return true;
+        } catch (arrayUiError) {}
+
+        try {
+          property.setColorValue(payload);
+          return true;
+        } catch (arrayError) {}
+
+        try {
+          if (payload.length >= 4) {
+            property.setColorValue(payload[0], payload[1], payload[2], payload[3]);
+          } else {
+            property.setColorValue(payload[0], payload[1], payload[2]);
+          }
+          return true;
+        } catch (positionalError) {}
       }
     } catch (arrayShapeError) {}
 

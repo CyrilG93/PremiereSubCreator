@@ -504,6 +504,7 @@ input[type="checkbox"] {
 
 .visual-property-control select.visual-select-expanded {
   z-index: 2;
+  overflow-y: auto;
 }
 
 .visual-color-row {

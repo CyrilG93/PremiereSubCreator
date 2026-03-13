@@ -1026,6 +1026,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     });
   };
 
+  const selectRowHeightPx = 28;
+  const selectMinRows = 4;
+  const selectMaxRows = 10;
+
   const findScrollableAncestor = (node: HTMLElement): HTMLElement | null => {
     // // Find nearest scrollable container so we can reveal dropdowns near panel bottom.
     let current: HTMLElement | null = node.parentElement;
@@ -1040,16 +1044,65 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return null;
   };
 
-  const ensureSelectViewportSpace = (select: HTMLSelectElement): void => {
-    // // Pre-scroll the visual panel before opening long font dropdown lists.
+  const getClippingSpaceBelow = (select: HTMLSelectElement): number => {
+    // // Compute visible space below select, constrained by viewport and clipping ancestors.
     const rect = select.getBoundingClientRect();
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const rowHeight = 28;
-    const desiredRows = Math.min(Math.max(6, select.options.length > 0 ? Math.min(select.options.length, 10) : 6), 10);
-    const desiredHeight = desiredRows * rowHeight + 12;
-    const initialBelow = Math.max(0, viewportHeight - rect.bottom - 8);
-    let refreshedBelow = initialBelow;
-    const missingSpace = desiredHeight - initialBelow;
+    const viewportBelow = Math.max(0, viewportHeight - rect.bottom - 8);
+    let clippedBelow = viewportBelow;
+    let current: HTMLElement | null = select.parentElement;
+    while (current) {
+      const style = window.getComputedStyle(current);
+      const overflowY = String(style.overflowY || "").toLowerCase();
+      if (overflowY === "hidden" || overflowY === "auto" || overflowY === "scroll") {
+        const bounds = current.getBoundingClientRect();
+        clippedBelow = Math.min(clippedBelow, Math.max(0, bounds.bottom - rect.bottom - 6));
+      }
+      current = current.parentElement;
+    }
+    return Math.max(0, clippedBelow);
+  };
+
+  const collapseExpandedSelect = (select: HTMLSelectElement): void => {
+    // // Restore normal compact select after an inline expanded list interaction.
+    select.size = 1;
+    select.style.removeProperty("max-height");
+    select.classList.remove("visual-select-expanded");
+    select.removeAttribute("data-expanded-inline");
+  };
+
+  const expandSelectInline = (select: HTMLSelectElement, rows: number, maxHeightPx: number): void => {
+    // // Show dropdown as inline list with bounded rows to avoid clipping outside panel.
+    const boundedRows = Math.max(2, Math.min(rows, Math.max(2, select.options.length || 2)));
+    if (select.getAttribute("data-expanded-inline") === "1" && Number(select.size || 1) === boundedRows) {
+      return;
+    }
+    select.size = boundedRows;
+    select.style.maxHeight = `${Math.max(84, Math.floor(maxHeightPx))}px`;
+    select.classList.add("visual-select-expanded");
+    select.setAttribute("data-expanded-inline", "1");
+    const collapse = (): void => {
+      collapseExpandedSelect(select);
+      select.removeEventListener("blur", collapse);
+      select.removeEventListener("change", collapse);
+      select.removeEventListener("keydown", onKeydown);
+    };
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" || event.key === "Enter") {
+        collapse();
+      }
+    };
+    select.addEventListener("blur", collapse);
+    select.addEventListener("change", collapse);
+    select.addEventListener("keydown", onKeydown);
+  };
+
+  const ensureSelectViewportSpace = (select: HTMLSelectElement): boolean => {
+    // // Keep long font lists visible by constraining inline dropdown height to panel space.
+    const desiredRows = Math.min(Math.max(selectMinRows, Math.min(select.options.length || selectMinRows, selectMaxRows)), selectMaxRows);
+    const desiredHeight = desiredRows * selectRowHeightPx + 12;
+    let spaceBelow = getClippingSpaceBelow(select);
+    const missingSpace = desiredHeight - spaceBelow;
     if (missingSpace > 0) {
       const scrollable = findScrollableAncestor(select);
       if (scrollable) {
@@ -1059,35 +1112,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           if (delta > 0) {
             scrollable.scrollTop += delta;
           }
-          const refreshedRect = select.getBoundingClientRect();
-          refreshedBelow = Math.max(0, viewportHeight - refreshedRect.bottom - 8);
+          spaceBelow = getClippingSpaceBelow(select);
         }
       }
     }
 
-    if (refreshedBelow < 120) {
-      // // Fallback to inline expanded select when native popup still lacks vertical room.
-      const fallbackRows = Math.max(4, Math.min(select.options.length || 6, Math.floor(Math.max(refreshedBelow, 120) / rowHeight)));
-      if (fallbackRows > 1) {
-        select.size = fallbackRows;
-        select.classList.add("visual-select-expanded");
-        const collapse = (): void => {
-          select.size = 1;
-          select.classList.remove("visual-select-expanded");
-          select.removeEventListener("blur", collapse);
-          select.removeEventListener("change", collapse);
-          select.removeEventListener("keydown", onKeydown);
-        };
-        const onKeydown = (event: KeyboardEvent): void => {
-          if (event.key === "Escape" || event.key === "Enter") {
-            collapse();
-          }
-        };
-        select.addEventListener("blur", collapse);
-        select.addEventListener("change", collapse);
-        select.addEventListener("keydown", onKeydown);
-      }
+    const forceInline = (select.options.length || 0) > selectMaxRows;
+    const shouldUseInline = forceInline || spaceBelow < desiredHeight;
+    if (!shouldUseInline) {
+      collapseExpandedSelect(select);
+      return false;
     }
+
+    const rowsFromSpace = Math.floor((Math.max(spaceBelow, 96) - 12) / selectRowHeightPx);
+    const fallbackRows = Math.max(2, Math.min(select.options.length || selectMinRows, Math.min(selectMaxRows, Math.max(selectMinRows, rowsFromSpace))));
+    const maxHeightPx = fallbackRows * selectRowHeightPx + 12;
+    expandSelectInline(select, fallbackRows, Math.min(maxHeightPx, Math.max(spaceBelow - 4, 84)));
+    return true;
   };
 
   const grouped = new Map<string, HostVisualProperty[]>();
@@ -1424,15 +1465,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           const currentFamilyValue = String(select.value || currentValue || "").trim();
           const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
           replaceSelectOptions(select, [...selectFamilies, ...systemFamilies], currentFamilyValue);
-          select.addEventListener("mousedown", () => {
-            ensureSelectViewportSpace(select);
+          select.addEventListener("mousedown", (event) => {
+            if (ensureSelectViewportSpace(select)) {
+              event.preventDefault();
+              select.focus();
+            }
           });
-          select.addEventListener("touchstart", () => {
-            ensureSelectViewportSpace(select);
+          select.addEventListener("touchstart", (event) => {
+            if (ensureSelectViewportSpace(select)) {
+              event.preventDefault();
+              select.focus();
+            }
           });
           select.addEventListener("keydown", (event) => {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-              ensureSelectViewportSpace(select);
+              if (ensureSelectViewportSpace(select)) {
+                event.preventDefault();
+              }
             }
           });
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
@@ -1452,15 +1501,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
               Object.values(relatedMap).flat();
             replaceSelectOptions(select, [...selectStyles, ...stylesFromMap], String(select.value || currentValue || ""));
           }
-          select.addEventListener("mousedown", () => {
-            ensureSelectViewportSpace(select);
+          select.addEventListener("mousedown", (event) => {
+            if (ensureSelectViewportSpace(select)) {
+              event.preventDefault();
+              select.focus();
+            }
           });
-          select.addEventListener("touchstart", () => {
-            ensureSelectViewportSpace(select);
+          select.addEventListener("touchstart", (event) => {
+            if (ensureSelectViewportSpace(select)) {
+              event.preventDefault();
+              select.focus();
+            }
           });
           select.addEventListener("keydown", (event) => {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-              ensureSelectViewportSpace(select);
+              if (ensureSelectViewportSpace(select)) {
+                event.preventDefault();
+              }
             }
           });
           bindLiveUpdateEvent(select, "change");

@@ -231,20 +231,19 @@ input[type="checkbox"] {
 }
 
 .inline-row--actions {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.inline-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
-  font-size: 0.74rem;
-  color: var(--text-dim);
+.button--toggle.is-active {
+  background: linear-gradient(135deg, var(--accent), #1bb67a);
+  border-color: transparent;
+  color: #07240f;
 }
 
-.inline-toggle input[type="checkbox"] {
-  margin: 0;
+.button--toggle:not(.is-active) {
+  background: transparent;
+  border-color: var(--accent-soft);
+  color: var(--accent-soft);
 }
 
 .visual-progress {
@@ -501,6 +500,10 @@ input[type="checkbox"] {
 .visual-property-control select {
   padding: 5px 6px;
   font-size: 0.75rem;
+}
+
+.visual-property-control select.visual-select-expanded {
+  z-index: 2;
 }
 
 .visual-color-row {

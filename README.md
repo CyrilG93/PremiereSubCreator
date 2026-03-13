@@ -34,8 +34,7 @@ It supports:
 - Vector values shown in visual editor are rounded to one decimal for cleaner `Position` / `Scale` editing.
 - Size vectors now include 1920/1080 compatibility scaling so common subtitle templates display `100%`-style values in editor.
 - Known menu-like controls (for example alignment/paragraph/based-on) are rendered as dropdowns when detected.
-- Visual editor includes richer host debug payloads and a `Copy logs` button for troubleshooting.
-- `Copy logs` falls back to CEP runtime clipboard APIs when browser clipboard permission is denied.
+- Visual editor includes richer host debug payloads in the panel log for troubleshooting.
 - Color controls are detected with stricter rules to avoid rendering numeric sliders/dropdowns as color pickers.
 - Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
 - Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.

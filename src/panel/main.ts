@@ -10,7 +10,6 @@ import {
   getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
-  pingHost,
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
   transcribeWithWhisper
@@ -98,14 +97,12 @@ const elements = {
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
-  visualLiveUpdateToggle: document.querySelector<HTMLInputElement>("#visualLiveUpdateToggle"),
+  visualLiveUpdateButton: document.querySelector<HTMLButtonElement>("#visualLiveUpdateButton"),
   visualApplyProgress: document.querySelector<HTMLElement>("#visualApplyProgress"),
   visualApplyProgressBar: document.querySelector<HTMLProgressElement>("#visualApplyProgressBar"),
   visualApplyProgressText: document.querySelector<HTMLElement>("#visualApplyProgressText"),
-  copyLogsButton: document.querySelector<HTMLButtonElement>("#copyLogsButton"),
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
-  pingButton: document.querySelector<HTMLButtonElement>("#pingButton"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
   logOutput: document.querySelector<HTMLPreElement>("#logOutput")
 };
@@ -135,6 +132,7 @@ let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
+let visualLiveUpdateEnabled = false;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -205,8 +203,7 @@ function persistPanelState(): void {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.fontSize ||
-    !elements.mogrtAspectFilter ||
-    !elements.visualLiveUpdateToggle
+    !elements.mogrtAspectFilter
   ) {
     return;
   }
@@ -224,7 +221,7 @@ function persistPanelState(): void {
     fontSize: Number(elements.fontSize.value),
     mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
     selectedMogrtId: selectedMogrt?.id || "",
-    visualLiveUpdate: Boolean(elements.visualLiveUpdateToggle.checked)
+    visualLiveUpdate: visualLiveUpdateEnabled
   };
 
   try {
@@ -276,8 +273,8 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
   }
 
-  if (elements.visualLiveUpdateToggle && typeof snapshot.visualLiveUpdate === "boolean") {
-    elements.visualLiveUpdateToggle.checked = snapshot.visualLiveUpdate;
+  if (typeof snapshot.visualLiveUpdate === "boolean") {
+    setVisualLiveUpdateEnabled(snapshot.visualLiveUpdate, true);
   }
 
   if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
@@ -288,6 +285,30 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     activeMode = "visual";
   } else {
     activeMode = "generate";
+  }
+}
+
+function refreshLiveUpdateButtonState(): void {
+  // // Reflect live update toggle state through button color/text and ARIA state.
+  if (!elements.visualLiveUpdateButton) {
+    return;
+  }
+
+  elements.visualLiveUpdateButton.classList.toggle("is-active", visualLiveUpdateEnabled);
+  elements.visualLiveUpdateButton.classList.toggle("button--secondary", !visualLiveUpdateEnabled);
+  elements.visualLiveUpdateButton.setAttribute("aria-pressed", visualLiveUpdateEnabled ? "true" : "false");
+  elements.visualLiveUpdateButton.textContent = translate(
+    visualLiveUpdateEnabled ? "action.liveUpdateOn" : "action.liveUpdateOff"
+  );
+}
+
+function setVisualLiveUpdateEnabled(enabled: boolean, skipPersist = false): void {
+  // // Toggle live-update behavior and keep button state synchronized.
+  visualLiveUpdateEnabled = enabled === true;
+  refreshLiveUpdateButtonState();
+
+  if (!skipPersist) {
+    persistPanelState();
   }
 }
 
@@ -497,6 +518,7 @@ async function loadLocale(languageCode: string): Promise<void> {
   if (elements.visualApplyProgress && !elements.visualApplyProgress.hidden && elements.visualApplyProgressBar) {
     setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
   }
+  refreshLiveUpdateButtonState();
 
   refreshUpdateBanner();
 }
@@ -1004,6 +1026,70 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     });
   };
 
+  const findScrollableAncestor = (node: HTMLElement): HTMLElement | null => {
+    // // Find nearest scrollable container so we can reveal dropdowns near panel bottom.
+    let current: HTMLElement | null = node.parentElement;
+    while (current) {
+      const style = window.getComputedStyle(current);
+      const overflowY = String(style.overflowY || "").toLowerCase();
+      if ((overflowY === "auto" || overflowY === "scroll") && current.scrollHeight > current.clientHeight) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  };
+
+  const ensureSelectViewportSpace = (select: HTMLSelectElement): void => {
+    // // Pre-scroll the visual panel before opening long font dropdown lists.
+    const rect = select.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const rowHeight = 28;
+    const desiredRows = Math.min(Math.max(6, select.options.length > 0 ? Math.min(select.options.length, 10) : 6), 10);
+    const desiredHeight = desiredRows * rowHeight + 12;
+    const initialBelow = Math.max(0, viewportHeight - rect.bottom - 8);
+    let refreshedBelow = initialBelow;
+    const missingSpace = desiredHeight - initialBelow;
+    if (missingSpace > 0) {
+      const scrollable = findScrollableAncestor(select);
+      if (scrollable) {
+        const maxScrollable = Math.max(0, scrollable.scrollHeight - scrollable.clientHeight - scrollable.scrollTop);
+        if (maxScrollable > 0) {
+          const delta = Math.min(missingSpace, maxScrollable);
+          if (delta > 0) {
+            scrollable.scrollTop += delta;
+          }
+          const refreshedRect = select.getBoundingClientRect();
+          refreshedBelow = Math.max(0, viewportHeight - refreshedRect.bottom - 8);
+        }
+      }
+    }
+
+    if (refreshedBelow < 120) {
+      // // Fallback to inline expanded select when native popup still lacks vertical room.
+      const fallbackRows = Math.max(4, Math.min(select.options.length || 6, Math.floor(Math.max(refreshedBelow, 120) / rowHeight)));
+      if (fallbackRows > 1) {
+        select.size = fallbackRows;
+        select.classList.add("visual-select-expanded");
+        const collapse = (): void => {
+          select.size = 1;
+          select.classList.remove("visual-select-expanded");
+          select.removeEventListener("blur", collapse);
+          select.removeEventListener("change", collapse);
+          select.removeEventListener("keydown", onKeydown);
+        };
+        const onKeydown = (event: KeyboardEvent): void => {
+          if (event.key === "Escape" || event.key === "Enter") {
+            collapse();
+          }
+        };
+        select.addEventListener("blur", collapse);
+        select.addEventListener("change", collapse);
+        select.addEventListener("keydown", onKeydown);
+      }
+    }
+  };
+
   const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
@@ -1338,6 +1424,17 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           const currentFamilyValue = String(select.value || currentValue || "").trim();
           const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
           replaceSelectOptions(select, [...selectFamilies, ...systemFamilies], currentFamilyValue);
+          select.addEventListener("mousedown", () => {
+            ensureSelectViewportSpace(select);
+          });
+          select.addEventListener("touchstart", () => {
+            ensureSelectViewportSpace(select);
+          });
+          select.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+              ensureSelectViewportSpace(select);
+            }
+          });
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
           select.addEventListener("change", () => {
             refreshStyleSelectForFamily(textStylePath.basePath);
@@ -1355,6 +1452,17 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
               Object.values(relatedMap).flat();
             replaceSelectOptions(select, [...selectStyles, ...stylesFromMap], String(select.value || currentValue || ""));
           }
+          select.addEventListener("mousedown", () => {
+            ensureSelectViewportSpace(select);
+          });
+          select.addEventListener("touchstart", () => {
+            ensureSelectViewportSpace(select);
+          });
+          select.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+              ensureSelectViewportSpace(select);
+            }
+          });
           bindLiveUpdateEvent(select, "change");
         } else {
           bindLiveUpdateEvent(select, "change");
@@ -1473,7 +1581,7 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<v
 
 function isVisualLiveUpdateEnabled(): boolean {
   // // Read live-update toggle value with safe fallback when UI is not ready.
-  return Boolean(elements.visualLiveUpdateToggle?.checked);
+  return visualLiveUpdateEnabled;
 }
 
 async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean }): Promise<void> {
@@ -1602,60 +1710,6 @@ async function runQueuedLiveVisualApply(): Promise<void> {
     if (visualLiveUpdateQueued) {
       scheduleLiveVisualApply();
     }
-  }
-}
-
-async function copyLogsToClipboard(): Promise<void> {
-  // // Copy debug log output for quick troubleshooting sharing.
-  const text = String(elements.logOutput?.textContent || "");
-  if (!text) {
-    return;
-  }
-
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // // Continue with CEP/runtime fallback when browser clipboard permission is denied.
-    }
-  }
-
-  const runtimeWindow = window as Window & {
-    cep?: {
-      util?: {
-        copyToClipboard?: (value: string) => void;
-      };
-    };
-    __adobe_cep__?: {
-      invokeSync?: (command: string, payload: string) => unknown;
-    };
-  };
-
-  if (runtimeWindow.cep?.util?.copyToClipboard) {
-    runtimeWindow.cep.util.copyToClipboard(text);
-    return;
-  }
-
-  if (runtimeWindow.__adobe_cep__?.invokeSync) {
-    try {
-      runtimeWindow.__adobe_cep__.invokeSync("setClipboard", text);
-      return;
-    } catch {
-      // // Keep fallback path active if CEP bridge clipboard command fails.
-    }
-  }
-
-  const helper = document.createElement("textarea");
-  helper.value = text;
-  helper.style.position = "fixed";
-  helper.style.opacity = "0";
-  document.body.appendChild(helper);
-  helper.select();
-  const copied = document.execCommand("copy");
-  helper.remove();
-  if (!copied) {
-    throw new Error("Clipboard copy failed in CEP runtime.");
   }
 }
 
@@ -1921,6 +1975,7 @@ async function initialize(): Promise<void> {
   await loadLocale(elements.languageSelect?.value ?? "en");
   await enforceWhisperSourceAvailability();
   await loadSystemFontCatalogFallback();
+  setVisualLiveUpdateEnabled(false, true);
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();
@@ -2002,19 +2057,10 @@ async function initialize(): Promise<void> {
   elements.whisperModel?.addEventListener("change", () => {
     persistPanelState();
   });
-  elements.visualLiveUpdateToggle?.addEventListener("change", () => {
-    if (elements.visualLiveUpdateToggle?.checked) {
+  elements.visualLiveUpdateButton?.addEventListener("click", () => {
+    setVisualLiveUpdateEnabled(!visualLiveUpdateEnabled);
+    if (visualLiveUpdateEnabled) {
       scheduleLiveVisualApply();
-    }
-    persistPanelState();
-  });
-
-  elements.pingButton?.addEventListener("click", async () => {
-    try {
-      const result = await pingHost();
-      setLog(`${translate("log.pingOk")}\n${result}`);
-    } catch (error) {
-      setLog(String(error), true);
     }
   });
 
@@ -2045,15 +2091,6 @@ async function initialize(): Promise<void> {
       }
       await applyVisualChangesToSelection();
       persistPanelState();
-    } catch (error) {
-      setLog(String(error), true);
-    }
-  });
-
-  elements.copyLogsButton?.addEventListener("click", async () => {
-    try {
-      await copyLogsToClipboard();
-      setLog(`${translate("log.ready")}\n${translate("log.logsCopied")}`);
     } catch (error) {
       setLog(String(error), true);
     }

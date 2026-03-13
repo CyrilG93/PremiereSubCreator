@@ -176,6 +176,7 @@ The release command creates a zip in `Releases/` and includes only mandatory fil
 - `installers/subcreator_install_mac.sh`
 - `installers/subcreator_install_windows.bat`
 - `dist/com.cyrilg93.subcreator/*`
+- macOS metadata files (`.DS_Store`, `__MACOSX`, AppleDouble `._*`) are stripped from the archive.
 
 ```bash
 npm run subcreator:package

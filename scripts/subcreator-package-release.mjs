@@ -1,5 +1,5 @@
 // // Create a local zip package in Releases/ with mandatory installer files.
-import { cp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -11,11 +11,11 @@ const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilg93.subcreator
 const releasesDir = path.join(projectRoot, "Releases");
 const stagingRoot = path.join(projectRoot, ".subcreator-release-staging");
 
-function runCommand(command, args) {
+function runCommand(command, args, commandCwd = projectRoot) {
   // // Execute platform-specific archive tooling and capture failures.
   return new Promise((resolve, reject) => {
     const processHandle = spawn(command, args, {
-      cwd: projectRoot,
+      cwd: commandCwd,
       stdio: "inherit"
     });
 
@@ -31,8 +31,10 @@ function runCommand(command, args) {
 
 async function createZipFromDirectory(sourceDir, outputZip) {
   // // Use native archivers on each OS to avoid extra dependencies.
+  const sourceParent = path.dirname(sourceDir);
+  const sourceName = path.basename(sourceDir);
   if (process.platform === "darwin") {
-    await runCommand("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", sourceDir, outputZip]);
+    await runCommand("zip", ["-r", "-X", outputZip, sourceName], sourceParent);
     return;
   }
 
@@ -47,7 +49,27 @@ async function createZipFromDirectory(sourceDir, outputZip) {
     return;
   }
 
-  await runCommand("zip", ["-r", outputZip, path.basename(sourceDir)]);
+  await runCommand("zip", ["-r", "-X", outputZip, sourceName], sourceParent);
+}
+
+async function subcreatorPruneReleaseMetadata(targetDir) {
+  // // Remove macOS metadata files so the release archive only contains install payload.
+  const entries = await readdir(targetDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "__MACOSX") {
+        await rm(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      await subcreatorPruneReleaseMetadata(entryPath);
+      continue;
+    }
+
+    if (entry.name === ".DS_Store" || entry.name.startsWith("._")) {
+      await rm(entryPath, { force: true });
+    }
+  }
 }
 
 async function subcreatorPackageRelease() {
@@ -72,6 +94,8 @@ async function subcreatorPackageRelease() {
     cp(path.join(projectRoot, "installers"), path.join(stagingBundleDir, "installers"), { recursive: true }),
     cp(path.join(projectRoot, "dist"), path.join(stagingBundleDir, "dist"), { recursive: true })
   ]);
+
+  await subcreatorPruneReleaseMetadata(stagingBundleDir);
 
   await rm(zipPath, { force: true });
   await createZipFromDirectory(stagingBundleDir, zipPath);

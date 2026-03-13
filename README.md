@@ -25,6 +25,7 @@ It supports:
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 - Normalized `Position` vectors (`0..1` style values) are automatically shown in sequence pixels (for example `1920 / 1080` on 4K timelines).
+- `Scale` vectors now follow the same sequence-axis basis as `Position` within a group when that MOGRT uses normalized sequence units.
 - Size vectors now include 1920/1080 compatibility scaling so common subtitle templates display `100%`-style values in editor.
 - Known menu-like controls (for example alignment/paragraph/based-on) are rendered as dropdowns when detected.
 - Visual editor includes richer host debug payloads and a `Copy logs` button for troubleshooting.

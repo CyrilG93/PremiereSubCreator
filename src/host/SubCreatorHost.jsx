@@ -1345,6 +1345,36 @@ function subcreator_visual_read_sequence_dimensions() {
   };
 }
 
+var subcreator_visual_group_sequence_axis_preferences = {};
+
+function subcreator_visual_reset_group_sequence_axis_preferences() {
+  // // Reset per-group vector scaling hints before reading a new selection.
+  subcreator_visual_group_sequence_axis_preferences = {};
+}
+
+function subcreator_visual_group_sequence_axis_key(groupPath) {
+  // // Normalize group key used for cross-property scale inference.
+  return subcreator_trim_string(String(groupPath || "")).toLowerCase();
+}
+
+function subcreator_visual_mark_group_sequence_axis(groupPath) {
+  // // Remember that a group uses sequence-axis normalized units (for Position/Scale consistency).
+  var key = subcreator_visual_group_sequence_axis_key(groupPath);
+  if (!key) {
+    return;
+  }
+  subcreator_visual_group_sequence_axis_preferences[key] = true;
+}
+
+function subcreator_visual_group_prefers_sequence_axis(groupPath) {
+  // // Check whether previous properties in the group proved sequence-axis normalized behavior.
+  var key = subcreator_visual_group_sequence_axis_key(groupPath);
+  if (!key) {
+    return false;
+  }
+  return !!subcreator_visual_group_sequence_axis_preferences[key];
+}
+
 function subcreator_visual_detect_vector_mode(displayName, groupPath) {
   // // Detect vector unit convention so panel can show human-friendly values.
   var displayKey = String(displayName || "").toLowerCase();
@@ -1446,6 +1476,7 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
     var looksLikePosition = displayKey.indexOf("position") !== -1;
     if (looksLikePosition && subcreator_visual_vector_looks_normalized_position(vectorValues)) {
       // // Position controls often report normalized coordinates; expose them as absolute sequence pixels in panel.
+      subcreator_visual_mark_group_sequence_axis(groupPath);
       var normalizedScale = [width, height, 1, 1];
       var normalizedFinalScales = [];
       for (var normalizedIndex = 0; normalizedIndex < vectorValues.length; normalizedIndex += 1) {
@@ -1475,6 +1506,25 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
       idealValue: 35
     });
   } else if (vectorMode === "size_percent") {
+    if (
+      displayKey.indexOf("scale") !== -1 &&
+      subcreator_visual_group_prefers_sequence_axis(groupPath) &&
+      subcreator_visual_vector_looks_normalized_position(vectorValues)
+    ) {
+      // // Keep Scale consistent with Position when the same group uses sequence-normalized units.
+      var groupedScale = [width, height, 1, 1];
+      var groupedFinalScales = [];
+      for (var groupedIndex = 0; groupedIndex < vectorValues.length; groupedIndex += 1) {
+        groupedFinalScales.push(Number(groupedScale[groupedIndex] || 1));
+      }
+      return {
+        mode: vectorMode,
+        scale: groupedFinalScales,
+        candidateId: "scale_group_sequence_axis",
+        score: 0
+      };
+    }
+
     candidates.push({ id: "size_raw", scales: [1, 1, 1, 1], minPreferred: 1, maxPreferred: 400, idealValue: 100 });
     candidates.push({
       id: "size_fixed_1920",
@@ -1987,7 +2037,7 @@ function subcreator_collect_mogrt_visual_properties_recursive(
     var resolvedGroupPath = activeSiblingGroupPath || groupPathPrefix || "General";
 
     if (typeof property.getValue === "function" && typeof property.setValue === "function") {
-      if (hasValue && subcreator_should_try_text_property(displayName, rawValue)) {
+      if (hasValue) {
         // // Expose style-only controls from text payloads while keeping actual caption text hidden.
         var textStyleEntries = subcreator_visual_build_text_style_entries(rawValue, currentPath, resolvedGroupPath);
         for (var styleIndex = 0; styleIndex < textStyleEntries.length; styleIndex += 1) {
@@ -2213,7 +2263,10 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     }
   }
 
-  if (!subcreator_should_try_text_property(property.displayName || "", rawValue)) {
+  if (
+    !subcreator_should_try_text_property(property.displayName || "", rawValue) &&
+    !subcreator_visual_extract_text_style_from_value(rawValue)
+  ) {
     return false;
   }
 
@@ -2930,6 +2983,7 @@ function subcreator_list_selected_mogrt_properties() {
     var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
     var properties = [];
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
+    subcreator_visual_reset_group_sequence_axis_preferences();
     subcreator_collect_mogrt_visual_properties_recursive(
       firstComponent ? firstComponent.properties : null,
       "",

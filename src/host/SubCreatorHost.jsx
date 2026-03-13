@@ -611,6 +611,36 @@ function subcreator_visual_extract_rgb_triplet(rawRed, rawGreen, rawBlue) {
   };
 }
 
+function subcreator_visual_is_alpha_first_color_array(rawArray) {
+  // // Detect color arrays shaped like [alpha, red, green, blue] returned by some MOGRT controls.
+  if (!rawArray || typeof rawArray.length !== "number" || rawArray.length < 4) {
+    return false;
+  }
+
+  var alpha = subcreator_visual_to_number(rawArray[0]);
+  var red = subcreator_visual_to_number(rawArray[1]);
+  var green = subcreator_visual_to_number(rawArray[2]);
+  var blue = subcreator_visual_to_number(rawArray[3]);
+
+  if (isNaN(alpha) || isNaN(red) || isNaN(green) || isNaN(blue)) {
+    return false;
+  }
+
+  if (alpha < 0 || alpha > 1.0001) {
+    return false;
+  }
+
+  if (red > 1 || green > 1 || blue > 1) {
+    return true;
+  }
+
+  if (red === 0 && green === 0 && blue === 0) {
+    return true;
+  }
+
+  return false;
+}
+
 function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
   // // Decode packed numeric color payloads used by some Essential Graphics controls.
   var numericColor = Math.floor(Math.abs(Number(rawNumber)));
@@ -722,6 +752,13 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
 
   if (typeof rawValue === "object") {
     if (typeof rawValue.length === "number" && rawValue.length >= 3) {
+      if (subcreator_visual_is_alpha_first_color_array(rawValue)) {
+        var fromAlphaFirstArray = subcreator_visual_extract_rgb_triplet(rawValue[1], rawValue[2], rawValue[3]);
+        if (fromAlphaFirstArray) {
+          return fromAlphaFirstArray;
+        }
+      }
+
       var fromArray = subcreator_visual_extract_rgb_triplet(rawValue[0], rawValue[1], rawValue[2]);
       if (fromArray) {
         return fromArray;
@@ -1875,11 +1912,20 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var v1 = Number(referenceValue[1]);
         var v2 = Number(referenceValue[2]);
         var v3 = Number(referenceValue[3]);
+        var alphaFirstLayout = subcreator_visual_is_alpha_first_color_array(referenceValue);
         var useUnitScale = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
         var alphaUnit = !isNaN(v3) && v3 <= 1 ? v3 : 1;
         var alpha255 = !isNaN(v3) && v3 > 1 ? v3 : 255;
 
-        if (useUnitScale) {
+        if (alphaFirstLayout) {
+          var firstAlpha = !isNaN(v0) && v0 >= 0 ? v0 : 1;
+          var channelsAreUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
+          if (channelsAreUnit) {
+            property.setColorValue([firstAlpha <= 1 ? firstAlpha : firstAlpha / 255, candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255], true);
+          } else {
+            property.setColorValue([firstAlpha <= 1 ? firstAlpha : 255, candidateRgb.red, candidateRgb.green, candidateRgb.blue], true);
+          }
+        } else if (useUnitScale) {
           property.setColorValue([candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255, alphaUnit], true);
         } else {
           property.setColorValue([candidateRgb.red, candidateRgb.green, candidateRgb.blue, alpha255], true);

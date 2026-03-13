@@ -29,6 +29,7 @@ It supports:
 - `Copy logs` falls back to CEP runtime clipboard APIs when browser clipboard permission is denied.
 - Color controls are detected with stricter rules to avoid rendering numeric sliders/dropdowns as color pickers.
 - Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
+- Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.
 
 ## Important product choices
 

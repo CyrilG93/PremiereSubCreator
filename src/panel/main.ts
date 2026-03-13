@@ -1007,13 +1007,21 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       return;
     }
 
-    const mappedOptions = styleMap[selectedFamily];
-    if (!Array.isArray(mappedOptions) || mappedOptions.length === 0) {
+    if (!Object.prototype.hasOwnProperty.call(styleMap, selectedFamily)) {
       return;
     }
 
+    const mappedOptions = Array.isArray(styleMap[selectedFamily]) ? styleMap[selectedFamily] : [];
     const currentStyle = String(styleSelect.value || "").trim();
-    replaceSelectOptions(styleSelect, mappedOptions, currentStyle);
+    if (mappedOptions.length > 0) {
+      replaceSelectOptions(styleSelect, mappedOptions, currentStyle);
+      return;
+    }
+    if (currentStyle) {
+      replaceSelectOptions(styleSelect, [currentStyle], currentStyle);
+      return;
+    }
+    replaceSelectOptions(styleSelect, ["Regular"], "Regular");
   };
 
   const bindLiveUpdateEvent = (
@@ -1501,10 +1509,14 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             const selectStyles = Array.from(select.options).map((option) => String(option.value || ""));
             const relatedFamilySelect = textStyleFamilySelectByBasePath.get(textStylePath.basePath);
             const selectedFamilyKey = String(relatedFamilySelect?.value || "").trim().toLowerCase();
-            const stylesFromMap =
-              (selectedFamilyKey ? relatedMap[selectedFamilyKey] : undefined) ||
-              Object.values(relatedMap).flat();
-            replaceSelectOptions(select, [...selectStyles, ...stylesFromMap], String(select.value || currentValue || ""));
+            const mappedStyles = selectedFamilyKey && Array.isArray(relatedMap[selectedFamilyKey]) ? relatedMap[selectedFamilyKey] : [];
+            if (mappedStyles.length > 0) {
+              replaceSelectOptions(select, mappedStyles, String(select.value || currentValue || ""));
+            } else if (selectedFamilyKey) {
+              replaceSelectOptions(select, selectStyles, String(select.value || currentValue || ""));
+            } else {
+              replaceSelectOptions(select, [...selectStyles, ...Object.values(relatedMap).flat()], String(select.value || currentValue || ""));
+            }
           }
           select.addEventListener("mousedown", (event) => {
             tryOpenConstrainedSelect(select, event);

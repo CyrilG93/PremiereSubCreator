@@ -2992,7 +2992,12 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       } else if (styleKey === "fontStyle" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var existingToken = subcreator_visual_extract_first_string(value);
         var existingParts = subcreator_visual_split_font_token(existingToken);
-        var rebuiltStyleToken = subcreator_visual_join_font_token(existingParts.family, styleValue, existingToken);
+        var familyOverrideProvided =
+          applyOptions &&
+          Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenFamilyOverride") &&
+          typeof applyOptions.fontTokenFamilyOverride === "string";
+        var familyForToken = familyOverrideProvided ? applyOptions.fontTokenFamilyOverride : existingParts.family;
+        var rebuiltStyleToken = subcreator_visual_join_font_token(familyForToken, styleValue, existingToken);
         if (typeof value === "string") {
           node[key] = rebuiltStyleToken;
         } else if (value && typeof value.length === "number" && value.length > 0) {
@@ -3060,6 +3065,11 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
     Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenStyleOverride") &&
     typeof applyOptions.fontTokenStyleOverride === "string";
   var styleOverrideValue = styleOverrideProvided ? applyOptions.fontTokenStyleOverride : "";
+  var familyOverrideProvided =
+    applyOptions &&
+    Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenFamilyOverride") &&
+    typeof applyOptions.fontTokenFamilyOverride === "string";
+  var familyOverrideValue = familyOverrideProvided ? applyOptions.fontTokenFamilyOverride : "";
   var keyList = [];
 
   if (styleKey === "fontFamily") {
@@ -3104,7 +3114,8 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
             var styleForToken = styleOverrideProvided ? styleOverrideValue : tokenParts.style;
             rebuiltToken = subcreator_visual_join_font_token(String(styleValue), styleForToken, tokenValue);
           } else if (styleKey === "fontStyle") {
-            rebuiltToken = subcreator_visual_join_font_token(tokenParts.family, String(styleValue), tokenValue);
+            var familyForToken = familyOverrideProvided ? familyOverrideValue : tokenParts.family;
+            rebuiltToken = subcreator_visual_join_font_token(familyForToken, String(styleValue), tokenValue);
           } else {
             rebuiltToken = String(styleValue);
           }
@@ -3181,13 +3192,33 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
 
   var extractedStyleValues = subcreator_visual_extract_text_style_from_value(rawValue);
 
-  function applyOnce(fontTokenStyleOverride) {
+  function applyOnce(customOptions) {
     // // Try one text-style patch strategy for the current property value.
+    var effectiveStyleValue = normalizedStyleValue;
     var applyOptions = null;
-    if (typeof fontTokenStyleOverride === "string") {
-      applyOptions = {
-        fontTokenStyleOverride: fontTokenStyleOverride
-      };
+    if (customOptions && typeof customOptions === "object") {
+      if (Object.prototype.hasOwnProperty.call(customOptions, "styleValueOverride")) {
+        var overrideNormalized = subcreator_visual_normalize_text_style_change(
+          normalizedStyleKey,
+          customOptions.styleValueOverride
+        );
+        if (overrideNormalized === null) {
+          return false;
+        }
+        effectiveStyleValue = overrideNormalized;
+      }
+      if (
+        typeof customOptions.fontTokenStyleOverride === "string" ||
+        typeof customOptions.fontTokenFamilyOverride === "string"
+      ) {
+        applyOptions = {};
+        if (typeof customOptions.fontTokenStyleOverride === "string") {
+          applyOptions.fontTokenStyleOverride = customOptions.fontTokenStyleOverride;
+        }
+        if (typeof customOptions.fontTokenFamilyOverride === "string") {
+          applyOptions.fontTokenFamilyOverride = customOptions.fontTokenFamilyOverride;
+        }
+      }
     }
 
     if (rawValue && typeof rawValue === "object") {
@@ -3196,7 +3227,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
         var didPatchCopy = subcreator_visual_apply_text_style_to_payload(
           objectCopy,
           normalizedStyleKey,
-          normalizedStyleValue,
+          effectiveStyleValue,
           applyOptions
         );
         if (didPatchCopy && exclusiveCompanionStyleKey) {
@@ -3212,7 +3243,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
         var didPatchDirect = subcreator_visual_apply_text_style_to_payload(
           rawValue,
           normalizedStyleKey,
-          normalizedStyleValue,
+          effectiveStyleValue,
           applyOptions
         );
         if (didPatchDirect && exclusiveCompanionStyleKey) {
@@ -3231,7 +3262,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
         var didPatchParsed = subcreator_visual_apply_text_style_to_payload(
           parsed,
           normalizedStyleKey,
-          normalizedStyleValue,
+          effectiveStyleValue,
           applyOptions
         );
         if (didPatchParsed && exclusiveCompanionStyleKey) {
@@ -3247,7 +3278,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
         var patchedRaw = subcreator_try_patch_text_style_json_string(
           rawValue,
           normalizedStyleKey,
-          normalizedStyleValue,
+          effectiveStyleValue,
           applyOptions
         );
         if (patchedRaw && exclusiveCompanionStyleKey) {
@@ -3329,7 +3360,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
 
     for (var overrideIndex = 0; overrideIndex < styleOverrides.length; overrideIndex += 1) {
       var styleOverride = styleOverrides[overrideIndex];
-      if (!applyOnce(styleOverride)) {
+      if (!applyOnce({ fontTokenStyleOverride: styleOverride })) {
         continue;
       }
       var readbackMatch = readbackMatchesExpectedFamily(requestedFamily);
@@ -3341,7 +3372,68 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     return false;
   }
 
-  return applyOnce();
+  if (normalizedStyleKey === "fontStyle" && extractedStyleValues && extractedStyleValues.fontFamily) {
+    var expectedFamily = extractedStyleValues.fontFamily;
+    var expectedFamilyKey = subcreator_visual_normalize_font_compare_key(expectedFamily);
+    var styleCandidates = [];
+
+    function pushUniqueStyleCandidate(candidateValue) {
+      // // Keep candidate style retries deterministic and unique.
+      var text = subcreator_trim_string(String(candidateValue || ""));
+      if (!text) {
+        return;
+      }
+      var normalized = text.toLowerCase();
+      for (var styleCandidateIndex = 0; styleCandidateIndex < styleCandidates.length; styleCandidateIndex += 1) {
+        if (String(styleCandidates[styleCandidateIndex] || "").toLowerCase() === normalized) {
+          return;
+        }
+      }
+      styleCandidates.push(text);
+    }
+
+    pushUniqueStyleCandidate(normalizedStyleValue);
+    if (extractedStyleValues.fontStyleOptions && typeof extractedStyleValues.fontStyleOptions.length === "number") {
+      for (var styleOptionIndex = 0; styleOptionIndex < extractedStyleValues.fontStyleOptions.length; styleOptionIndex += 1) {
+        pushUniqueStyleCandidate(extractedStyleValues.fontStyleOptions[styleOptionIndex]);
+      }
+    }
+    pushUniqueStyleCandidate("Regular");
+    pushUniqueStyleCandidate("Book");
+    pushUniqueStyleCandidate("Medium");
+    pushUniqueStyleCandidate("Roman");
+
+    for (var styleRetryIndex = 0; styleRetryIndex < styleCandidates.length; styleRetryIndex += 1) {
+      var candidateStyle = styleCandidates[styleRetryIndex];
+      if (
+        !applyOnce({
+          styleValueOverride: candidateStyle,
+          fontTokenFamilyOverride: expectedFamily
+        })
+      ) {
+        continue;
+      }
+      if (typeof property.getValue !== "function") {
+        return true;
+      }
+      try {
+        var styleReadbackRaw = property.getValue();
+        var styleReadback = subcreator_visual_extract_text_style_from_value(styleReadbackRaw);
+        if (!styleReadback || !styleReadback.fontFamily) {
+          return true;
+        }
+        var readbackFamilyKey = subcreator_visual_normalize_font_compare_key(styleReadback.fontFamily);
+        if (!expectedFamilyKey || !readbackFamilyKey || readbackFamilyKey === expectedFamilyKey) {
+          return true;
+        }
+      } catch (styleReadbackError) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return applyOnce(null);
 }
 
 function subcreator_normalize_visual_payload_value(valueType, rawValue) {
@@ -4271,6 +4363,26 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         }
 
         if (applied) {
+          if (virtualTextStyleTarget) {
+            try {
+              var textStyleReadbackRaw = typeof property.getValue === "function" ? property.getValue() : "";
+              var textStyleReadback = subcreator_visual_extract_text_style_from_value(textStyleReadbackRaw);
+              if (textStyleReadback) {
+                debugLines.push(
+                  "textstyle readback family=" +
+                    String(textStyleReadback.fontFamily || "<none>") +
+                    " style=" +
+                    String(textStyleReadback.fontStyle || "<none>") +
+                    " size=" +
+                    String(textStyleReadback.fontSize || "<none>")
+                );
+              } else {
+                debugLines.push("textstyle readback unavailable");
+              }
+            } catch (textReadbackError) {
+              debugLines.push("textstyle readback failed: " + String(textReadbackError));
+            }
+          }
           if (controlKind === "color") {
             try {
               var afterColorValue = typeof property.getColorValue === "function" ? property.getColorValue() : "<no getColorValue>";

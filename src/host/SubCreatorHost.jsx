@@ -648,6 +648,11 @@ function subcreator_visual_detect_color_array_layout(rawArray) {
   var firstLooksLikeAlphaMarker = alpha === 255 || alpha === 1 || alpha === 0;
   var lastLooksLikeAlphaMarker = blue === 255 || blue === 1 || blue === 0;
 
+  if (firstLooksLikeAlphaMarker && lastLooksLikeAlphaMarker) {
+    // // Premiere color arrays are frequently `[A,R,G,B]`; prefer ARGB when both edges look like alpha markers.
+    return "argb";
+  }
+
   if (firstLooksLikeAlphaMarker && !lastLooksLikeAlphaMarker) {
     return "argb";
   }
@@ -656,7 +661,7 @@ function subcreator_visual_detect_color_array_layout(rawArray) {
     return "rgba";
   }
 
-  if (alpha === 255 || alpha === 1) {
+  if (alpha === 255 || alpha === 1 || alpha === 0) {
     return "argb";
   }
 
@@ -668,11 +673,7 @@ function subcreator_visual_detect_color_array_layout(rawArray) {
 }
 
 function subcreator_visual_get_color_layout_hint(displayName, groupPath) {
-  // // Provide per-control layout hints for known Premiere quirks (for example some Stroke Color controls).
-  var key = (String(displayName || "") + " " + String(groupPath || "")).toLowerCase();
-  if (key.indexOf("stroke color") !== -1 || key.indexOf("outline color") !== -1) {
-    return "bgra";
-  }
+  // // Keep layout hints neutral; runtime calibration and array detection decide final mapping.
   return "";
 }
 

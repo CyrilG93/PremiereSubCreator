@@ -606,12 +606,6 @@ type RgbColor = {
   blue: number;
 };
 
-type HslColor = {
-  hue: number;
-  saturation: number;
-  lightness: number;
-};
-
 function clampColorChannel(value: number): number {
   // // Clamp RGB channel values to 0..255.
   if (!Number.isFinite(value)) {
@@ -646,85 +640,6 @@ function rgbColorToHex(color: RgbColor): string {
   const green = clampColorChannel(color.green).toString(16).padStart(2, "0");
   const blue = clampColorChannel(color.blue).toString(16).padStart(2, "0");
   return `#${red}${green}${blue}`;
-}
-
-function rgbToHslColor(color: RgbColor): HslColor {
-  // // Convert RGB channels to HSL values used by the inline palette controls.
-  const red = clampColorChannel(color.red) / 255;
-  const green = clampColorChannel(color.green) / 255;
-  const blue = clampColorChannel(color.blue) / 255;
-
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-  const lightness = (max + min) / 2;
-
-  let hue = 0;
-  let saturation = 0;
-
-  if (delta > 0) {
-    saturation = delta / (1 - Math.abs(2 * lightness - 1));
-    if (max === red) {
-      hue = ((green - blue) / delta) % 6;
-    } else if (max === green) {
-      hue = (blue - red) / delta + 2;
-    } else {
-      hue = (red - green) / delta + 4;
-    }
-    hue *= 60;
-    if (hue < 0) {
-      hue += 360;
-    }
-  }
-
-  return {
-    hue: Number(hue.toFixed(2)),
-    saturation: Number((saturation * 100).toFixed(2)),
-    lightness: Number((lightness * 100).toFixed(2))
-  };
-}
-
-function hslToRgbColor(color: HslColor): RgbColor {
-  // // Convert HSL controls back to RGB channels for hex/RGB fields.
-  const hue = ((Number(color.hue) % 360) + 360) % 360;
-  const saturation = Math.max(0, Math.min(100, Number(color.saturation))) / 100;
-  const lightness = Math.max(0, Math.min(100, Number(color.lightness))) / 100;
-
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-  const huePrime = hue / 60;
-  const x = chroma * (1 - Math.abs((huePrime % 2) - 1));
-
-  let redPrime = 0;
-  let greenPrime = 0;
-  let bluePrime = 0;
-
-  if (huePrime >= 0 && huePrime < 1) {
-    redPrime = chroma;
-    greenPrime = x;
-  } else if (huePrime < 2) {
-    redPrime = x;
-    greenPrime = chroma;
-  } else if (huePrime < 3) {
-    greenPrime = chroma;
-    bluePrime = x;
-  } else if (huePrime < 4) {
-    greenPrime = x;
-    bluePrime = chroma;
-  } else if (huePrime < 5) {
-    redPrime = x;
-    bluePrime = chroma;
-  } else {
-    redPrime = chroma;
-    bluePrime = x;
-  }
-
-  const match = lightness - chroma / 2;
-
-  return {
-    red: clampColorChannel((redPrime + match) * 255),
-    green: clampColorChannel((greenPrime + match) * 255),
-    blue: clampColorChannel((bluePrime + match) * 255)
-  };
 }
 
 function looksLikeGuidList(value: string): boolean {
@@ -947,8 +862,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         const colorWrap = document.createElement("div");
         colorWrap.className = "visual-color-row";
 
-        const colorSwatch = document.createElement("span");
+        const colorSwatch = document.createElement("button");
+        colorSwatch.type = "button";
         colorSwatch.className = "visual-color-swatch";
+        colorSwatch.setAttribute("aria-label", `${property.displayName} color`);
 
         const hexInput = document.createElement("input");
         hexInput.type = "text";
@@ -961,8 +878,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         const rgbRow = document.createElement("div");
         rgbRow.className = "visual-color-rgb-row";
 
-        const hslPanel = document.createElement("div");
-        hslPanel.className = "visual-color-hsl-panel";
+        const nativeColorInput = document.createElement("input");
+        nativeColorInput.type = "color";
+        nativeColorInput.className = "visual-color-native";
+        nativeColorInput.tabIndex = -1;
+        nativeColorInput.setAttribute("aria-hidden", "true");
 
         const rgbChannels: Array<keyof RgbColor> = ["red", "green", "blue"];
         const rgbInputs: Record<keyof RgbColor, HTMLInputElement> = {
@@ -970,9 +890,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           green: document.createElement("input"),
           blue: document.createElement("input")
         };
-        const hueInput = document.createElement("input");
-        const saturationInput = document.createElement("input");
-        const lightnessInput = document.createElement("input");
 
         const hiddenInput = document.createElement("input");
         hiddenInput.type = "hidden";
@@ -981,72 +898,28 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hiddenInput.dataset.visualControlKind = property.controlKind;
         hiddenInput.dataset.visualRole = "value";
 
-        const buildHslControlRow = (
-          labelText: string,
-          input: HTMLInputElement,
-          min: number,
-          max: number,
-          step: number
-        ): HTMLElement => {
-          // // Build one compact HSL slider row used by the inline color palette.
-          const rowNode = document.createElement("div");
-          rowNode.className = "visual-color-hsl-row";
-
-          const labelNode = document.createElement("span");
-          labelNode.className = "visual-color-hsl-label";
-          labelNode.textContent = labelText;
-
-          input.type = "range";
-          input.className = "visual-color-hsl-input";
-          input.min = String(min);
-          input.max = String(max);
-          input.step = String(step);
-
-          rowNode.append(labelNode, input);
-          return rowNode;
-        };
-
-        hslPanel.append(
-          buildHslControlRow("H", hueInput, 0, 360, 1),
-          buildHslControlRow("S", saturationInput, 0, 100, 1),
-          buildHslControlRow("L", lightnessInput, 0, 100, 1)
-        );
-
         let syncing = false;
 
         const setColorState = (nextHex: string): void => {
-          // // Keep swatch/hex/RGB controls synchronized from one canonical hex color.
+          // // Keep swatch/native picker/hex/RGB controls synchronized from one canonical hex color.
           if (syncing) {
             return;
           }
           syncing = true;
           const normalized = normalizeColorHex(nextHex) || "#ffffff";
           const rgb = hexToRgbColor(normalized) || { red: 255, green: 255, blue: 255 };
-          const hsl = rgbToHslColor(rgb);
           hiddenInput.value = normalized;
           hexInput.value = normalized;
           colorSwatch.style.backgroundColor = normalized;
+          nativeColorInput.value = normalized;
           rgbInputs.red.value = String(rgb.red);
           rgbInputs.green.value = String(rgb.green);
           rgbInputs.blue.value = String(rgb.blue);
-          hueInput.value = String(Math.round(hsl.hue));
-          saturationInput.value = String(Math.round(hsl.saturation));
-          lightnessInput.value = String(Math.round(hsl.lightness));
           syncing = false;
         };
 
         const initialHex = normalizeColorHex(property.value) || "#ffffff";
         setColorState(initialHex);
-
-        const updateFromHsl = (): void => {
-          // // Recompute color from HSL sliders to provide a clickable palette without native pipette.
-          const nextRgb = hslToRgbColor({
-            hue: Number(hueInput.value),
-            saturation: Number(saturationInput.value),
-            lightness: Number(lightnessInput.value)
-          });
-          setColorState(rgbColorToHex(nextRgb));
-        };
 
         hexInput.addEventListener("input", () => {
           const normalized = normalizeColorHex(hexInput.value);
@@ -1075,16 +948,19 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           rgbRow.appendChild(channelInput);
         });
 
-        hueInput.addEventListener("input", updateFromHsl);
-        saturationInput.addEventListener("input", updateFromHsl);
-        lightnessInput.addEventListener("input", updateFromHsl);
-
         colorSwatch.addEventListener("click", () => {
-          hslPanel.classList.toggle("is-open");
+          // // Open the native CEP/browser color picker anchored to the swatch.
+          nativeColorInput.click();
+        });
+        nativeColorInput.addEventListener("input", () => {
+          setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
+        });
+        nativeColorInput.addEventListener("change", () => {
+          setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
         });
 
-        colorWrap.append(colorSwatch, hexInput);
-        controlWrap.append(colorWrap, hslPanel, rgbRow, hiddenInput);
+        colorWrap.append(colorSwatch, hexInput, nativeColorInput);
+        controlWrap.append(colorWrap, rgbRow, hiddenInput);
       } else if (property.controlKind === "slider") {
         const sliderWrap = document.createElement("div");
         sliderWrap.className = "visual-slider-row";

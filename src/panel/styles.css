@@ -474,6 +474,7 @@ input[type="checkbox"] {
 }
 
 .visual-color-row {
+  position: relative;
   display: grid;
   grid-template-columns: 24px 1fr;
   gap: 6px;
@@ -481,43 +482,34 @@ input[type="checkbox"] {
 }
 
 .visual-color-swatch {
+  appearance: none;
   width: 24px;
   height: 24px;
+  padding: 0;
   border-radius: 6px;
   border: 1px solid rgba(233, 238, 246, 0.25);
   background: #ffffff;
   cursor: pointer;
 }
 
+.visual-color-swatch:focus-visible {
+  outline: 1px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
 .visual-color-hex {
   text-transform: uppercase;
 }
 
-.visual-color-hsl-panel {
-  margin-top: 4px;
-  display: none;
-  gap: 4px;
-}
-
-.visual-color-hsl-panel.is-open {
-  display: grid;
-}
-
-.visual-color-hsl-row {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 6px;
-  align-items: center;
-}
-
-.visual-color-hsl-label {
-  font-size: 0.66rem;
-  color: var(--text-dim);
-}
-
-.visual-color-hsl-input {
+.visual-color-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  border: 0;
   padding: 0;
-  height: 18px;
+  margin: 0;
 }
 
 .visual-color-rgb-row {

@@ -676,6 +676,83 @@ function subcreator_visual_get_color_layout_hint(displayName, groupPath) {
   return "";
 }
 
+var subcreator_visual_color_read_layout_cache = {};
+var subcreator_visual_color_write_layout_cache = {};
+
+function subcreator_visual_get_color_cache_key(displayName) {
+  // // Keep calibration cache scoped by color control display name.
+  return subcreator_trim_string(String(displayName || "")).toLowerCase();
+}
+
+function subcreator_visual_get_cached_color_layout(displayName, mode) {
+  // // Read in-memory layout calibration for color controls (read and write kept separate).
+  var cacheKey = subcreator_visual_get_color_cache_key(displayName);
+  if (!cacheKey) {
+    return "";
+  }
+  var cacheMode = subcreator_trim_string(String(mode || "read")).toLowerCase();
+  var sourceCache = cacheMode === "write" ? subcreator_visual_color_write_layout_cache : subcreator_visual_color_read_layout_cache;
+  return String(sourceCache[cacheKey] || "");
+}
+
+function subcreator_visual_set_cached_color_layout(displayName, layout, mode) {
+  // // Persist successful color layout calibrations for current CEP host session.
+  var cacheKey = subcreator_visual_get_color_cache_key(displayName);
+  if (!cacheKey) {
+    return;
+  }
+
+  var normalizedLayout = subcreator_trim_string(String(layout || "")).toLowerCase();
+  if (!normalizedLayout) {
+    return;
+  }
+
+  var cacheMode = subcreator_trim_string(String(mode || "read")).toLowerCase();
+  if (cacheMode === "write") {
+    subcreator_visual_color_write_layout_cache[cacheKey] = normalizedLayout;
+    return;
+  }
+
+  subcreator_visual_color_read_layout_cache[cacheKey] = normalizedLayout;
+}
+
+function subcreator_visual_build_color_layout_candidates(displayName, groupPath, mode) {
+  // // Build ordered layout candidates (cache first, then hint, then fallbacks) for auto calibration.
+  var candidates = [];
+  var cacheMode = subcreator_trim_string(String(mode || "read")).toLowerCase();
+
+  function pushCandidate(layout) {
+    var normalizedLayout = subcreator_trim_string(String(layout || "")).toLowerCase();
+    if (!normalizedLayout) {
+      return;
+    }
+    for (var index = 0; index < candidates.length; index += 1) {
+      if (candidates[index] === normalizedLayout) {
+        return;
+      }
+    }
+    candidates.push(normalizedLayout);
+  }
+
+  if (cacheMode === "write") {
+    // // Prefer previously calibrated write layout, then currently known read layout as secondary hint.
+    pushCandidate(subcreator_visual_get_cached_color_layout(displayName, "write"));
+    pushCandidate(subcreator_visual_get_cached_color_layout(displayName, "read"));
+    pushCandidate(subcreator_visual_get_color_layout_hint(displayName, groupPath));
+  } else {
+    // // Prefer previously calibrated read layout when decoding getColorValue payloads.
+    pushCandidate(subcreator_visual_get_cached_color_layout(displayName, "read"));
+    pushCandidate(subcreator_visual_get_color_layout_hint(displayName, groupPath));
+    pushCandidate(subcreator_visual_get_cached_color_layout(displayName, "write"));
+  }
+  pushCandidate("argb");
+  pushCandidate("rgba");
+  pushCandidate("bgra");
+  pushCandidate("abgr");
+  pushCandidate("rgb");
+  return candidates;
+}
+
 function subcreator_visual_color_layout_indices(layout, size) {
   // // Resolve channel index map for supported array color layouts.
   var normalizedLayout = String(layout || "").toLowerCase();
@@ -1517,7 +1594,8 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   var hasColorApi = !!(property && (typeof property.getColorValue === "function" || typeof property.setColorValue === "function"));
   var groupSuggestsColor = subcreator_visual_group_suggests_color(groupPath);
   var colorCandidate = subcreator_visual_is_color_label(displayName);
-  var colorLayoutHint = subcreator_visual_get_color_layout_hint(displayName, groupPath);
+  var colorLayoutCandidates = subcreator_visual_build_color_layout_candidates(displayName, groupPath, "read");
+  var colorLayoutHint = colorLayoutCandidates.length ? colorLayoutCandidates[0] : "";
   var allowPackedColor = colorCandidate || groupSuggestsColor;
   var colorHex = allowPackedColor
     ? subcreator_visual_try_read_property_color_hex(property, rawValue, true, colorLayoutHint)
@@ -1548,6 +1626,10 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   }
 
   if (looksLikeColor) {
+    if (colorLayoutHint) {
+      // // Keep the decode layout used during property listing for later apply verification.
+      subcreator_visual_set_cached_color_layout(displayName, colorLayoutHint, "read");
+    }
     return {
       path: currentPath,
       displayName: displayName,
@@ -1938,7 +2020,10 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   if (!rgb) {
     return false;
   }
-  var colorLayoutHint = subcreator_visual_get_color_layout_hint(property.displayName, "");
+  var colorDisplayName = subcreator_trim_string(String(property.displayName || ""));
+  var colorWriteLayoutCandidates = subcreator_visual_build_color_layout_candidates(colorDisplayName, "", "write");
+  var colorReadLayoutCandidates = subcreator_visual_build_color_layout_candidates(colorDisplayName, "", "read");
+  var colorLayoutHint = colorReadLayoutCandidates.length ? colorReadLayoutCandidates[0] : "";
 
   var fallbackRgb = {
     red: rgb.blue,
@@ -1949,7 +2034,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   var colorOrders = [rgb, fallbackRgb];
   var colorDistanceThreshold = 8;
 
-  function applyAndVerify(applyCallback) {
+  function applyAndVerify(applyCallback, readLayout) {
     // // Apply one write strategy and verify readback when host API can expose a color.
     var attempted = false;
     try {
@@ -1962,7 +2047,8 @@ function subcreator_try_set_mogrt_color_property(property, value) {
       return false;
     }
 
-    var readback = subcreator_visual_try_read_property_rgb(property, true, colorLayoutHint);
+    var readbackLayout = subcreator_trim_string(String(readLayout || colorLayoutHint || ""));
+    var readback = subcreator_visual_try_read_property_rgb(property, true, readbackLayout);
     if (!readback) {
       return true;
     }
@@ -1991,7 +2077,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     }
   }
 
-  function trySetColorByApiShape(referenceValue, candidateRgb) {
+  function trySetColorByApiShape(referenceValue, candidateRgb, layoutOverride) {
     // // Match native setColorValue payload shape to avoid unsupported host writes.
     if (typeof property.setColorValue !== "function") {
       return false;
@@ -2007,7 +2093,8 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var v1 = Number(referenceValue[1]);
         var v2 = Number(referenceValue[2]);
         var v3 = Number(referenceValue[3]);
-        var arrayLayout = colorLayoutHint || subcreator_visual_detect_color_array_layout(referenceValue);
+        var arrayLayout =
+          subcreator_trim_string(String(layoutOverride || "")) || colorLayoutHint || subcreator_visual_detect_color_array_layout(referenceValue);
         var hasFourChannels = typeof referenceValue.length === "number" && referenceValue.length >= 4;
         var channelsUseUnit = false;
         var alphaSource = 1;
@@ -2164,14 +2251,44 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   }
 
   if (hasColorApiValue) {
-    for (var apiOrderIndex = 0; apiOrderIndex < colorOrders.length; apiOrderIndex += 1) {
-      var apiRgb = colorOrders[apiOrderIndex];
-      if (
-        applyAndVerify(function () {
-          return trySetColorByApiShape(colorApiValue, apiRgb);
-        })
-      ) {
-        return true;
+    for (var layoutIndex = 0; layoutIndex < colorWriteLayoutCandidates.length; layoutIndex += 1) {
+      var layoutCandidate = colorWriteLayoutCandidates[layoutIndex];
+      for (var apiOrderIndex = 0; apiOrderIndex < colorOrders.length; apiOrderIndex += 1) {
+        var apiRgb = colorOrders[apiOrderIndex];
+        if (colorLayoutHint) {
+          if (
+            applyAndVerify(
+              function () {
+                return trySetColorByApiShape(colorApiValue, apiRgb, layoutCandidate);
+              },
+              colorLayoutHint
+            )
+          ) {
+            subcreator_visual_set_cached_color_layout(colorDisplayName, layoutCandidate, "write");
+            subcreator_visual_set_cached_color_layout(colorDisplayName, colorLayoutHint, "read");
+            return true;
+          }
+        }
+
+        for (var readLayoutIndex = 0; readLayoutIndex < colorReadLayoutCandidates.length; readLayoutIndex += 1) {
+          var readLayoutCandidate = colorReadLayoutCandidates[readLayoutIndex];
+          if (readLayoutCandidate && readLayoutCandidate === colorLayoutHint) {
+            continue;
+          }
+
+          if (
+            applyAndVerify(
+              function () {
+                return trySetColorByApiShape(colorApiValue, apiRgb, layoutCandidate);
+              },
+              readLayoutCandidate
+            )
+          ) {
+            subcreator_visual_set_cached_color_layout(colorDisplayName, layoutCandidate, "write");
+            subcreator_visual_set_cached_color_layout(colorDisplayName, readLayoutCandidate, "read");
+            return true;
+          }
+        }
       }
     }
   }
@@ -2580,7 +2697,10 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               } catch (afterRawSerializeError) {
                 afterRawText = String(afterRawValue);
               }
+              var cachedReadLayout = subcreator_visual_get_cached_color_layout(displayName, "read");
+              var cachedWriteLayout = subcreator_visual_get_cached_color_layout(displayName, "write");
               debugLines.push("color readback color=" + afterColorText + " raw=" + afterRawText);
+              debugLines.push("color layout read=" + String(cachedReadLayout || "<none>") + " write=" + String(cachedWriteLayout || "<none>"));
             } catch (colorReadbackError) {
               debugLines.push("color readback failed: " + String(colorReadbackError));
             }

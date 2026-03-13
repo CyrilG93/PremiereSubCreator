@@ -28,6 +28,7 @@ It supports:
 - Visual editor includes richer host debug payloads and a `Copy logs` button for troubleshooting.
 - `Copy logs` falls back to CEP runtime clipboard APIs when browser clipboard permission is denied.
 - Color controls are detected with stricter rules to avoid rendering numeric sliders/dropdowns as color pickers.
+- Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
 
 ## Important product choices
 

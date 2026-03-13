@@ -628,7 +628,7 @@ function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
     };
   }
 
-  // // 64-bit packed shape (example: a60007002f00fe10) stores each channel on 16 bits.
+  // // 64-bit packed shape stores color words in Blue/Red/Green order in many MOGRT controls.
   var rawHex = numericColor.toString(16);
   if (rawHex.length > 8) {
     while (rawHex.length < 16) {
@@ -639,10 +639,13 @@ function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
       var g16 = parseInt(rawHex.substring(4, 8), 16);
       var b16 = parseInt(rawHex.substring(8, 12), 16);
       if (!isNaN(r16) && !isNaN(g16) && !isNaN(b16)) {
+        var channelBlue = r16 > 255 ? Math.floor(r16 / 256) : r16;
+        var channelRed = g16 > 255 ? Math.floor(g16 / 256) : g16;
+        var channelGreen = b16 > 255 ? Math.floor(b16 / 256) : b16;
         return {
-          red: r16 > 255 ? Math.floor(r16 / 256) : r16,
-          green: g16 > 255 ? Math.floor(g16 / 256) : g16,
-          blue: b16 > 255 ? Math.floor(b16 / 256) : b16,
+          red: channelRed,
+          green: channelGreen,
+          blue: channelBlue,
           unitScale: false
         };
       }
@@ -653,11 +656,15 @@ function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
     return null;
   }
 
+  // // Compact packed numbers are also interpreted as Blue/Red/Green channel order.
   var packed = numericColor % 16777216;
+  var packedBlue = Math.floor(packed / 65536) % 256;
+  var packedRed = Math.floor(packed / 256) % 256;
+  var packedGreen = packed % 256;
   return {
-    red: Math.floor(packed / 65536) % 256,
-    green: Math.floor(packed / 256) % 256,
-    blue: packed % 256,
+    red: packedRed,
+    green: packedGreen,
+    blue: packedBlue,
     unitScale: false
   };
 }
@@ -2083,6 +2090,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
 
     if (typeof rawValue === "number") {
       var packedRgb = fallbackRgbValue.red * 65536 + fallbackRgbValue.green * 256 + fallbackRgbValue.blue;
+      var packedBrg = fallbackRgbValue.blue * 65536 + fallbackRgbValue.red * 256 + fallbackRgbValue.green;
 
       if (
         applyAndVerify(function () {
@@ -2102,6 +2110,30 @@ function subcreator_try_set_mogrt_color_property(property, value) {
             return false;
           }
           property.setValue(255 * 16777216 + packedRgb, true);
+          return true;
+        })
+      ) {
+        return true;
+      }
+
+      if (
+        applyAndVerify(function () {
+          if (typeof property.setValue !== "function") {
+            return false;
+          }
+          property.setValue(packedBrg, true);
+          return true;
+        })
+      ) {
+        return true;
+      }
+
+      if (
+        applyAndVerify(function () {
+          if (typeof property.setValue !== "function") {
+            return false;
+          }
+          property.setValue(255 * 16777216 + packedBrg, true);
           return true;
         })
       ) {
@@ -2174,7 +2206,7 @@ function subcreator_list_selected_mogrt_properties() {
         debug.sample.length < 20 &&
         (item.controlKind === "vector" || item.controlKind === "color" || item.controlKind === "select")
       ) {
-        debug.sample.push({
+        var sampleEntry = {
           path: item.path,
           name: item.displayName,
           group: item.groupPath,
@@ -2182,7 +2214,31 @@ function subcreator_list_selected_mogrt_properties() {
           value: item.value,
           vectorScale: item.vectorScale || null,
           vectorMode: item.vectorMode || null
-        });
+        };
+
+        if (item.controlKind === "color" && firstComponent && firstComponent.properties) {
+          // // Include raw color API/value snapshots to troubleshoot host channel-order inconsistencies.
+          var sampleProperty = subcreator_find_property_by_path(firstComponent.properties, item.path);
+          if (sampleProperty) {
+            try {
+              var sampleColorApiValue =
+                typeof sampleProperty.getColorValue === "function" ? sampleProperty.getColorValue() : "<no getColorValue>";
+              sampleEntry.colorApiRaw =
+                typeof sampleColorApiValue === "string" ? sampleColorApiValue : JSON.stringify(sampleColorApiValue);
+            } catch (sampleColorApiError) {
+              sampleEntry.colorApiRaw = "<error " + String(sampleColorApiError) + ">";
+            }
+
+            try {
+              var sampleRawValue = typeof sampleProperty.getValue === "function" ? sampleProperty.getValue() : "<no getValue>";
+              sampleEntry.valueRaw = typeof sampleRawValue === "string" ? sampleRawValue : JSON.stringify(sampleRawValue);
+            } catch (sampleRawError) {
+              sampleEntry.valueRaw = "<error " + String(sampleRawError) + ">";
+            }
+          }
+        }
+
+        debug.sample.push(sampleEntry);
       }
     }
 

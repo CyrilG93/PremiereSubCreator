@@ -25,6 +25,8 @@ It supports:
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
+- Visual editor includes optional `Live update` mode (disabled by default, persisted) to push edits while tweaking controls.
+- Manual apply on multi-selection now runs with a visible progress bar (`done/total/remaining`) so long updates are trackable.
 - Vector controls such as `Offset` and `Size` are normalized to sequence dimensions for readable values in the panel.
 - Normalized `Position` vectors (`0..1` style values) are automatically shown in sequence pixels (for example `1920 / 1080` on 4K timelines).
 - `Scale` vectors now follow the same sequence-axis basis as `Position` within a group when that MOGRT uses normalized sequence units.
@@ -54,6 +56,11 @@ MOGRT files placed under `templates/mogrt` are auto-discovered and shown in the 
 If a `.mogrt` contains `thumb.png` or `thumb.mp4`, Sub Creator extracts it during build and uses it as the gallery preview.
 
 Without MOGRT, the panel still works but inserts markers as a safe fallback.
+
+### Can Sub Creator list every installed font like Premiere Properties?
+Not reliably with current CEP/ExtendScript APIs.
+
+Sub Creator can apply explicit family/style names, and can show dropdown options when they are exposed by the selected MOGRT text payload, but it cannot query the full Properties font browser list directly.
 
 ### Do we need an SRT file?
 SRT works immediately.

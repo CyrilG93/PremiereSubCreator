@@ -159,6 +159,14 @@
                 Appliquer modifications
               </button>
             </div>
+            <label class="inline-toggle">
+              <input id="visualLiveUpdateToggle" type="checkbox" />
+              <span data-i18n="field.visualLiveUpdate">Live update</span>
+            </label>
+            <div id="visualApplyProgress" class="visual-progress" hidden>
+              <progress id="visualApplyProgressBar" max="1" value="0"></progress>
+              <span id="visualApplyProgressText" class="hint">0 / 0</span>
+            </div>
             <p id="visualSelectionSummary" class="hint" data-i18n="visual.selectionDefault">Aucune selection MOGRT lue.</p>
             <div id="visualPropertyList" class="visual-property-list"></div>
           </section>

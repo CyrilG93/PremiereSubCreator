@@ -496,6 +496,21 @@ function subcreator_get_mogrt_component_from_track_item(trackItem) {
   return component;
 }
 
+function subcreator_collect_selected_mogrt_items(sequence) {
+  // // Collect selected timeline clips that expose a valid MOGRT component.
+  var selectedItems = subcreator_get_selected_track_items(sequence);
+  var mogrtItems = [];
+
+  for (var index = 0; index < selectedItems.length; index += 1) {
+    var trackItem = selectedItems[index];
+    if (subcreator_get_mogrt_component_from_track_item(trackItem)) {
+      mogrtItems.push(trackItem);
+    }
+  }
+
+  return mogrtItems;
+}
+
 function subcreator_detect_visual_property_type(rawValue) {
   // // Categorize host property values so panel can render matching input controls.
   if (typeof rawValue === "number") {
@@ -3827,15 +3842,7 @@ function subcreator_list_selected_mogrt_properties() {
     }
 
     var sequence = app.project.activeSequence;
-    var selectedItems = subcreator_get_selected_track_items(sequence);
-    var mogrtItems = [];
-
-    for (var index = 0; index < selectedItems.length; index += 1) {
-      var item = selectedItems[index];
-      if (subcreator_get_mogrt_component_from_track_item(item)) {
-        mogrtItems.push(item);
-      }
-    }
+    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
 
     if (!mogrtItems.length) {
       return subcreator_ok({
@@ -3934,6 +3941,23 @@ function subcreator_list_selected_mogrt_properties() {
   }
 }
 
+function subcreator_get_selected_mogrt_count() {
+  // // Return current selected MOGRT clip count for panel-side progress rendering.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
+    return subcreator_ok({
+      selectedCount: mogrtItems.length
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
   // // Apply visual property changes from panel payload to each selected MOGRT clip.
   try {
@@ -3945,30 +3969,52 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
     var payload = JSON.parse(decodedPayload || "{}");
     var changes = payload && payload.changes && typeof payload.changes.length === "number" ? payload.changes : [];
     var sequence = app.project.activeSequence;
-    var selectedItems = subcreator_get_selected_track_items(sequence);
-    var mogrtItems = [];
-    for (var itemIndex = 0; itemIndex < selectedItems.length; itemIndex += 1) {
-      var trackItem = selectedItems[itemIndex];
-      if (subcreator_get_mogrt_component_from_track_item(trackItem)) {
-        mogrtItems.push(trackItem);
-      }
-    }
+    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
 
     if (!mogrtItems.length) {
       return subcreator_ok({
         selectedCount: 0,
         updatedCount: 0,
-        failedCount: 0
+        failedCount: 0,
+        processedClipCount: 0
       });
     }
+
+    var clipStartIndex = Number(payload.clipStartIndex);
+    if (isNaN(clipStartIndex) || clipStartIndex < 0) {
+      clipStartIndex = 0;
+    } else {
+      clipStartIndex = Math.floor(clipStartIndex);
+    }
+    if (clipStartIndex > mogrtItems.length) {
+      clipStartIndex = mogrtItems.length;
+    }
+
+    var clipEndIndex = Number(payload.clipEndIndex);
+    if (isNaN(clipEndIndex)) {
+      clipEndIndex = mogrtItems.length;
+    } else {
+      clipEndIndex = Math.floor(clipEndIndex);
+    }
+    if (clipEndIndex < clipStartIndex) {
+      clipEndIndex = clipStartIndex;
+    }
+    if (clipEndIndex > mogrtItems.length) {
+      clipEndIndex = mogrtItems.length;
+    }
+
+    var processedClipCount = Math.max(0, clipEndIndex - clipStartIndex);
 
     var updatedCount = 0;
     var failedCount = 0;
     var debugLines = [];
     var applySequenceSize = subcreator_visual_read_sequence_dimensions();
     debugLines.push("sequence=" + applySequenceSize.width + "x" + applySequenceSize.height);
+    debugLines.push(
+      "clip_range=" + String(clipStartIndex) + "-" + String(clipEndIndex) + " selected=" + String(mogrtItems.length)
+    );
 
-    for (var clipIndex = 0; clipIndex < mogrtItems.length; clipIndex += 1) {
+    for (var clipIndex = clipStartIndex; clipIndex < clipEndIndex; clipIndex += 1) {
       var clip = mogrtItems[clipIndex];
       var component = subcreator_get_mogrt_component_from_track_item(clip);
       if (!component || !component.properties) {
@@ -4106,6 +4152,9 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
     return subcreator_ok({
       selectedCount: mogrtItems.length,
+      processedClipCount: processedClipCount,
+      clipStartIndex: clipStartIndex,
+      clipEndIndex: clipEndIndex,
       updatedCount: updatedCount,
       failedCount: failedCount,
       debug: debugLines

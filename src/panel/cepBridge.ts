@@ -45,6 +45,7 @@ export interface SelectedMogrtVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   options?: Array<{ value: number | string; label: string }>;
+  styleOptionsByFamily?: Record<string, string[]>;
   vectorScale?: number[];
   vectorMode?: string;
   value: string | number | boolean;
@@ -62,6 +63,9 @@ export interface SelectedMogrtVisualPropertyList {
 
 export interface ApplyVisualPropertiesResult {
   selectedCount: number;
+  processedClipCount: number;
+  clipStartIndex?: number;
+  clipEndIndex?: number;
   updatedCount: number;
   failedCount: number;
   debug?: string[];
@@ -968,6 +972,24 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
             })
             .filter((option): option is { value: number | string; label: string } => Boolean(option))
         : undefined,
+      styleOptionsByFamily:
+        item.styleOptionsByFamily && typeof item.styleOptionsByFamily === "object"
+          ? Object.entries(item.styleOptionsByFamily as Record<string, unknown>).reduce<Record<string, string[]>>(
+              (accumulator, [family, rawStyles]) => {
+                if (!Array.isArray(rawStyles)) {
+                  return accumulator;
+                }
+                const styles = rawStyles
+                  .map((entry) => String(entry || "").trim())
+                  .filter((entry) => entry.length > 0);
+                if (styles.length > 0) {
+                  accumulator[String(family)] = styles;
+                }
+                return accumulator;
+              },
+              {}
+            )
+          : undefined,
       vectorScale: Array.isArray(item.vectorScale)
         ? item.vectorScale.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry))
         : undefined,
@@ -997,6 +1019,16 @@ export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrt
   return normalizeVisualPropertyList(response.data);
 }
 
+export async function getSelectedMogrtCount(): Promise<number> {
+  // // Return selected MOGRT count to drive panel-side apply progress steps.
+  const response = await evalHostJson<{ selectedCount: number }>("subcreator_get_selected_mogrt_count()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read selected MOGRT count.");
+  }
+
+  return Number(response.data?.selectedCount || 0);
+}
+
 export async function applyVisualPropertiesToSelectedMogrts(
   changes: Array<{
     path: string;
@@ -1004,10 +1036,20 @@ export async function applyVisualPropertiesToSelectedMogrts(
     controlKind: SelectedMogrtVisualProperty["controlKind"];
     vectorScale?: number[];
     value: string | number | boolean;
-  }>
+  }>,
+  options?: {
+    clipStartIndex?: number;
+    clipEndIndex?: number;
+  }
 ): Promise<ApplyVisualPropertiesResult> {
   // // Send edited property payload to host and apply values on selected MOGRT clips.
-  const encodedPayload = encodeURIComponent(JSON.stringify({ changes }));
+  const encodedPayload = encodeURIComponent(
+    JSON.stringify({
+      changes,
+      clipStartIndex: Number.isFinite(Number(options?.clipStartIndex)) ? Number(options?.clipStartIndex) : undefined,
+      clipEndIndex: Number.isFinite(Number(options?.clipEndIndex)) ? Number(options?.clipEndIndex) : undefined
+    })
+  );
   const response = await evalHostJson<ApplyVisualPropertiesResult>(
     `subcreator_apply_selected_mogrt_properties("${escapeForJsx(encodedPayload)}")`
   );
@@ -1017,6 +1059,9 @@ export async function applyVisualPropertiesToSelectedMogrts(
 
   return {
     selectedCount: Number(response.data?.selectedCount || 0),
+    processedClipCount: Number(response.data?.processedClipCount || 0),
+    clipStartIndex: Number.isFinite(Number(response.data?.clipStartIndex)) ? Number(response.data?.clipStartIndex) : undefined,
+    clipEndIndex: Number.isFinite(Number(response.data?.clipEndIndex)) ? Number(response.data?.clipEndIndex) : undefined,
     updatedCount: Number(response.data?.updatedCount || 0),
     failedCount: Number(response.data?.failedCount || 0),
     debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined

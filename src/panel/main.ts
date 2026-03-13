@@ -5,6 +5,7 @@ import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, 
 import {
   applyCaptionPlan,
   applyVisualPropertiesToSelectedMogrts,
+  getSelectedMogrtCount,
   getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
@@ -66,6 +67,7 @@ interface PanelStateSnapshot {
   fontSize: number;
   mogrtAspectFilter: string;
   selectedMogrtId: string;
+  visualLiveUpdate: boolean;
 }
 
 const elements = {
@@ -94,6 +96,10 @@ const elements = {
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
+  visualLiveUpdateToggle: document.querySelector<HTMLInputElement>("#visualLiveUpdateToggle"),
+  visualApplyProgress: document.querySelector<HTMLElement>("#visualApplyProgress"),
+  visualApplyProgressBar: document.querySelector<HTMLProgressElement>("#visualApplyProgressBar"),
+  visualApplyProgressText: document.querySelector<HTMLElement>("#visualApplyProgressText"),
   copyLogsButton: document.querySelector<HTMLButtonElement>("#copyLogsButton"),
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
@@ -123,6 +129,10 @@ let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
 const visualOriginalValuesByPath = new Map<string, string>();
 const visualOpenGroups = new Set<string>();
+let visualLiveUpdateTimer: number | null = null;
+let visualLiveUpdateQueued = false;
+let visualLiveUpdateInFlight = false;
+let visualApplyInProgress = false;
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -186,7 +196,8 @@ function persistPanelState(): void {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.fontSize ||
-    !elements.mogrtAspectFilter
+    !elements.mogrtAspectFilter ||
+    !elements.visualLiveUpdateToggle
   ) {
     return;
   }
@@ -203,7 +214,8 @@ function persistPanelState(): void {
     linesPerCaption: Number(elements.linesPerCaption.value),
     fontSize: Number(elements.fontSize.value),
     mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
-    selectedMogrtId: selectedMogrt?.id || ""
+    selectedMogrtId: selectedMogrt?.id || "",
+    visualLiveUpdate: Boolean(elements.visualLiveUpdateToggle.checked)
   };
 
   try {
@@ -253,6 +265,10 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter && hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
     elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
+  }
+
+  if (elements.visualLiveUpdateToggle && typeof snapshot.visualLiveUpdate === "boolean") {
+    elements.visualLiveUpdateToggle.checked = snapshot.visualLiveUpdate;
   }
 
   if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
@@ -469,6 +485,10 @@ async function loadLocale(languageCode: string): Promise<void> {
     }
   });
 
+  if (elements.visualApplyProgress && !elements.visualApplyProgress.hidden && elements.visualApplyProgressBar) {
+    setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
+  }
+
   refreshUpdateBanner();
 }
 
@@ -553,6 +573,13 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
 function setActiveMode(mode: PanelMode): void {
   // // Toggle tab state and active mode container visibility.
   activeMode = mode;
+  if (mode !== "visual") {
+    visualLiveUpdateQueued = false;
+    if (visualLiveUpdateTimer !== null) {
+      window.clearTimeout(visualLiveUpdateTimer);
+      visualLiveUpdateTimer = null;
+    }
+  }
 
   if (elements.tabGenerate) {
     const isActive = mode === "generate";
@@ -716,6 +743,42 @@ function updateVisualSelectionSummary(message: string): void {
   elements.visualSelectionSummary.textContent = message;
 }
 
+function setVisualApplyButtonsBusy(isBusy: boolean): void {
+  // // Prevent concurrent apply/read actions while host changes are being processed.
+  if (elements.visualApplyButton) {
+    elements.visualApplyButton.disabled = isBusy;
+  }
+  if (elements.visualReadButton) {
+    elements.visualReadButton.disabled = isBusy;
+  }
+}
+
+function setVisualApplyProgressState(visible: boolean, done = 0, total = 0): void {
+  // // Render visual apply progress feedback for multi-MOGRT updates.
+  if (!elements.visualApplyProgress || !elements.visualApplyProgressBar || !elements.visualApplyProgressText) {
+    return;
+  }
+
+  if (!visible || total < 1) {
+    elements.visualApplyProgress.hidden = true;
+    elements.visualApplyProgressBar.max = 1;
+    elements.visualApplyProgressBar.value = 0;
+    elements.visualApplyProgressText.textContent = "0 / 0";
+    return;
+  }
+
+  const clampedDone = Math.max(0, Math.min(total, done));
+  const remaining = Math.max(0, total - clampedDone);
+  elements.visualApplyProgress.hidden = false;
+  elements.visualApplyProgressBar.max = total;
+  elements.visualApplyProgressBar.value = clampedDone;
+  elements.visualApplyProgressText.textContent = translateTemplate("visual.applyProgress", {
+    done: String(clampedDone),
+    total: String(total),
+    remaining: String(remaining)
+  });
+}
+
 function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   // // Render editable controls from selected MOGRT property metadata returned by host.
   if (!elements.visualPropertyList) {
@@ -840,6 +903,16 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     replaceSelectOptions(styleSelect, mappedOptions, currentStyle);
   };
 
+  const bindLiveUpdateEvent = (
+    control: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+    eventName: "input" | "change" = "change"
+  ): void => {
+    // // Queue a debounced live apply whenever a visual control is edited.
+    control.addEventListener(eventName, () => {
+      scheduleLiveVisualApply();
+    });
+  };
+
   const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
@@ -897,6 +970,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         checkbox.dataset.visualType = property.valueType;
         checkbox.dataset.visualControlKind = property.controlKind;
         checkbox.dataset.visualRole = "value";
+        bindLiveUpdateEvent(checkbox, "change");
 
         const textStylePath = parseTextStyleVirtualPath(property.path);
         if (textStylePath && (textStylePath.styleKey === "fontFsAllCaps" || textStylePath.styleKey === "fontFsSmallCaps")) {
@@ -1009,6 +1083,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             return;
           }
           setColorState(normalized);
+          scheduleLiveVisualApply();
         });
         hexInput.addEventListener("blur", () => {
           setColorState(hiddenInput.value || initialHex);
@@ -1041,9 +1116,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         });
         nativeColorInput.addEventListener("input", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
+          scheduleLiveVisualApply();
         });
         nativeColorInput.addEventListener("change", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
+          scheduleLiveVisualApply();
         });
 
         colorWrap.append(colorSwatch, hexInput, nativeColorInput);
@@ -1084,9 +1161,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
         rangeInput.addEventListener("input", () => {
           numberInput.value = rangeInput.value;
+          scheduleLiveVisualApply();
         });
         numberInput.addEventListener("input", () => {
           rangeInput.value = numberInput.value;
+          scheduleLiveVisualApply();
         });
 
         sliderWrap.append(rangeInput, numberInput);
@@ -1132,6 +1211,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         };
         componentInputs.forEach((input) => {
           input.addEventListener("input", syncVector);
+          bindLiveUpdateEvent(input, "input");
         });
         syncVector();
 
@@ -1165,9 +1245,13 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
           select.addEventListener("change", () => {
             refreshStyleSelectForFamily(textStylePath.basePath);
+            scheduleLiveVisualApply();
           });
         } else if (textStylePath?.styleKey === "fontStyle") {
           textStyleStyleSelectByBasePath.set(textStylePath.basePath, select);
+          bindLiveUpdateEvent(select, "change");
+        } else {
+          bindLiveUpdateEvent(select, "change");
         }
 
         controlWrap.appendChild(select);
@@ -1182,6 +1266,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         input.dataset.visualType = property.valueType;
         input.dataset.visualControlKind = property.controlKind;
         input.dataset.visualRole = "value";
+        bindLiveUpdateEvent(input, "input");
         controlWrap.appendChild(input);
       }
 
@@ -1280,16 +1365,138 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<v
   }
 }
 
-async function applyVisualChangesToSelection(): Promise<void> {
-  // // Apply edited visual property values to currently selected MOGRT clips.
+function isVisualLiveUpdateEnabled(): boolean {
+  // // Read live-update toggle value with safe fallback when UI is not ready.
+  return Boolean(elements.visualLiveUpdateToggle?.checked);
+}
+
+async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean }): Promise<void> {
+  // // Apply edited visual values; use progressive per-clip mode for multi-selection manual apply.
+  const useLiveUpdate = options?.liveUpdate === true;
   const changes = collectVisualPropertyChanges();
   if (!changes.length) {
+    if (useLiveUpdate) {
+      return;
+    }
     throw new Error(translate("visual.noChanges"));
   }
 
-  const response = await applyVisualPropertiesToSelectedMogrts(changes);
-  setLog(`${translate("log.visualApplyDone")}\n${JSON.stringify(response, null, 2)}`);
-  await loadVisualPropertiesFromSelection();
+  if (visualApplyInProgress) {
+    if (useLiveUpdate) {
+      visualLiveUpdateQueued = true;
+      return;
+    }
+    throw new Error("Visual apply already in progress.");
+  }
+
+  visualApplyInProgress = true;
+  if (!useLiveUpdate) {
+    setVisualApplyButtonsBusy(true);
+  }
+
+  try {
+    const selectedCount = await getSelectedMogrtCount();
+    if (!useLiveUpdate && selectedCount > 1) {
+      let updatedCount = 0;
+      let failedCount = 0;
+      const debugLines: string[] = [];
+      setVisualApplyProgressState(true, 0, selectedCount);
+
+      for (let clipIndex = 0; clipIndex < selectedCount; clipIndex += 1) {
+        const step = await applyVisualPropertiesToSelectedMogrts(changes, {
+          clipStartIndex: clipIndex,
+          clipEndIndex: clipIndex + 1
+        });
+        updatedCount += Number(step.updatedCount || 0);
+        failedCount += Number(step.failedCount || 0);
+        if (Array.isArray(step.debug)) {
+          debugLines.push(...step.debug);
+        }
+        setVisualApplyProgressState(true, clipIndex + 1, selectedCount);
+      }
+
+      setLog(
+        `${translate("log.visualApplyDone")}\n${JSON.stringify(
+          {
+            selectedCount,
+            processedClipCount: selectedCount,
+            updatedCount,
+            failedCount,
+            debug: debugLines
+          },
+          null,
+          2
+        )}`
+      );
+      setVisualApplyProgressState(false);
+      await loadVisualPropertiesFromSelection();
+      return;
+    }
+
+    const response = await applyVisualPropertiesToSelectedMogrts(changes);
+    if (!useLiveUpdate) {
+      setLog(`${translate("log.visualApplyDone")}\n${JSON.stringify(response, null, 2)}`);
+      await loadVisualPropertiesFromSelection();
+    }
+  } finally {
+    visualApplyInProgress = false;
+    if (!useLiveUpdate) {
+      setVisualApplyButtonsBusy(false);
+      setVisualApplyProgressState(false);
+    }
+  }
+}
+
+function scheduleLiveVisualApply(): void {
+  // // Debounce live updates so rapid UI edits do not flood host apply calls.
+  if (!isVisualLiveUpdateEnabled() || activeMode !== "visual") {
+    return;
+  }
+
+  visualLiveUpdateQueued = true;
+  if (visualLiveUpdateTimer !== null) {
+    window.clearTimeout(visualLiveUpdateTimer);
+  }
+
+  visualLiveUpdateTimer = window.setTimeout(() => {
+    void runQueuedLiveVisualApply();
+  }, 220);
+}
+
+async function runQueuedLiveVisualApply(): Promise<void> {
+  // // Execute one queued live apply pass and re-run if edits happened during host call.
+  visualLiveUpdateTimer = null;
+  if (!isVisualLiveUpdateEnabled() || activeMode !== "visual") {
+    visualLiveUpdateQueued = false;
+    return;
+  }
+  if (visualLiveUpdateInFlight || visualApplyInProgress) {
+    if (visualLiveUpdateQueued) {
+      if (visualLiveUpdateTimer !== null) {
+        window.clearTimeout(visualLiveUpdateTimer);
+      }
+      visualLiveUpdateTimer = window.setTimeout(() => {
+        void runQueuedLiveVisualApply();
+      }, 220);
+    }
+    return;
+  }
+  if (!visualLiveUpdateQueued) {
+    return;
+  }
+
+  visualLiveUpdateQueued = false;
+  visualLiveUpdateInFlight = true;
+  try {
+    await applyVisualChangesToSelection({ liveUpdate: true });
+  } catch (error) {
+    setLog(String(error), true);
+  } finally {
+    visualLiveUpdateInFlight = false;
+    if (visualLiveUpdateQueued) {
+      scheduleLiveVisualApply();
+    }
+  }
 }
 
 async function copyLogsToClipboard(): Promise<void> {
@@ -1688,6 +1895,12 @@ async function initialize(): Promise<void> {
   elements.whisperModel?.addEventListener("change", () => {
     persistPanelState();
   });
+  elements.visualLiveUpdateToggle?.addEventListener("change", () => {
+    if (elements.visualLiveUpdateToggle?.checked) {
+      scheduleLiveVisualApply();
+    }
+    persistPanelState();
+  });
 
   elements.pingButton?.addEventListener("click", async () => {
     try {
@@ -1709,6 +1922,9 @@ async function initialize(): Promise<void> {
 
   elements.visualReadButton?.addEventListener("click", async () => {
     try {
+      if (visualApplyInProgress) {
+        return;
+      }
       await loadVisualPropertiesFromSelection(true);
     } catch (error) {
       setLog(String(error), true);
@@ -1717,6 +1933,9 @@ async function initialize(): Promise<void> {
 
   elements.visualApplyButton?.addEventListener("click", async () => {
     try {
+      if (visualApplyInProgress) {
+        return;
+      }
       await applyVisualChangesToSelection();
       persistPanelState();
     } catch (error) {

@@ -43,7 +43,8 @@ export interface SelectedMogrtVisualProperty {
   displayName: string;
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
-  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
+  options?: Array<{ value: number | string; label: string }>;
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -921,6 +922,7 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
       controlKindRaw === "checkbox" ||
       controlKindRaw === "color" ||
       controlKindRaw === "vector" ||
+      controlKindRaw === "select" ||
       controlKindRaw === "text" ||
       controlKindRaw === "json"
         ? controlKindRaw
@@ -944,6 +946,24 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
       groupPath,
       valueType,
       controlKind,
+      options: Array.isArray(item.options)
+        ? item.options
+            .map((option) => {
+              const optionRecord = option && typeof option === "object" ? (option as Record<string, unknown>) : null;
+              if (!optionRecord) {
+                return null;
+              }
+
+              const rawOptionValue = optionRecord.value;
+              const optionValue =
+                typeof rawOptionValue === "number" || typeof rawOptionValue === "string"
+                  ? rawOptionValue
+                  : String(rawOptionValue ?? "");
+              const optionLabel = String(optionRecord.label ?? optionValue).trim() || String(optionValue);
+              return { value: optionValue, label: optionLabel };
+            })
+            .filter((option): option is { value: number | string; label: string } => Boolean(option))
+        : undefined,
       minValue: Number.isFinite(Number(item.minValue)) ? Number(item.minValue) : undefined,
       maxValue: Number.isFinite(Number(item.maxValue)) ? Number(item.maxValue) : undefined,
       stepValue: Number.isFinite(Number(item.stepValue)) ? Number(item.stepValue) : undefined,

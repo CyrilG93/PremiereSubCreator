@@ -717,6 +717,21 @@ function subcreator_visual_extract_color_hex(rawValue) {
   return subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue);
 }
 
+function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue) {
+  // // Read color directly from color-capable APIs when available to avoid numeric payload ambiguity.
+  if (property && typeof property.getColorValue === "function") {
+    try {
+      var colorValue = property.getColorValue();
+      var fromColorMethod = subcreator_visual_extract_color_hex(colorValue);
+      if (fromColorMethod) {
+        return fromColorMethod;
+      }
+    } catch (colorReadError) {}
+  }
+
+  return subcreator_visual_extract_color_hex(rawFallbackValue);
+}
+
 function subcreator_visual_is_color_label(displayName) {
   // // Detect color-like labels so panel can render native color pickers.
   var key = String(displayName || "").toLowerCase();
@@ -807,6 +822,10 @@ function subcreator_visual_guess_numeric_range(displayName, rawValue) {
     return { minValue: 0, maxValue: 100, stepValue: 1 };
   }
 
+  if (key.indexOf("offset") !== -1 || key.indexOf("position") !== -1 || key === "x" || key === "y") {
+    return { minValue: -100, maxValue: 100, stepValue: 1 };
+  }
+
   if (key.indexOf("scale") !== -1 || key.indexOf("size") !== -1 || key.indexOf("taille") !== -1) {
     return { minValue: 0, maxValue: 400, stepValue: 1 };
   }
@@ -888,6 +907,46 @@ function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
   };
 }
 
+function subcreator_visual_build_select_options(displayName, rawValue) {
+  // // Build known dropdown option sets for menu-like numeric controls.
+  var key = String(displayName || "").toLowerCase();
+  var numericValue = Number(rawValue);
+  if (isNaN(numericValue)) {
+    return null;
+  }
+
+  function buildLabeledRange(startValue, labels) {
+    var options = [];
+    for (var optionIndex = 0; optionIndex < labels.length; optionIndex += 1) {
+      options.push({
+        value: startValue + optionIndex,
+        label: labels[optionIndex]
+      });
+    }
+    return options;
+  }
+
+  if (key.indexOf("based on") !== -1 || key.indexOf("highlight based on") !== -1) {
+    if (numericValue >= 0 && numericValue <= 1) {
+      return buildLabeledRange(0, ["Words", "Lines"]);
+    }
+    if (numericValue >= 1 && numericValue <= 2) {
+      return buildLabeledRange(1, ["Words", "Lines"]);
+    }
+  }
+
+  if (key.indexOf("paragraph") !== -1 || key.indexOf("align") !== -1 || key.indexOf("alignment") !== -1) {
+    if (numericValue >= 0 && numericValue <= 3) {
+      return buildLabeledRange(0, ["Left", "Center", "Right", "Justify"]);
+    }
+    if (numericValue >= 1 && numericValue <= 4) {
+      return buildLabeledRange(1, ["Left", "Center", "Right", "Justify"]);
+    }
+  }
+
+  return null;
+}
+
 function subcreator_visual_extract_numeric_vector(rawValue) {
   // // Extract compact numeric vectors used by offset/size controls.
   if (!rawValue || typeof rawValue !== "object" || typeof rawValue.length !== "number") {
@@ -950,6 +1009,37 @@ function subcreator_visual_read_sequence_dimensions() {
       }
     }
   } catch (readSequenceError) {}
+
+  try {
+    if (typeof app.enableQE === "function") {
+      app.enableQE();
+    }
+    if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
+      var qeSequence = qe.project.getActiveSequence();
+      if (qeSequence) {
+        var qeWidth = Number(qeSequence.videoFrameWidth);
+        if (!isNaN(qeWidth) && qeWidth > 0) {
+          width = qeWidth;
+        }
+
+        var qeHeight = Number(qeSequence.videoFrameHeight);
+        if (!isNaN(qeHeight) && qeHeight > 0) {
+          height = qeHeight;
+        }
+
+        if (qeSequence.sequence) {
+          var nestedWidth = Number(qeSequence.sequence.videoFrameWidth);
+          if (!isNaN(nestedWidth) && nestedWidth > 0) {
+            width = nestedWidth;
+          }
+          var nestedHeight = Number(qeSequence.sequence.videoFrameHeight);
+          if (!isNaN(nestedHeight) && nestedHeight > 0) {
+            height = nestedHeight;
+          }
+        }
+      }
+    }
+  } catch (readQeError) {}
 
   return {
     width: width,
@@ -1101,7 +1191,7 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   var detectedType = subcreator_detect_visual_property_type(rawValue);
   var key = String(displayName || "").toLowerCase();
   var shouldTreatAsText = subcreator_should_try_text_property(displayName, rawValue);
-  var colorHex = subcreator_visual_extract_color_hex(rawValue);
+  var colorHex = subcreator_visual_try_read_property_color_hex(property, rawValue);
   var colorBlocked =
     key.indexOf("width") !== -1 ||
     key.indexOf("size") !== -1 ||
@@ -1150,6 +1240,19 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
     var value = subcreator_visual_to_number(rawValue);
     if (isNaN(value)) {
       value = 0;
+    }
+
+    var selectOptions = subcreator_visual_build_select_options(displayName, value);
+    if (selectOptions && selectOptions.length > 0) {
+      return {
+        path: currentPath,
+        displayName: displayName,
+        groupPath: groupPath || "General",
+        valueType: "number",
+        controlKind: "select",
+        options: selectOptions,
+        value: value
+      };
     }
 
     var useSlider = !subcreator_visual_is_discrete_numeric_label(displayName);

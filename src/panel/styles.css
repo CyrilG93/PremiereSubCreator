@@ -507,6 +507,20 @@ input[type="checkbox"] {
   gap: 4px;
 }
 
+.visual-vector-cell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px;
+  align-items: center;
+}
+
+.visual-vector-axis {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  min-width: 10px;
+  text-align: center;
+}
+
 .visual-vector-input {
   min-width: 0;
   text-align: center;

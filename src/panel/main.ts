@@ -42,7 +42,8 @@ interface HostVisualProperty {
   displayName: string;
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
-  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector";
+  controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
+  options?: Array<{ value: number | string; label: string }>;
   value: string | number | boolean;
   minValue?: number;
   maxValue?: number;
@@ -640,6 +641,20 @@ function parseVectorValues(value: string | number | boolean): number[] {
   return csvNumbers.length > 0 ? csvNumbers : [0, 0];
 }
 
+function vectorAxisLabel(index: number): string {
+  // // Label vector components to mirror X/Y presentation from Premiere Properties.
+  if (index === 0) {
+    return "X";
+  }
+  if (index === 1) {
+    return "Y";
+  }
+  if (index === 2) {
+    return "Z";
+  }
+  return "W";
+}
+
 function canonicalizeVisualValue(
   controlKind: HostVisualProperty["controlKind"],
   valueType: HostVisualProperty["valueType"],
@@ -864,14 +879,22 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hiddenInput.value = JSON.stringify(vectorValues);
 
         const componentInputs: HTMLInputElement[] = [];
-        vectorValues.forEach((vectorValue) => {
+        vectorValues.forEach((vectorValue, index) => {
+          const vectorCell = document.createElement("label");
+          vectorCell.className = "visual-vector-cell";
+
+          const axis = document.createElement("span");
+          axis.className = "visual-vector-axis";
+          axis.textContent = vectorAxisLabel(index);
+
           const component = document.createElement("input");
           component.type = "number";
           component.step = Number.isInteger(vectorValue) ? "1" : "0.01";
           component.value = String(vectorValue);
           component.className = "visual-vector-input";
           componentInputs.push(component);
-          vectorWrap.appendChild(component);
+          vectorCell.append(axis, component);
+          vectorWrap.appendChild(vectorCell);
         });
 
         const syncVector = (): void => {
@@ -884,6 +907,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         syncVector();
 
         controlWrap.append(vectorWrap, hiddenInput);
+      } else if (property.controlKind === "select" && Array.isArray(property.options) && property.options.length > 0) {
+        const select = document.createElement("select");
+        const currentValue = Number(property.value);
+        property.options.forEach((option) => {
+          const node = document.createElement("option");
+          node.value = String(option.value);
+          node.textContent = option.label;
+          if (Number(option.value) === currentValue || String(option.value) === String(property.value)) {
+            node.selected = true;
+          }
+          select.appendChild(node);
+        });
+        select.dataset.visualPath = property.path;
+        select.dataset.visualType = property.valueType;
+        select.dataset.visualControlKind = property.controlKind;
+        select.dataset.visualRole = "value";
+        controlWrap.appendChild(select);
       } else {
         const input = document.createElement("input");
         input.type = property.controlKind === "number" ? "number" : "text";
@@ -921,7 +961,9 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
   }
 
   const changes: VisualPropertyChange[] = [];
-  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-visual-role="value"]');
+  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+    '[data-visual-role="value"]'
+  );
   controls.forEach((control) => {
     const path = String(control.dataset.visualPath || "");
     const valueType = (String(control.dataset.visualType || "string") as HostVisualProperty["valueType"]) || "string";

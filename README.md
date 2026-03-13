@@ -30,6 +30,8 @@ It supports:
 - Color controls are detected with stricter rules to avoid rendering numeric sliders/dropdowns as color pickers.
 - Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
 - Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.
+- Visual editor uses inline color controls (`HEX` + `RGB`) instead of browser popups, avoiding CEP picker clipping and pipette limitations.
+- Slider fallback ranges now better distinguish `0..100` controls from true signed offset/position sliders.
 
 ## Important product choices
 

@@ -951,7 +951,19 @@ function subcreator_visual_guess_numeric_range(displayName, rawValue) {
     return { minValue: 0, maxValue: 100, stepValue: 1 };
   }
 
-  if (key.indexOf("offset") !== -1 || key.indexOf("position") !== -1 || key === "x" || key === "y") {
+  if (
+    key === "x" ||
+    key === "y" ||
+    key.indexOf("anchor") !== -1 ||
+    key.indexOf("start") !== -1 ||
+    key.indexOf("end") !== -1 ||
+    key.indexOf("progress") !== -1 ||
+    key.indexOf("delay") !== -1
+  ) {
+    return { minValue: 0, maxValue: 100, stepValue: 1 };
+  }
+
+  if (key.indexOf("offset") !== -1 || key.indexOf("position") !== -1) {
     return { minValue: -100, maxValue: 100, stepValue: 1 };
   }
 
@@ -1920,17 +1932,78 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         if (alphaFirstLayout) {
           var firstAlpha = !isNaN(v0) && v0 >= 0 ? v0 : 1;
           var channelsAreUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
+          var alphaFirstValue = channelsAreUnit ? (firstAlpha <= 1 ? firstAlpha : firstAlpha / 255) : firstAlpha <= 1 ? firstAlpha : 255;
+          var alphaFirstRed = channelsAreUnit ? candidateRgb.red / 255 : candidateRgb.red;
+          var alphaFirstGreen = channelsAreUnit ? candidateRgb.green / 255 : candidateRgb.green;
+          var alphaFirstBlue = channelsAreUnit ? candidateRgb.blue / 255 : candidateRgb.blue;
+          var alphaFirstPayload = [alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue];
+
+          try {
+            property.setColorValue(alphaFirstPayload, true);
+            return true;
+          } catch (alphaFirstArrayUiError) {}
+
+          try {
+            property.setColorValue(alphaFirstPayload);
+            return true;
+          } catch (alphaFirstArrayError) {}
+
           if (channelsAreUnit) {
-            property.setColorValue([firstAlpha <= 1 ? firstAlpha : firstAlpha / 255, candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255], true);
+            try {
+              property.setColorValue(alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue);
+              return true;
+            } catch (alphaFirstPositionalUnitError) {}
+
+            try {
+              property.setColorValue(alphaFirstRed, alphaFirstGreen, alphaFirstBlue, alphaFirstValue);
+              return true;
+            } catch (rgbaPositionalUnitError) {}
           } else {
-            property.setColorValue([firstAlpha <= 1 ? firstAlpha : 255, candidateRgb.red, candidateRgb.green, candidateRgb.blue], true);
+            try {
+              property.setColorValue(alphaFirstValue, alphaFirstRed, alphaFirstGreen, alphaFirstBlue);
+              return true;
+            } catch (alphaFirstPositionalError) {}
+
+            try {
+              property.setColorValue(alphaFirstRed, alphaFirstGreen, alphaFirstBlue, alphaFirstValue);
+              return true;
+            } catch (rgbaPositionalError) {}
           }
+
+          return false;
         } else if (useUnitScale) {
-          property.setColorValue([candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255, alphaUnit], true);
+          var unitPayload = [candidateRgb.red / 255, candidateRgb.green / 255, candidateRgb.blue / 255, alphaUnit];
+          try {
+            property.setColorValue(unitPayload, true);
+            return true;
+          } catch (unitArrayUiError) {}
+
+          try {
+            property.setColorValue(unitPayload);
+            return true;
+          } catch (unitArrayError) {}
+
+          try {
+            property.setColorValue(unitPayload[0], unitPayload[1], unitPayload[2], unitPayload[3]);
+            return true;
+          } catch (unitPositionalError) {}
         } else {
-          property.setColorValue([candidateRgb.red, candidateRgb.green, candidateRgb.blue, alpha255], true);
+          var bytePayload = [candidateRgb.red, candidateRgb.green, candidateRgb.blue, alpha255];
+          try {
+            property.setColorValue(bytePayload, true);
+            return true;
+          } catch (byteArrayUiError) {}
+
+          try {
+            property.setColorValue(bytePayload);
+            return true;
+          } catch (byteArrayError) {}
+
+          try {
+            property.setColorValue(bytePayload[0], bytePayload[1], bytePayload[2], bytePayload[3]);
+            return true;
+          } catch (bytePositionalError) {}
         }
-        return true;
       }
     } catch (arrayShapeError) {}
 
@@ -1947,27 +2020,38 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var objectUsesUnit = !isNaN(red) && !isNaN(green) && !isNaN(blue) && red <= 1 && green <= 1 && blue <= 1;
 
         if (objectUsesUnit) {
-          property.setColorValue(
-            {
-              red: candidateRgb.red / 255,
-              green: candidateRgb.green / 255,
-              blue: candidateRgb.blue / 255,
-              alpha: isNaN(alpha) ? 1 : alpha
-            },
-            true
-          );
+          var objectUnitPayload = {
+            red: candidateRgb.red / 255,
+            green: candidateRgb.green / 255,
+            blue: candidateRgb.blue / 255,
+            alpha: isNaN(alpha) ? 1 : alpha
+          };
+          try {
+            property.setColorValue(objectUnitPayload, true);
+            return true;
+          } catch (objectUnitUiError) {}
+
+          try {
+            property.setColorValue(objectUnitPayload);
+            return true;
+          } catch (objectUnitError) {}
         } else {
-          property.setColorValue(
-            {
-              red: candidateRgb.red,
-              green: candidateRgb.green,
-              blue: candidateRgb.blue,
-              alpha: isNaN(alpha) ? 255 : alpha
-            },
-            true
-          );
+          var objectBytePayload = {
+            red: candidateRgb.red,
+            green: candidateRgb.green,
+            blue: candidateRgb.blue,
+            alpha: isNaN(alpha) ? 255 : alpha
+          };
+          try {
+            property.setColorValue(objectBytePayload, true);
+            return true;
+          } catch (objectByteUiError) {}
+
+          try {
+            property.setColorValue(objectBytePayload);
+            return true;
+          } catch (objectByteError) {}
         }
-        return true;
       }
     } catch (objectShapeError) {}
 
@@ -2408,7 +2492,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           } catch (vectorError) {}
         }
 
-        if (!applied) {
+        if (!applied && controlKind !== "color") {
           try {
             var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
             property.setValue(normalizedValue, true);
@@ -2416,6 +2500,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           } catch (setError) {
             applied = false;
           }
+        } else if (!applied && controlKind === "color") {
+          debugLines.push("color apply failed without generic setValue fallback");
         }
 
         if (applied) {

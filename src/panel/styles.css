@@ -473,11 +473,34 @@ input[type="checkbox"] {
   font-size: 0.75rem;
 }
 
-.visual-property-control input[type="color"] {
-  min-height: 30px;
-  padding: 2px;
-  position: relative;
-  z-index: 2;
+.visual-color-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+
+.visual-color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid rgba(233, 238, 246, 0.25);
+  background: #ffffff;
+}
+
+.visual-color-hex {
+  text-transform: uppercase;
+}
+
+.visual-color-rgb-row {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.visual-color-rgb-input {
+  text-align: center;
 }
 
 .visual-property-item--checkbox {

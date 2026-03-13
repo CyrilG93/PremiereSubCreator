@@ -600,6 +600,48 @@ function normalizeColorHex(value: string | number | boolean): string {
   return "";
 }
 
+type RgbColor = {
+  red: number;
+  green: number;
+  blue: number;
+};
+
+function clampColorChannel(value: number): number {
+  // // Clamp RGB channel values to 0..255.
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 255) {
+    return 255;
+  }
+  return Math.round(value);
+}
+
+function hexToRgbColor(value: string): RgbColor | null {
+  // // Convert #rrggbb hex values to numeric RGB channels.
+  const hex = normalizeColorHex(value);
+  if (!hex) {
+    return null;
+  }
+
+  return {
+    red: parseInt(hex.slice(1, 3), 16),
+    green: parseInt(hex.slice(3, 5), 16),
+    blue: parseInt(hex.slice(5, 7), 16)
+  };
+}
+
+function rgbColorToHex(color: RgbColor): string {
+  // // Convert RGB channel values to canonical lowercase #rrggbb.
+  const red = clampColorChannel(color.red).toString(16).padStart(2, "0");
+  const green = clampColorChannel(color.green).toString(16).padStart(2, "0");
+  const blue = clampColorChannel(color.blue).toString(16).padStart(2, "0");
+  return `#${red}${green}${blue}`;
+}
+
 function looksLikeGuidList(value: string): boolean {
   // // Detect Premiere internal GUID-list artifacts to avoid exposing them as group labels.
   return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(String(value || "").trim());
@@ -817,14 +859,81 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         textarea.dataset.visualRole = "value";
         controlWrap.appendChild(textarea);
       } else if (property.controlKind === "color") {
-        const colorInput = document.createElement("input");
-        colorInput.type = "color";
-        colorInput.value = /^#[0-9a-f]{6}$/i.test(String(property.value || "")) ? String(property.value) : "#ffffff";
-        colorInput.dataset.visualPath = property.path;
-        colorInput.dataset.visualType = property.valueType;
-        colorInput.dataset.visualControlKind = property.controlKind;
-        colorInput.dataset.visualRole = "value";
-        controlWrap.appendChild(colorInput);
+        const colorWrap = document.createElement("div");
+        colorWrap.className = "visual-color-row";
+
+        const colorSwatch = document.createElement("span");
+        colorSwatch.className = "visual-color-swatch";
+
+        const hexInput = document.createElement("input");
+        hexInput.type = "text";
+        hexInput.className = "visual-color-hex";
+        hexInput.maxLength = 7;
+        hexInput.spellcheck = false;
+        hexInput.autocapitalize = "off";
+        hexInput.autocomplete = "off";
+
+        const rgbRow = document.createElement("div");
+        rgbRow.className = "visual-color-rgb-row";
+
+        const rgbChannels: Array<keyof RgbColor> = ["red", "green", "blue"];
+        const rgbInputs: Record<keyof RgbColor, HTMLInputElement> = {
+          red: document.createElement("input"),
+          green: document.createElement("input"),
+          blue: document.createElement("input")
+        };
+
+        const hiddenInput = document.createElement("input");
+        hiddenInput.type = "hidden";
+        hiddenInput.dataset.visualPath = property.path;
+        hiddenInput.dataset.visualType = property.valueType;
+        hiddenInput.dataset.visualControlKind = property.controlKind;
+        hiddenInput.dataset.visualRole = "value";
+
+        const setColorState = (nextHex: string): void => {
+          // // Keep swatch/hex/RGB controls synchronized from one canonical hex color.
+          const normalized = normalizeColorHex(nextHex) || "#ffffff";
+          const rgb = hexToRgbColor(normalized) || { red: 255, green: 255, blue: 255 };
+          hiddenInput.value = normalized;
+          hexInput.value = normalized;
+          colorSwatch.style.backgroundColor = normalized;
+          rgbInputs.red.value = String(rgb.red);
+          rgbInputs.green.value = String(rgb.green);
+          rgbInputs.blue.value = String(rgb.blue);
+        };
+
+        const initialHex = normalizeColorHex(property.value) || "#ffffff";
+        setColorState(initialHex);
+
+        hexInput.addEventListener("input", () => {
+          const normalized = normalizeColorHex(hexInput.value);
+          if (!normalized) {
+            return;
+          }
+          setColorState(normalized);
+        });
+        hexInput.addEventListener("blur", () => {
+          setColorState(hiddenInput.value || initialHex);
+        });
+
+        rgbChannels.forEach((channel) => {
+          const channelInput = rgbInputs[channel];
+          channelInput.type = "number";
+          channelInput.className = "visual-color-rgb-input";
+          channelInput.min = "0";
+          channelInput.max = "255";
+          channelInput.step = "1";
+          channelInput.addEventListener("input", () => {
+            const red = clampColorChannel(Number(rgbInputs.red.value));
+            const green = clampColorChannel(Number(rgbInputs.green.value));
+            const blue = clampColorChannel(Number(rgbInputs.blue.value));
+            setColorState(rgbColorToHex({ red, green, blue }));
+          });
+          rgbRow.appendChild(channelInput);
+        });
+
+        colorWrap.append(colorSwatch, hexInput);
+        controlWrap.append(colorWrap, rgbRow, hiddenInput);
       } else if (property.controlKind === "slider") {
         const sliderWrap = document.createElement("div");
         sliderWrap.className = "visual-slider-row";

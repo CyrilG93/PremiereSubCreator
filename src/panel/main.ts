@@ -958,11 +958,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hexInput.autocapitalize = "off";
         hexInput.autocomplete = "off";
 
-        const paletteToggle = document.createElement("button");
-        paletteToggle.type = "button";
-        paletteToggle.className = "visual-color-toggle";
-        paletteToggle.textContent = "Palette";
-
         const rgbRow = document.createElement("div");
         rgbRow.className = "visual-color-rgb-row";
 
@@ -1084,14 +1079,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         saturationInput.addEventListener("input", updateFromHsl);
         lightnessInput.addEventListener("input", updateFromHsl);
 
-        paletteToggle.addEventListener("click", () => {
-          hslPanel.classList.toggle("is-open");
-        });
         colorSwatch.addEventListener("click", () => {
           hslPanel.classList.toggle("is-open");
         });
 
-        colorWrap.append(colorSwatch, hexInput, paletteToggle);
+        colorWrap.append(colorSwatch, hexInput);
         controlWrap.append(colorWrap, hslPanel, rgbRow, hiddenInput);
       } else if (property.controlKind === "slider") {
         const sliderWrap = document.createElement("div");

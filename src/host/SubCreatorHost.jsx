@@ -667,6 +667,48 @@ function subcreator_visual_detect_color_array_layout(rawArray) {
   return "rgb";
 }
 
+function subcreator_visual_get_color_layout_hint(displayName, groupPath) {
+  // // Provide per-control layout hints for known Premiere quirks (for example some Stroke Color controls).
+  var key = (String(displayName || "") + " " + String(groupPath || "")).toLowerCase();
+  if (key.indexOf("stroke color") !== -1 || key.indexOf("outline color") !== -1) {
+    return "bgra";
+  }
+  return "";
+}
+
+function subcreator_visual_color_layout_indices(layout, size) {
+  // // Resolve channel index map for supported array color layouts.
+  var normalizedLayout = String(layout || "").toLowerCase();
+  if (normalizedLayout === "argb") {
+    return { red: 1, green: 2, blue: 3, alpha: 0 };
+  }
+  if (normalizedLayout === "bgra") {
+    return { red: 2, green: 1, blue: 0, alpha: 3 };
+  }
+  if (normalizedLayout === "abgr") {
+    return { red: 3, green: 2, blue: 1, alpha: 0 };
+  }
+  if (normalizedLayout === "rgba") {
+    return { red: 0, green: 1, blue: 2, alpha: 3 };
+  }
+
+  if (Number(size || 0) >= 4) {
+    return { red: 0, green: 1, blue: 2, alpha: 3 };
+  }
+
+  return { red: 0, green: 1, blue: 2, alpha: -1 };
+}
+
+function subcreator_visual_extract_rgb_from_array_with_layout(rawArray, layout) {
+  // // Extract RGB from one explicit array layout.
+  if (!rawArray || typeof rawArray.length !== "number" || rawArray.length < 3) {
+    return null;
+  }
+
+  var indices = subcreator_visual_color_layout_indices(layout, rawArray.length);
+  return subcreator_visual_extract_rgb_triplet(rawArray[indices.red], rawArray[indices.green], rawArray[indices.blue]);
+}
+
 function subcreator_visual_is_alpha_first_color_array(rawArray) {
   // // Backward-compatible helper for existing call sites that need ARGB detection.
   return subcreator_visual_detect_color_array_layout(rawArray) === "argb";
@@ -730,7 +772,7 @@ function subcreator_visual_extract_rgb_from_packed_number(rawNumber) {
   };
 }
 
-function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) {
+function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers, preferredArrayLayout) {
   // // Read RGB channels from known color payload shapes.
   if (rawValue === undefined || rawValue === null) {
     return null;
@@ -774,7 +816,7 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
     if (text.indexOf("{") !== -1 || text.indexOf("[") !== -1) {
       try {
         var parsed = JSON.parse(text);
-        return subcreator_visual_extract_rgb_from_value(parsed, allowPackedNumbers);
+        return subcreator_visual_extract_rgb_from_value(parsed, allowPackedNumbers, preferredArrayLayout);
       } catch (jsonError) {}
     }
 
@@ -783,17 +825,17 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
 
   if (typeof rawValue === "object") {
     if (typeof rawValue.length === "number" && rawValue.length >= 3) {
+      if (preferredArrayLayout) {
+        var fromPreferredArray = subcreator_visual_extract_rgb_from_array_with_layout(rawValue, preferredArrayLayout);
+        if (fromPreferredArray) {
+          return fromPreferredArray;
+        }
+      }
+
       var arrayLayout = subcreator_visual_detect_color_array_layout(rawValue);
-      if (arrayLayout === "argb") {
-        var fromAlphaFirstArray = subcreator_visual_extract_rgb_triplet(rawValue[1], rawValue[2], rawValue[3]);
-        if (fromAlphaFirstArray) {
-          return fromAlphaFirstArray;
-        }
-      } else if (arrayLayout === "rgba") {
-        var fromRgbaArray = subcreator_visual_extract_rgb_triplet(rawValue[0], rawValue[1], rawValue[2]);
-        if (fromRgbaArray) {
-          return fromRgbaArray;
-        }
+      var fromDetectedLayout = subcreator_visual_extract_rgb_from_array_with_layout(rawValue, arrayLayout);
+      if (fromDetectedLayout) {
+        return fromDetectedLayout;
       }
 
       var fromArray = subcreator_visual_extract_rgb_triplet(rawValue[0], rawValue[1], rawValue[2]);
@@ -821,7 +863,7 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
     }
 
     if (rawValue.color && typeof rawValue.color === "object") {
-      var fromNestedColor = subcreator_visual_extract_rgb_from_value(rawValue.color, allowPackedNumbers);
+      var fromNestedColor = subcreator_visual_extract_rgb_from_value(rawValue.color, allowPackedNumbers, preferredArrayLayout);
       if (fromNestedColor) {
         return fromNestedColor;
       }
@@ -831,28 +873,28 @@ function subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers) 
   return null;
 }
 
-function subcreator_visual_extract_color_hex(rawValue, allowPackedNumbers) {
+function subcreator_visual_extract_color_hex(rawValue, allowPackedNumbers, preferredArrayLayout) {
   // // Convert color payloads to CSS hex for panel color inputs.
-  var rgb = subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers === true);
+  var rgb = subcreator_visual_extract_rgb_from_value(rawValue, allowPackedNumbers === true, preferredArrayLayout);
   if (!rgb) {
     return "";
   }
   return subcreator_visual_rgb_to_hex(rgb.red, rgb.green, rgb.blue);
 }
 
-function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue, allowPackedNumbers) {
+function subcreator_visual_try_read_property_color_hex(property, rawFallbackValue, allowPackedNumbers, preferredArrayLayout) {
   // // Read color directly from color-capable APIs when available to avoid numeric payload ambiguity.
   if (property && typeof property.getColorValue === "function") {
     try {
       var colorValue = property.getColorValue();
-      var fromColorMethod = subcreator_visual_extract_color_hex(colorValue, true);
+      var fromColorMethod = subcreator_visual_extract_color_hex(colorValue, true, preferredArrayLayout);
       if (fromColorMethod) {
         return fromColorMethod;
       }
     } catch (colorReadError) {}
   }
 
-  return subcreator_visual_extract_color_hex(rawFallbackValue, allowPackedNumbers);
+  return subcreator_visual_extract_color_hex(rawFallbackValue, allowPackedNumbers, preferredArrayLayout);
 }
 
 function subcreator_visual_is_likely_color_payload(rawValue) {
@@ -1475,8 +1517,11 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   var hasColorApi = !!(property && (typeof property.getColorValue === "function" || typeof property.setColorValue === "function"));
   var groupSuggestsColor = subcreator_visual_group_suggests_color(groupPath);
   var colorCandidate = subcreator_visual_is_color_label(displayName);
+  var colorLayoutHint = subcreator_visual_get_color_layout_hint(displayName, groupPath);
   var allowPackedColor = colorCandidate || groupSuggestsColor;
-  var colorHex = allowPackedColor ? subcreator_visual_try_read_property_color_hex(property, rawValue, true) : "";
+  var colorHex = allowPackedColor
+    ? subcreator_visual_try_read_property_color_hex(property, rawValue, true, colorLayoutHint)
+    : "";
   var colorBlocked =
     key.indexOf("width") !== -1 ||
     key.indexOf("size") !== -1 ||
@@ -1782,7 +1827,7 @@ function subcreator_visual_parse_hex_color(value) {
   return null;
 }
 
-function subcreator_visual_try_read_property_rgb(property, allowPackedFallback) {
+function subcreator_visual_try_read_property_rgb(property, allowPackedFallback, preferredArrayLayout) {
   // // Read RGB channels from getColorValue first, then getValue fallback when needed.
   if (!property) {
     return null;
@@ -1791,7 +1836,7 @@ function subcreator_visual_try_read_property_rgb(property, allowPackedFallback) 
   if (typeof property.getColorValue === "function") {
     try {
       var colorValue = property.getColorValue();
-      var fromColorApi = subcreator_visual_extract_rgb_from_value(colorValue, true);
+      var fromColorApi = subcreator_visual_extract_rgb_from_value(colorValue, true, preferredArrayLayout);
       if (fromColorApi) {
         return fromColorApi;
       }
@@ -1801,7 +1846,7 @@ function subcreator_visual_try_read_property_rgb(property, allowPackedFallback) 
   if (typeof property.getValue === "function") {
     try {
       var rawValue = property.getValue();
-      return subcreator_visual_extract_rgb_from_value(rawValue, allowPackedFallback === true);
+      return subcreator_visual_extract_rgb_from_value(rawValue, allowPackedFallback === true, preferredArrayLayout);
     } catch (valueReadError) {}
   }
 
@@ -1893,6 +1938,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   if (!rgb) {
     return false;
   }
+  var colorLayoutHint = subcreator_visual_get_color_layout_hint(property.displayName, "");
 
   var fallbackRgb = {
     red: rgb.blue,
@@ -1916,7 +1962,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
       return false;
     }
 
-    var readback = subcreator_visual_try_read_property_rgb(property, true);
+    var readback = subcreator_visual_try_read_property_rgb(property, true, colorLayoutHint);
     if (!readback) {
       return true;
     }
@@ -1961,7 +2007,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var v1 = Number(referenceValue[1]);
         var v2 = Number(referenceValue[2]);
         var v3 = Number(referenceValue[3]);
-        var arrayLayout = subcreator_visual_detect_color_array_layout(referenceValue);
+        var arrayLayout = colorLayoutHint || subcreator_visual_detect_color_array_layout(referenceValue);
         var hasFourChannels = typeof referenceValue.length === "number" && referenceValue.length >= 4;
         var channelsUseUnit = false;
         var alphaSource = 1;
@@ -1969,9 +2015,12 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         if (arrayLayout === "argb") {
           channelsUseUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
           alphaSource = !isNaN(v0) ? v0 : 1;
-        } else if (arrayLayout === "rgba") {
+        } else if (arrayLayout === "rgba" || arrayLayout === "bgra") {
           channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
           alphaSource = !isNaN(v3) ? v3 : 1;
+        } else if (arrayLayout === "abgr") {
+          channelsUseUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
+          alphaSource = !isNaN(v0) ? v0 : 1;
         } else {
           channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
           alphaSource = 1;
@@ -1986,10 +2035,13 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         var payload = [redPayload, greenPayload, bluePayload];
 
         if (hasFourChannels) {
-          if (arrayLayout === "argb") {
-            payload = [channelsUseUnit ? alphaUnit : alpha255, redPayload, greenPayload, bluePayload];
-          } else {
-            payload = [redPayload, greenPayload, bluePayload, channelsUseUnit ? alphaUnit : alpha255];
+          var indices = subcreator_visual_color_layout_indices(arrayLayout, 4);
+          payload = [0, 0, 0, 0];
+          payload[indices.red] = redPayload;
+          payload[indices.green] = greenPayload;
+          payload[indices.blue] = bluePayload;
+          if (indices.alpha >= 0 && indices.alpha < payload.length) {
+            payload[indices.alpha] = channelsUseUnit ? alphaUnit : alpha255;
           }
         }
 

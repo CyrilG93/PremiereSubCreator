@@ -38,6 +38,14 @@ export interface WhisperRuntimeStatus {
   details: string;
 }
 
+export interface SystemFontCatalog {
+  available: boolean;
+  source: string;
+  details: string;
+  families: string[];
+  stylesByFamily: Record<string, string[]>;
+}
+
 export interface SelectedMogrtVisualProperty {
   path: string;
   displayName: string;
@@ -122,6 +130,7 @@ interface SubcreatorRuntimeConfig {
 }
 
 let subcreatorRuntimeConfigCache: SubcreatorRuntimeConfig | null | undefined;
+let subcreatorSystemFontCatalogCache: SystemFontCatalog | null | undefined;
 
 function escapeForJsx(input: string): string {
   // // Escape special characters before embedding text into evalScript call strings.
@@ -218,6 +227,230 @@ function pushUniqueString(target: string[], value: string): void {
   }
 
   target.push(normalized);
+}
+
+function normalizeFontText(value: string): string {
+  // // Normalize font fragments from filenames into user-facing labels.
+  return String(value || "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitFontFamilyAndStyle(rawName: string): { family: string; style: string } {
+  // // Infer family/style from common font filename conventions (`Family-BoldItalic`, `Family Bold`).
+  const cleaned = normalizeFontText(rawName);
+  if (!cleaned) {
+    return { family: "", style: "" };
+  }
+
+  const firstHyphen = cleaned.indexOf("-");
+  if (firstHyphen > 0) {
+    const familyPart = normalizeFontText(cleaned.slice(0, firstHyphen));
+    const stylePart = normalizeFontText(cleaned.slice(firstHyphen + 1));
+    if (familyPart) {
+      return {
+        family: familyPart,
+        style: stylePart || "Regular"
+      };
+    }
+  }
+
+  const styleKeywords = new Set([
+    "thin",
+    "hairline",
+    "extralight",
+    "ultralight",
+    "light",
+    "book",
+    "regular",
+    "roman",
+    "medium",
+    "semibold",
+    "demibold",
+    "bold",
+    "extrabold",
+    "ultrabold",
+    "black",
+    "heavy",
+    "italic",
+    "oblique",
+    "condensed",
+    "narrow",
+    "expanded",
+    "extended",
+    "display",
+    "caps",
+    "smallcaps"
+  ]);
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length < 2) {
+    return {
+      family: cleaned,
+      style: "Regular"
+    };
+  }
+
+  const styleWords: string[] = [];
+  let cursor = words.length - 1;
+  while (cursor >= 0) {
+    const probe = words[cursor].toLowerCase();
+    if (!styleKeywords.has(probe)) {
+      break;
+    }
+    styleWords.unshift(words[cursor]);
+    cursor -= 1;
+  }
+
+  if (styleWords.length < 1 || cursor < 0) {
+    return {
+      family: cleaned,
+      style: "Regular"
+    };
+  }
+
+  const family = normalizeFontText(words.slice(0, cursor + 1).join(" "));
+  const style = normalizeFontText(styleWords.join(" "));
+  return {
+    family: family || cleaned,
+    style: style || "Regular"
+  };
+}
+
+function mergeStyleMapEntry(target: Record<string, string[]>, family: string, style: string): void {
+  // // Store one style under one family with case-insensitive dedupe.
+  const normalizedFamily = normalizeFontText(family);
+  const normalizedStyle = normalizeFontText(style) || "Regular";
+  if (!normalizedFamily) {
+    return;
+  }
+
+  const familyLookupKey = normalizedFamily.toLowerCase();
+  const existingKey = Object.keys(target).find((entry) => entry.toLowerCase() === familyLookupKey) || normalizedFamily;
+  if (!Array.isArray(target[existingKey])) {
+    target[existingKey] = [];
+  }
+  pushUniqueString(target[existingKey], normalizedStyle);
+}
+
+function isFontFileName(entryName: string): boolean {
+  // // Filter files likely to be installable fonts.
+  return /\.(ttf|otf|ttc|dfont)$/i.test(String(entryName || ""));
+}
+
+function listSystemFontDirectories(modules: CepNodeModules): string[] {
+  // // Build platform-specific directories where user/system fonts are typically installed.
+  const directories: string[] = [];
+  const home = modules.os.homedir();
+
+  if (detectWindowsRuntime()) {
+    const winDir = String(modules.process.env.WINDIR || "C:\\Windows");
+    const localAppData = String(modules.process.env.LOCALAPPDATA || "");
+    pushUniqueString(directories, modules.path.join(winDir, "Fonts"));
+    if (localAppData) {
+      pushUniqueString(directories, modules.path.join(localAppData, "Microsoft", "Windows", "Fonts"));
+    }
+    return directories;
+  }
+
+  pushUniqueString(directories, modules.path.join(home, "Library", "Fonts"));
+  pushUniqueString(directories, "/Library/Fonts");
+  pushUniqueString(directories, "/System/Library/Fonts");
+  return directories;
+}
+
+function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
+  // // Scan local font folders from CEP Node runtime and build family/style catalog for dropdown fallback.
+  if (typeof subcreatorSystemFontCatalogCache !== "undefined") {
+    return subcreatorSystemFontCatalogCache;
+  }
+
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    subcreatorSystemFontCatalogCache = null;
+    return null;
+  }
+
+  const directories = listSystemFontDirectories(modules);
+  const stylesByFamily: Record<string, string[]> = {};
+  const visited = new Set<string>();
+  const queue: Array<{ path: string; depth: number }> = [];
+  const maxDepth = 2;
+  const maxFiles = 8000;
+  let fileCount = 0;
+
+  for (const directory of directories) {
+    if (!directory || !modules.fs.existsSync(directory)) {
+      continue;
+    }
+    queue.push({ path: directory, depth: 0 });
+  }
+
+  while (queue.length > 0 && fileCount < maxFiles) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const normalizedPath = String(current.path || "");
+    if (!normalizedPath || visited.has(normalizedPath)) {
+      continue;
+    }
+    visited.add(normalizedPath);
+
+    let entries: string[] = [];
+    try {
+      entries = modules.fs.readdirSync(normalizedPath);
+    } catch {
+      continue;
+    }
+
+    for (const entryName of entries) {
+      if (fileCount >= maxFiles) {
+        break;
+      }
+
+      const fullPath = modules.path.join(normalizedPath, entryName);
+      if (isFontFileName(entryName)) {
+        const baseName = String(entryName).replace(/\.[^.]+$/i, "");
+        const parsed = splitFontFamilyAndStyle(baseName);
+        if (parsed.family) {
+          mergeStyleMapEntry(stylesByFamily, parsed.family, parsed.style || "Regular");
+          fileCount += 1;
+        }
+        continue;
+      }
+
+      if (current.depth >= maxDepth) {
+        continue;
+      }
+
+      try {
+        // // Probe subfolders without statSync by attempting to read directory entries.
+        modules.fs.readdirSync(fullPath);
+        queue.push({ path: fullPath, depth: current.depth + 1 });
+      } catch {
+        // // Ignore non-directory entries.
+      }
+    }
+  }
+
+  const families = Object.keys(stylesByFamily).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  for (const family of families) {
+    stylesByFamily[family] = stylesByFamily[family]
+      .slice()
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }
+
+  subcreatorSystemFontCatalogCache = {
+    available: families.length > 0,
+    source: detectWindowsRuntime() ? "windows-font-dirs" : "mac-font-dirs",
+    details: `families=${families.length} scannedFiles=${fileCount} maxFiles=${maxFiles}`,
+    families,
+    stylesByFamily
+  };
+
+  return subcreatorSystemFontCatalogCache;
 }
 
 function normalizeRuntimeConfigString(value: unknown): string {
@@ -1027,6 +1260,31 @@ export async function getSelectedMogrtCount(): Promise<number> {
   }
 
   return Number(response.data?.selectedCount || 0);
+}
+
+export async function readSystemFontCatalog(): Promise<SystemFontCatalog> {
+  // // Read local system font families/styles from CEP Node runtime for dropdown fallback.
+  const detected = detectSystemFontCatalogViaCepNode();
+  if (!detected) {
+    return {
+      available: false,
+      source: "unavailable",
+      details: "CEP Node runtime unavailable",
+      families: [],
+      stylesByFamily: {}
+    };
+  }
+
+  return {
+    available: detected.available,
+    source: detected.source,
+    details: detected.details,
+    families: detected.families.slice(),
+    stylesByFamily: Object.keys(detected.stylesByFamily).reduce<Record<string, string[]>>((accumulator, family) => {
+      accumulator[family] = detected.stylesByFamily[family].slice();
+      return accumulator;
+    }, {})
+  };
 }
 
 export async function applyVisualPropertiesToSelectedMogrts(

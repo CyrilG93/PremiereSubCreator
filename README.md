@@ -23,6 +23,7 @@ It supports:
 - Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
 - Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`, faux style toggles) without exposing editable caption text.
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
+- When CEP Node is available, the visual editor augments font dropdowns with local OS-installed font families/styles (macOS/Windows font directories) as a fallback when MOGRT options are limited.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Visual editor includes optional `Live update` mode (disabled by default, persisted) to push edits while tweaking controls.

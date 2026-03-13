@@ -6,6 +6,7 @@ import {
   applyCaptionPlan,
   applyVisualPropertiesToSelectedMogrts,
   getSelectedMogrtCount,
+  readSystemFontCatalog,
   getWhisperRuntimeStatus,
   pickSrtPath,
   pickWhisperAudioPath,
@@ -14,6 +15,7 @@ import {
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
+import type { SystemFontCatalog } from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
 
@@ -133,6 +135,13 @@ let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
+let systemFontCatalog: SystemFontCatalog = {
+  available: false,
+  source: "unavailable",
+  details: "",
+  families: [],
+  stylesByFamily: {}
+};
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -570,6 +579,45 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   }
 }
 
+async function loadSystemFontCatalogFallback(): Promise<void> {
+  // // Load OS font families/styles so font selectors can offer non-MOGRT fonts when possible.
+  try {
+    const catalog = await readSystemFontCatalog();
+    if (!catalog || !catalog.available) {
+      systemFontCatalog = {
+        available: false,
+        source: catalog?.source || "unavailable",
+        details: catalog?.details || "",
+        families: [],
+        stylesByFamily: {}
+      };
+      return;
+    }
+
+    systemFontCatalog = {
+      available: true,
+      source: String(catalog.source || "system-fonts"),
+      details: String(catalog.details || ""),
+      families: Array.isArray(catalog.families) ? catalog.families.slice() : [],
+      stylesByFamily:
+        catalog.stylesByFamily && typeof catalog.stylesByFamily === "object"
+          ? Object.entries(catalog.stylesByFamily).reduce<Record<string, string[]>>((accumulator, [family, styles]) => {
+              accumulator[String(family)] = Array.isArray(styles) ? styles.slice() : [];
+              return accumulator;
+            }, {})
+          : {}
+    };
+  } catch {
+    systemFontCatalog = {
+      available: false,
+      source: "error",
+      details: "",
+      families: [],
+      stylesByFamily: {}
+    };
+  }
+}
+
 function setActiveMode(mode: PanelMode): void {
   // // Toggle tab state and active mode container visibility.
   activeMode = mode;
@@ -841,6 +889,49 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
     return normalized;
   };
+
+  const mergeStyleMaps = (...maps: Array<Record<string, string[]>>): Record<string, string[]> => {
+    // // Merge style maps with case-insensitive family/style dedupe.
+    const merged: Record<string, string[]> = {};
+
+    for (const map of maps) {
+      if (!map || typeof map !== "object") {
+        continue;
+      }
+
+      for (const [rawFamily, rawStyles] of Object.entries(map)) {
+        const family = String(rawFamily || "").trim();
+        if (!family || !Array.isArray(rawStyles)) {
+          continue;
+        }
+
+        const familyKey = family.toLowerCase();
+        const existingFamily =
+          Object.keys(merged).find((entry) => entry.toLowerCase() === familyKey) || family;
+        if (!Array.isArray(merged[existingFamily])) {
+          merged[existingFamily] = [];
+        }
+        for (const styleValue of rawStyles) {
+          const styleText = String(styleValue || "").trim();
+          if (!styleText) {
+            continue;
+          }
+          if (!merged[existingFamily].some((entry) => entry.toLowerCase() === styleText.toLowerCase())) {
+            merged[existingFamily].push(styleText);
+          }
+        }
+      }
+    }
+
+    return merged;
+  };
+
+  const normalizedSystemStyleMap = systemFontCatalog.available
+    ? normalizeStyleMap(systemFontCatalog.stylesByFamily)
+    : {};
+  const systemFamilies = systemFontCatalog.available && Array.isArray(systemFontCatalog.families)
+    ? systemFontCatalog.families
+    : [];
 
   const replaceSelectOptions = (select: HTMLSelectElement, options: string[], preferredValue: string): void => {
     // // Replace select items while preserving currently selected value when possible.
@@ -1235,13 +1326,18 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         select.dataset.visualRole = "value";
 
         const textStylePath = parseTextStyleVirtualPath(property.path);
-        if (textStylePath && property.styleOptionsByFamily) {
-          const normalizedMap = normalizeStyleMap(property.styleOptionsByFamily);
-          if (Object.keys(normalizedMap).length > 0) {
-            textStyleStylesByFamilyByBasePath.set(textStylePath.basePath, normalizedMap);
+        if (textStylePath) {
+          const hostMap = property.styleOptionsByFamily ? normalizeStyleMap(property.styleOptionsByFamily) : {};
+          const existingMap = textStyleStylesByFamilyByBasePath.get(textStylePath.basePath) || {};
+          const combinedMap = mergeStyleMaps(existingMap, hostMap, normalizedSystemStyleMap);
+          if (Object.keys(combinedMap).length > 0) {
+            textStyleStylesByFamilyByBasePath.set(textStylePath.basePath, combinedMap);
           }
         }
         if (textStylePath?.styleKey === "fontFamily") {
+          const currentFamilyValue = String(select.value || currentValue || "").trim();
+          const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
+          replaceSelectOptions(select, [...selectFamilies, ...systemFamilies], currentFamilyValue);
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
           select.addEventListener("change", () => {
             refreshStyleSelectForFamily(textStylePath.basePath);
@@ -1249,6 +1345,16 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           });
         } else if (textStylePath?.styleKey === "fontStyle") {
           textStyleStyleSelectByBasePath.set(textStylePath.basePath, select);
+          const relatedMap = textStyleStylesByFamilyByBasePath.get(textStylePath.basePath);
+          if (relatedMap && Object.keys(relatedMap).length > 0) {
+            const selectStyles = Array.from(select.options).map((option) => String(option.value || ""));
+            const relatedFamilySelect = textStyleFamilySelectByBasePath.get(textStylePath.basePath);
+            const selectedFamilyKey = String(relatedFamilySelect?.value || "").trim().toLowerCase();
+            const stylesFromMap =
+              (selectedFamilyKey ? relatedMap[selectedFamilyKey] : undefined) ||
+              Object.values(relatedMap).flat();
+            replaceSelectOptions(select, [...selectStyles, ...stylesFromMap], String(select.value || currentValue || ""));
+          }
           bindLiveUpdateEvent(select, "change");
         } else {
           bindLiveUpdateEvent(select, "change");
@@ -1814,6 +1920,7 @@ async function initialize(): Promise<void> {
 
   await loadLocale(elements.languageSelect?.value ?? "en");
   await enforceWhisperSourceAvailability();
+  await loadSystemFontCatalogFallback();
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();

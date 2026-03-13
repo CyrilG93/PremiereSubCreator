@@ -1648,6 +1648,21 @@ function subcreator_visual_vector_to_panel_units(vectorValues, vectorScale) {
   return subcreator_visual_apply_vector_scale(vectorValues, vectorScale || []);
 }
 
+function subcreator_visual_round_number_for_display(value, decimals) {
+  // // Round panel-facing numeric values to keep visual editor compact and readable.
+  var numericValue = Number(value);
+  if (isNaN(numericValue)) {
+    return 0;
+  }
+  var digits = Math.max(Number(decimals || 1), 0);
+  var factor = Math.pow(10, digits);
+  var rounded = Math.round(numericValue * factor) / factor;
+  if (Math.abs(rounded) < 0.0000001) {
+    return 0;
+  }
+  return rounded;
+}
+
 function subcreator_visual_vector_to_host_units(vectorValues, vectorScale) {
   // // Convert panel vector values back to host units using inverse inferred scale.
   if (!vectorValues || !vectorValues.length) {
@@ -1713,24 +1728,122 @@ function subcreator_visual_is_font_size_key(normalizedKey) {
 }
 
 function subcreator_visual_is_generic_font_family_key(normalizedKey) {
-  // // Catch additional template-specific keys (for example `capPropFontEditValue`).
+  // // Catch additional template-specific family keys (for example `fontEditValue`).
   return (
-    normalizedKey.indexOf("font") !== -1 &&
-    normalizedKey.indexOf("style") === -1 &&
-    normalizedKey.indexOf("size") === -1 &&
-    normalizedKey.indexOf("runlength") === -1 &&
-    normalizedKey.indexOf("faux") === -1
+    normalizedKey === "fonteditvalue" ||
+    normalizedKey === "mfonteditvalue" ||
+    normalizedKey === "fontfamilyvalue" ||
+    normalizedKey === "fontfamilyeditvalue" ||
+    normalizedKey === "mfontfamilyvalue" ||
+    normalizedKey === "mfontfamilyeditvalue"
   );
 }
 
 function subcreator_visual_is_generic_font_style_key(normalizedKey) {
   // // Catch additional template-specific style keys (for example `fontStyleEditValue`).
-  return normalizedKey.indexOf("font") !== -1 && normalizedKey.indexOf("style") !== -1;
+  return (
+    normalizedKey === "fontstylevalue" ||
+    normalizedKey === "fontstyleeditvalue" ||
+    normalizedKey === "mfontstylevalue" ||
+    normalizedKey === "mfontstyleeditvalue" ||
+    normalizedKey === "fontfauxstylevalue" ||
+    normalizedKey === "fontfauxstyleeditvalue"
+  );
 }
 
 function subcreator_visual_is_generic_font_size_key(normalizedKey) {
   // // Catch additional template-specific size keys (for example `fontSizeEditValue`).
-  return normalizedKey.indexOf("font") !== -1 && normalizedKey.indexOf("size") !== -1;
+  return (
+    normalizedKey === "fontsizevalue" ||
+    normalizedKey === "fontsizeeditvalue" ||
+    normalizedKey === "mfontsizevalue" ||
+    normalizedKey === "mfontsizeeditvalue"
+  );
+}
+
+function subcreator_visual_extract_first_string(value) {
+  // // Extract first textual item from scalar or array payloads.
+  if (typeof value === "string") {
+    var direct = subcreator_trim_string(value);
+    return direct ? direct : "";
+  }
+
+  if (value && typeof value.length === "number" && value.length > 0) {
+    for (var index = 0; index < value.length; index += 1) {
+      if (typeof value[index] === "string") {
+        var item = subcreator_trim_string(String(value[index] || ""));
+        if (item) {
+          return item;
+        }
+      }
+    }
+  }
+
+  return "";
+}
+
+function subcreator_visual_extract_first_number(value) {
+  // // Extract first numeric item from scalar or array payloads (ignoring booleans).
+  if (typeof value === "number") {
+    return Number(value);
+  }
+
+  if (typeof value === "string") {
+    var fromString = Number(value);
+    return isNaN(fromString) ? NaN : fromString;
+  }
+
+  if (typeof value === "boolean") {
+    return NaN;
+  }
+
+  if (value && typeof value.length === "number" && value.length > 0) {
+    for (var index = 0; index < value.length; index += 1) {
+      if (typeof value[index] === "boolean") {
+        continue;
+      }
+      var itemNumber = Number(value[index]);
+      if (!isNaN(itemNumber)) {
+        return itemNumber;
+      }
+    }
+  }
+
+  return NaN;
+}
+
+function subcreator_visual_split_font_token(token) {
+  // // Split font token strings like `Montserrat-Bold` into family and style parts.
+  var text = subcreator_trim_string(String(token || ""));
+  if (!text) {
+    return { family: "", style: "" };
+  }
+
+  var hyphenIndex = text.indexOf("-");
+  if (hyphenIndex < 1) {
+    return { family: text, style: "" };
+  }
+
+  var family = subcreator_trim_string(text.substring(0, hyphenIndex));
+  var style = subcreator_trim_string(text.substring(hyphenIndex + 1));
+  return {
+    family: family || text,
+    style: style
+  };
+}
+
+function subcreator_visual_join_font_token(family, style, fallbackToken) {
+  // // Rebuild font token while preserving a sane fallback when style is empty.
+  var normalizedFamily = subcreator_trim_string(String(family || ""));
+  var normalizedStyle = subcreator_trim_string(String(style || ""));
+  if (!normalizedFamily) {
+    var fallback = subcreator_trim_string(String(fallbackToken || ""));
+    return fallback;
+  }
+  if (!normalizedStyle) {
+    return normalizedFamily;
+  }
+  return normalizedFamily + "-" + normalizedStyle;
 }
 
 function subcreator_visual_extract_text_style_from_value(rawValue) {
@@ -1776,40 +1889,47 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
       var value = node[key];
       var normalizedKey = subcreator_visual_normalize_text_style_key(key);
 
+      if (!result.fontFamily && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
+        var fontToken = subcreator_visual_extract_first_string(value);
+        if (fontToken) {
+          var tokenParts = subcreator_visual_split_font_token(fontToken);
+          if (tokenParts.family) {
+            result.fontFamily = tokenParts.family;
+          }
+          if (!result.fontStyle && tokenParts.style) {
+            result.fontStyle = tokenParts.style;
+          }
+        }
+      }
+
       if (!result.fontFamily && subcreator_visual_is_font_family_key(normalizedKey)) {
-        var familyValue = subcreator_trim_string(String(value || ""));
+        var familyValue = subcreator_visual_extract_first_string(value);
         if (familyValue) {
           result.fontFamily = familyValue;
         }
       }
-      if (!result.fontFamily && subcreator_visual_is_generic_font_family_key(normalizedKey) && typeof value === "string") {
-        var genericFamilyValue = subcreator_trim_string(String(value || ""));
-        if (genericFamilyValue && genericFamilyValue.length <= 120) {
-          result.fontFamily = genericFamilyValue;
-        }
-      }
 
       if (!result.fontStyle && subcreator_visual_is_font_style_key(normalizedKey)) {
-        var styleValue = subcreator_trim_string(String(value || ""));
+        var styleValue = subcreator_visual_extract_first_string(value);
         if (styleValue) {
           result.fontStyle = styleValue;
         }
       }
-      if (!result.fontStyle && subcreator_visual_is_generic_font_style_key(normalizedKey) && typeof value === "string") {
-        var genericStyleValue = subcreator_trim_string(String(value || ""));
-        if (genericStyleValue && genericStyleValue.length <= 120) {
+      if (!result.fontStyle && subcreator_visual_is_generic_font_style_key(normalizedKey)) {
+        var genericStyleValue = subcreator_visual_extract_first_string(value);
+        if (genericStyleValue) {
           result.fontStyle = genericStyleValue;
         }
       }
 
       if (isNaN(result.fontSize) && subcreator_visual_is_font_size_key(normalizedKey)) {
-        var sizeValue = Number(value);
+        var sizeValue = subcreator_visual_extract_first_number(value);
         if (!isNaN(sizeValue) && sizeValue > 0 && sizeValue < 2000) {
           result.fontSize = sizeValue;
         }
       }
       if (isNaN(result.fontSize) && subcreator_visual_is_generic_font_size_key(normalizedKey)) {
-        var genericSizeValue = Number(value);
+        var genericSizeValue = subcreator_visual_extract_first_number(value);
         if (!isNaN(genericSizeValue) && genericSizeValue > 0 && genericSizeValue < 2000) {
           result.fontSize = genericSizeValue;
         }
@@ -2011,7 +2131,11 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
   if (vectorValue) {
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
     var vectorMeta = subcreator_visual_choose_vector_scale(displayName, groupPath, vectorValue, sequenceSize);
-    var displayVector = subcreator_visual_vector_to_panel_units(vectorValue, vectorMeta.scale);
+    var displayVectorRaw = subcreator_visual_vector_to_panel_units(vectorValue, vectorMeta.scale);
+    var displayVector = [];
+    for (var vectorDisplayIndex = 0; vectorDisplayIndex < displayVectorRaw.length; vectorDisplayIndex += 1) {
+      displayVector.push(subcreator_visual_round_number_for_display(displayVectorRaw[vectorDisplayIndex], 1));
+    }
     return {
       path: currentPath,
       displayName: displayName,
@@ -2027,6 +2151,7 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
         score: vectorMeta.score,
         raw: vectorValue,
         scale: vectorMeta.scale,
+        panelRaw: displayVectorRaw,
         panel: displayVector,
         sequenceWidth: sequenceSize.width,
         sequenceHeight: sequenceSize.height
@@ -2367,35 +2492,62 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       var value = node[key];
       var normalizedKey = subcreator_visual_normalize_text_style_key(key);
 
-      if (styleKey === "fontFamily" && subcreator_visual_is_font_family_key(normalizedKey)) {
-        node[key] = String(styleValue);
+      if (styleKey === "fontFamily" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
+        var currentToken = subcreator_visual_extract_first_string(value);
+        var currentParts = subcreator_visual_split_font_token(currentToken);
+        var rebuiltToken = subcreator_visual_join_font_token(styleValue, currentParts.style, currentToken);
+        if (typeof value === "string") {
+          node[key] = rebuiltToken;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = rebuiltToken;
+        } else {
+          node[key] = [rebuiltToken];
+        }
         updated = true;
-      } else if (
-        styleKey === "fontFamily" &&
-        subcreator_visual_is_generic_font_family_key(normalizedKey) &&
-        typeof value === "string"
-      ) {
+      } else if (styleKey === "fontStyle" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
+        var existingToken = subcreator_visual_extract_first_string(value);
+        var existingParts = subcreator_visual_split_font_token(existingToken);
+        var rebuiltStyleToken = subcreator_visual_join_font_token(existingParts.family, styleValue, existingToken);
+        if (typeof value === "string") {
+          node[key] = rebuiltStyleToken;
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = rebuiltStyleToken;
+        } else {
+          node[key] = [rebuiltStyleToken];
+        }
+        updated = true;
+      } else if (styleKey === "fontFamily" && subcreator_visual_is_font_family_key(normalizedKey)) {
         node[key] = String(styleValue);
         updated = true;
       } else if (styleKey === "fontStyle" && subcreator_visual_is_font_style_key(normalizedKey)) {
         node[key] = String(styleValue);
         updated = true;
-      } else if (
-        styleKey === "fontStyle" &&
-        subcreator_visual_is_generic_font_style_key(normalizedKey) &&
-        typeof value === "string"
-      ) {
-        node[key] = String(styleValue);
+      } else if (styleKey === "fontStyle" && subcreator_visual_is_generic_font_style_key(normalizedKey)) {
+        if (typeof value === "string") {
+          node[key] = String(styleValue);
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = String(styleValue);
+        } else {
+          node[key] = [String(styleValue)];
+        }
         updated = true;
       } else if (styleKey === "fontSize" && subcreator_visual_is_font_size_key(normalizedKey)) {
-        node[key] = Number(styleValue);
+        if (typeof value === "string" && value !== "") {
+          node[key] = String(Number(styleValue));
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = Number(styleValue);
+        } else {
+          node[key] = Number(styleValue);
+        }
         updated = true;
-      } else if (
-        styleKey === "fontSize" &&
-        subcreator_visual_is_generic_font_size_key(normalizedKey) &&
-        !isNaN(Number(value))
-      ) {
-        node[key] = Number(styleValue);
+      } else if (styleKey === "fontSize" && subcreator_visual_is_generic_font_size_key(normalizedKey)) {
+        if (typeof value === "string" && value !== "") {
+          node[key] = String(Number(styleValue));
+        } else if (value && typeof value.length === "number" && value.length > 0) {
+          value[0] = Number(styleValue);
+        } else {
+          node[key] = Number(styleValue);
+        }
         updated = true;
       }
 
@@ -2421,11 +2573,20 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
   var keyList = [];
 
   if (styleKey === "fontFamily") {
-    keyList = ["fontName", "mFontName", "fontFamily", "mFontFamily"];
+    keyList = ["fontName", "mFontName", "fontFamily", "mFontFamily", "fontEditValue", "mFontEditValue"];
   } else if (styleKey === "fontStyle") {
-    keyList = ["fontStyle", "mFontStyle", "fontStyleName", "mFontStyleName"];
+    keyList = [
+      "fontStyle",
+      "mFontStyle",
+      "fontStyleName",
+      "mFontStyleName",
+      "fontStyleValue",
+      "fontStyleEditValue",
+      "fontFauxStyleValue",
+      "fontFauxStyleEditValue"
+    ];
   } else if (styleKey === "fontSize") {
-    keyList = ["fontSize", "mFontSize"];
+    keyList = ["fontSize", "mFontSize", "fontSizeValue", "fontSizeEditValue", "mFontSizeValue", "mFontSizeEditValue"];
   }
 
   for (var keyIndex = 0; keyIndex < keyList.length; keyIndex += 1) {
@@ -2433,9 +2594,29 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
     if (styleKey === "fontSize") {
       var numericRegex = new RegExp('"' + keyName + '"\\s*:\\s*("([^"\\\\]|\\\\.)*"|-?\\d+(?:\\.\\d+)?)', "g");
       patched = patched.replace(numericRegex, '"' + keyName + '":' + String(Number(styleValue)));
+      var numericArrayRegex = new RegExp('"' + keyName + '"\\s*:\\s*\\[[^\\]]*\\]', "g");
+      patched = patched.replace(numericArrayRegex, '"' + keyName + '":[' + String(Number(styleValue)) + "]");
     } else {
+      if (keyName === "fontEditValue" || keyName === "mFontEditValue") {
+        var fontTokenRegex = new RegExp('"' + keyName + '"\\s*:\\s*\\["((?:[^"\\\\]|\\\\.)*)"\\]', "g");
+        patched = patched.replace(fontTokenRegex, function (matchValue, tokenValue) {
+          var tokenParts = subcreator_visual_split_font_token(String(tokenValue || ""));
+          var rebuiltToken = "";
+          if (styleKey === "fontFamily") {
+            rebuiltToken = subcreator_visual_join_font_token(String(styleValue), tokenParts.style, tokenValue);
+          } else if (styleKey === "fontStyle") {
+            rebuiltToken = subcreator_visual_join_font_token(tokenParts.family, String(styleValue), tokenValue);
+          } else {
+            rebuiltToken = String(styleValue);
+          }
+          return '"' + keyName + '":[' + JSON.stringify(rebuiltToken) + "]";
+        });
+        continue;
+      }
       var stringRegex = new RegExp('"' + keyName + '"\\s*:\\s*"([^"\\\\]|\\\\.)*"', "g");
       patched = patched.replace(stringRegex, '"' + keyName + '":' + styleString);
+      var stringArrayRegex = new RegExp('"' + keyName + '"\\s*:\\s*\\["([^"\\\\]|\\\\.)*"\\]', "g");
+      patched = patched.replace(stringArrayRegex, '"' + keyName + '":[' + styleString + "]");
     }
   }
 

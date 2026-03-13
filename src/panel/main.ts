@@ -1131,6 +1131,19 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return true;
   };
 
+  const tryOpenConstrainedSelect = (select: HTMLSelectElement, event?: Event): void => {
+    // // Expand only from collapsed state; keep option-click behavior intact while inline list is already open.
+    if (select.getAttribute("data-expanded-inline") === "1" || Number(select.size || 1) > 1) {
+      return;
+    }
+    if (ensureSelectViewportSpace(select)) {
+      if (event) {
+        event.preventDefault();
+      }
+      select.focus();
+    }
+  };
+
   const grouped = new Map<string, HostVisualProperty[]>();
   for (const property of properties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
@@ -1466,22 +1479,14 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
           replaceSelectOptions(select, [...selectFamilies, ...systemFamilies], currentFamilyValue);
           select.addEventListener("mousedown", (event) => {
-            if (ensureSelectViewportSpace(select)) {
-              event.preventDefault();
-              select.focus();
-            }
+            tryOpenConstrainedSelect(select, event);
           });
           select.addEventListener("touchstart", (event) => {
-            if (ensureSelectViewportSpace(select)) {
-              event.preventDefault();
-              select.focus();
-            }
+            tryOpenConstrainedSelect(select, event);
           });
           select.addEventListener("keydown", (event) => {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-              if (ensureSelectViewportSpace(select)) {
-                event.preventDefault();
-              }
+              tryOpenConstrainedSelect(select, event);
             }
           });
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
@@ -1502,22 +1507,14 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             replaceSelectOptions(select, [...selectStyles, ...stylesFromMap], String(select.value || currentValue || ""));
           }
           select.addEventListener("mousedown", (event) => {
-            if (ensureSelectViewportSpace(select)) {
-              event.preventDefault();
-              select.focus();
-            }
+            tryOpenConstrainedSelect(select, event);
           });
           select.addEventListener("touchstart", (event) => {
-            if (ensureSelectViewportSpace(select)) {
-              event.preventDefault();
-              select.focus();
-            }
+            tryOpenConstrainedSelect(select, event);
           });
           select.addEventListener("keydown", (event) => {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-              if (ensureSelectViewportSpace(select)) {
-                event.preventDefault();
-              }
+              tryOpenConstrainedSelect(select, event);
             }
           });
           bindLiveUpdateEvent(select, "change");

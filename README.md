@@ -20,7 +20,6 @@ It supports:
 - Version label in panel header + automatic GitHub release update banner.
 - Persisted panel settings (source, style, limits, language, and selected MOGRT).
 - Mac + Windows installers.
-- Visual editor does not expose subtitle text content editing (style-only) to avoid overriding generated captions.
 - Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`, faux style toggles) without exposing editable caption text.
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
 - Long font dropdowns are constrained to available panel height to avoid clipped lists near the bottom of the UI.

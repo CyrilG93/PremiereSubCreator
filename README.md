@@ -43,7 +43,6 @@ It supports:
 - Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.
 - Ambiguous 4-channel arrays (alpha markers on first and last slot) now default to `ARGB`, which fixes common `Stroke Color` mismatches.
 - Visual editor color controls use swatch + `HEX` only and open the native CEP/browser color palette when clicking the swatch.
-- Color layout calibration now keeps read-layout and write-layout caches separate to improve consistency on controls like `Stroke Color`.
 - Visual editor now reapplies current style values even when unchanged locally, so the same settings can be pushed to newly selected MOGRT clips.
 - After visual apply, Sub Creator nudges/restores the playhead to force an immediate Program Monitor refresh for color updates.
 - Slider fallback ranges now better distinguish `0..100` controls from true signed offset/position sliders.

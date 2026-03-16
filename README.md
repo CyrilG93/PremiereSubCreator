@@ -35,7 +35,7 @@ It supports:
 - The generate action now sits directly above the MOGRT gallery, and the gallery folder filter is restored after reopening Premiere instead of resetting to `All formats`.
 - Subtitle generation now shows a dedicated progress bar; Whisper workflows expose stage progress (sequence export, Whisper analysis, timing parse, plan/apply), and CEP Node Whisper runs stream percentage updates when the CLI reports them.
 - The same generation progress bar is also used for SRT builds (read, parse, planning, apply) so caption creation no longer looks stalled on long imports.
-- The panel theme now derives its neutral surface colors from Premiere CEP `appSkinInfo`, so it follows host appearance variants more closely instead of using a fixed dark-blue skin.
+- The panel theme now derives its neutral surface colors from Premiere CEP `appSkinInfo`, and normalizes `Darkest` / `Dark` / `Light` skins so the panel follows host appearance changes without collapsing to pure black.
 - On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path and an enlarged CEP buffer, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
 - System font catalog loading is now lazy and starts when the visual editor needs font-family/style expansion, instead of blocking panel startup.

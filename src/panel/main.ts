@@ -389,13 +389,23 @@ function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
   };
 }
 
-function liftDarkThemeFloor(color: RgbColor, minimumChannel: number): RgbColor {
-  // // Prevent CEP darkest themes from collapsing the whole panel to near-black instead of Premiere-like gray.
-  return {
-    red: Math.max(color.red, minimumChannel),
-    green: Math.max(color.green, minimumChannel),
-    blue: Math.max(color.blue, minimumChannel)
-  };
+function normalizeHostPanelBackground(color: RgbColor): RgbColor {
+  // // Keep Premiere skin variants readable while still following host light/dark/darkest appearance changes.
+  const luminance = rgbColorLuminance(color);
+  if (luminance <= 0.16) {
+    return mixRgbColor(color, { red: 52, green: 52, blue: 52 }, 0.9);
+  }
+  if (luminance <= 0.32) {
+    return mixRgbColor(color, { red: 58, green: 58, blue: 58 }, 0.42);
+  }
+  if (luminance >= 0.7) {
+    return mixRgbColor(color, { red: 198, green: 198, blue: 198 }, 0.24);
+  }
+  if (luminance >= 0.55) {
+    return mixRgbColor(color, { red: 184, green: 184, blue: 184 }, 0.12);
+  }
+
+  return color;
 }
 
 function rgbColorLuminance(color: RgbColor): number {
@@ -445,25 +455,23 @@ function applyHostPanelTheme(): void {
     green: 137,
     blue: 255
   };
-  const normalizedPanelBackground = rgbColorLuminance(panelBackground) <= 0.24
-    ? liftDarkThemeFloor(panelBackground, 54)
-    : panelBackground;
-  const panelLuminance = rgbColorLuminance(normalizedPanelBackground);
-  const isLightTheme = panelLuminance >= 0.55;
-  const isDarkestTheme = panelLuminance <= 0.26;
+  const hostLuminance = rgbColorLuminance(panelBackground);
+  const normalizedPanelBackground = normalizeHostPanelBackground(panelBackground);
+  const isLightTheme = hostLuminance >= 0.55;
+  const isDarkestTheme = hostLuminance <= 0.18;
   const textPrimary = isLightTheme
     ? { red: 36, green: 36, blue: 36 }
     : { red: 236, green: 236, blue: 236 };
   const textDim = mixRgbColor(textPrimary, normalizedPanelBackground, isLightTheme ? 0.48 : 0.38);
-  const bgPrimary = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 10 : isDarkestTheme ? 1 : 4);
-  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 15 : 7);
-  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 20 : 11);
-  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 8 : 1);
-  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 11 : 5);
-  const accent = mixRgbColor(highlightColor, normalizedPanelBackground, 0.12);
+  const bgPrimary = normalizedPanelBackground;
+  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 8 : isDarkestTheme ? 8 : 6);
+  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 13 : isDarkestTheme ? 12 : 10);
+  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -3 : isDarkestTheme ? -2 : -1);
+  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 5 : isDarkestTheme ? 5 : 4);
+  const accent = mixRgbColor(highlightColor, normalizedPanelBackground, 0.15);
   const accentSoft = mixRgbColor(highlightColor, textPrimary, isLightTheme ? 0.22 : 0.18);
-  const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -24 : 20);
-  const borderStrong = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -38 : 32);
+  const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -28 : 16);
+  const borderStrong = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -42 : 24);
   const buttonPrimary = mixRgbColor(accent, bgSurface, 0.28);
   const buttonPrimaryAlt = mixRgbColor(accent, bgPrimary, 0.2);
   const buttonPrimaryText = rgbColorLuminance(buttonPrimary) >= 0.5

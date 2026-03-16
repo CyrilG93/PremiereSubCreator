@@ -30,8 +30,10 @@ It supports:
 - Font-family apply now retries multiple token variants (`family-style`, `family`, common style aliases) and validates readback to reduce fallback-to-wrong-font behavior on some MOGRTs.
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
+- Startup restores panel state first, then defers heavier tasks such as Whisper runtime probing, installed MOGRT refresh, and release checks so the extension becomes interactive faster.
 - On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path and an enlarged CEP buffer, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
+- System font catalog loading is now lazy and starts when the visual editor needs font-family/style expansion, instead of blocking panel startup.
 - Font token apply now retries canonical variants (`Family-Style`, compact internal ids, and cached aliases) and keeps text style dropdowns visible even when host readback is incomplete after a failed font change.
 - When `Font Family` changes, the visual editor now resets `Font Style` toward neutral family defaults (`Regular`, `Book`, `Roman`, `Plain`, `Medium`, `Semibold`) instead of silently reusing the previous family style, which reduces wrong-token fallbacks such as inherited `Bold`.
 - The visual editor now keeps a `Font Style` control available whenever a `Font Family` control exists, using host data first and local system styles as fallback so family changes also write an explicit style.

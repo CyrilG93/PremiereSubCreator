@@ -139,6 +139,7 @@ let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
 let visualLiveUpdateEnabled = false;
+let systemFontCatalogLoadPromise: Promise<void> | null = null;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -805,6 +806,22 @@ async function loadSystemFontCatalogFallback(): Promise<void> {
       fontTokensByFamilyStyle: {}
     };
   }
+}
+
+function ensureSystemFontCatalogLoaded(): Promise<void> {
+  // // Defer the expensive system-font scan until the visual editor actually needs font-family/style expansion.
+  if (systemFontCatalog.available || systemFontCatalog.source !== "unavailable" || systemFontCatalog.details) {
+    return Promise.resolve();
+  }
+
+  if (systemFontCatalogLoadPromise) {
+    return systemFontCatalogLoadPromise;
+  }
+
+  systemFontCatalogLoadPromise = loadSystemFontCatalogFallback().finally(() => {
+    systemFontCatalogLoadPromise = null;
+  });
+  return systemFontCatalogLoadPromise;
 }
 
 function setActiveMode(mode: PanelMode): void {
@@ -2027,6 +2044,7 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
 
 async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
+  await ensureSystemFontCatalogLoaded();
   const result = await readSelectedMogrtVisualProperties();
   renderVisualPropertyEditor(result.properties);
   if (emitHostLog) {
@@ -2579,24 +2597,12 @@ async function initialize(): Promise<void> {
   }
 
   await loadLocale(elements.languageSelect?.value ?? "en");
-  await enforceWhisperSourceAvailability();
-  await loadSystemFontCatalogFallback();
   setVisualLiveUpdateEnabled(false, true);
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();
-
-  await reloadMogrtCatalogPreservingSelection();
-  if (pendingSelectedMogrtId) {
-    const restoredTemplate = availableMogrts.find((template) => template.id === pendingSelectedMogrtId);
-    if (restoredTemplate) {
-      selectedMogrt = restoredTemplate;
-    }
-    pendingSelectedMogrtId = "";
-  }
   renderMogrtGallery();
   persistPanelState();
-  await checkForUpdates();
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
@@ -2614,6 +2620,9 @@ async function initialize(): Promise<void> {
   elements.tabVisual?.addEventListener("click", () => {
     setActiveMode("visual");
     persistPanelState();
+    void ensureSystemFontCatalogLoaded().catch(() => {
+      // // Ignore background font-catalog warmup failures until the user explicitly reads visual properties.
+    });
   });
 
   elements.sourceMode?.addEventListener("change", () => {
@@ -2733,6 +2742,35 @@ async function initialize(): Promise<void> {
   });
 
   setLog(translate("log.ready"));
+
+  void enforceWhisperSourceAvailability()
+    .then(() => {
+      toggleSourceFields();
+      persistPanelState();
+    })
+    .catch(() => {
+      // // Ignore Whisper detection failures at startup so the panel stays interactive immediately.
+    });
+
+  void reloadMogrtCatalogPreservingSelection()
+    .then(() => {
+      if (pendingSelectedMogrtId) {
+        const restoredTemplate = availableMogrts.find((template) => template.id === pendingSelectedMogrtId);
+        if (restoredTemplate) {
+          selectedMogrt = restoredTemplate;
+        }
+        pendingSelectedMogrtId = "";
+      }
+      renderMogrtGallery();
+      persistPanelState();
+    })
+    .catch((error) => {
+      setLog(String(error), true);
+    });
+
+  void checkForUpdates().catch(() => {
+    // // Ignore release-check failures at startup so network latency never blocks panel readiness.
+  });
 }
 
 initialize().catch((error) => {

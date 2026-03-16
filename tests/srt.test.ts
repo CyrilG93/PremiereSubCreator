@@ -18,4 +18,15 @@ describe("parseSrt", () => {
     expect(cues).toHaveLength(1);
     expect(cues[0].text).toBe("Hello there");
   });
+
+  it("assigns more synthetic duration to longer words", () => {
+    const cues = parseSrt(`1\n00:00:00,000 --> 00:00:04,000\ngo international`);
+
+    expect(cues).toHaveLength(1);
+    expect(cues[0].words).toHaveLength(2);
+
+    const shortWordDuration = cues[0].words[0].endSeconds - cues[0].words[0].startSeconds;
+    const longWordDuration = cues[0].words[1].endSeconds - cues[0].words[1].startSeconds;
+    expect(longWordDuration).toBeGreaterThan(shortWordDuration);
+  });
 });

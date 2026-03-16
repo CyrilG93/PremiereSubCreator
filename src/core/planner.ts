@@ -1,5 +1,6 @@
 // // Build subtitle cues from parsed content based on style constraints.
 import type { CaptionBuildOptions, CaptionCue, CaptionWord } from "./types";
+import { buildWeightedCaptionWords } from "./wordTiming";
 
 function normalizeWords(text: string): string[] {
   // // Keep contiguous word order so chunk timing stays coherent with speech rhythm.
@@ -112,12 +113,12 @@ function normalizeBoundaryWord(word: string): string {
   return word
     .trim()
     .toLowerCase()
-    .replace(/^[^a-z0-9]+/i, "")
-    .replace(/[^a-z0-9]+$/i, "");
+    .replace(/^[^\p{L}\p{N}]+/gu, "")
+    .replace(/[^\p{L}\p{N}]+$/gu, "");
 }
 
-function wordIsWeakEnding(word: string): boolean {
-  // // Avoid finishing lines with connectors that read better when attached to next words.
+function wordIsBoundaryConnector(word: string): boolean {
+  // // Keep lightweight connector words attached to neighboring phrases instead of isolating them around commas.
   const normalized = normalizeBoundaryWord(word);
   return (
     normalized === "and" ||
@@ -141,8 +142,35 @@ function wordIsWeakEnding(word: string): boolean {
     normalized === "at" ||
     normalized === "on" ||
     normalized === "in" ||
-    normalized === "of"
+    normalized === "of" ||
+    normalized === "et" ||
+    normalized === "ou" ||
+    normalized === "mais" ||
+    normalized === "donc" ||
+    normalized === "car" ||
+    normalized === "puis" ||
+    normalized === "alors" ||
+    normalized === "que" ||
+    normalized === "qui" ||
+    normalized === "quand" ||
+    normalized === "comme" ||
+    normalized === "pour" ||
+    normalized === "avec" ||
+    normalized === "sans" ||
+    normalized === "dans" ||
+    normalized === "sur" ||
+    normalized === "en" ||
+    normalized === "de" ||
+    normalized === "du" ||
+    normalized === "des" ||
+    normalized === "au" ||
+    normalized === "aux"
   );
+}
+
+function wordIsWeakEnding(word: string): boolean {
+  // // Avoid finishing lines with connectors that read better when attached to next words.
+  return wordIsBoundaryConnector(word);
 }
 
 function chunkFits(words: string[], range: ChunkRange, maxCharsPerLine: number, linesPerCaption: number): boolean {
@@ -269,6 +297,24 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
           changed = true;
         }
       }
+
+      // // Keep short connector words after commas with the previous phrase when the right chunk can still stand on its own.
+      const refreshedLeftLastWord = words[left.end - 1] ?? "";
+      const refreshedRightFirstWord = words[right.start] ?? "";
+      if (/[,:;]$/.test(refreshedLeftLastWord.trim()) && wordIsBoundaryConnector(refreshedRightFirstWord) && rightSize > 1) {
+        const absorbConnectorBoundary = right.start + 1;
+        const leftIfAbsorbConnector = { start: left.start, end: absorbConnectorBoundary };
+        const rightIfAbsorbConnector = { start: absorbConnectorBoundary, end: right.end };
+        if (
+          rightIfAbsorbConnector.end - rightIfAbsorbConnector.start > 0 &&
+          chunkFits(words, leftIfAbsorbConnector, maxCharsPerLine, linesPerCaption) &&
+          chunkFits(words, rightIfAbsorbConnector, maxCharsPerLine, linesPerCaption)
+        ) {
+          left.end = absorbConnectorBoundary;
+          right.start = absorbConnectorBoundary;
+          changed = true;
+        }
+      }
     }
 
     if (!changed) {
@@ -300,18 +346,8 @@ function ensureCueWords(cue: CaptionCue, forceUppercase: boolean): CaptionWord[]
     return [];
   }
 
-  const totalDuration = Math.max(cue.endSeconds - cue.startSeconds, 0.01);
-  const wordDuration = totalDuration / words.length;
-
-  return words.map((word, index) => {
-    const startSeconds = cue.startSeconds + index * wordDuration;
-    const endSeconds = index === words.length - 1 ? cue.endSeconds : startSeconds + wordDuration;
-    return {
-      text: word,
-      startSeconds,
-      endSeconds
-    };
-  });
+  // // Estimate synthetic timings from weighted word lengths so chunk durations better follow reading/speaking density.
+  return buildWeightedCaptionWords(words, cue.startSeconds, cue.endSeconds);
 }
 
 function renderChunkText(words: CaptionWord[], maxCharsPerLine: number): string {

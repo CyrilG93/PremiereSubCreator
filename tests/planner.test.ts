@@ -177,4 +177,81 @@ describe("buildCaptionPlan", () => {
     const firstChunkText = planned[0].text.replace(/\n/g, " ").toLowerCase();
     expect(firstChunkText.endsWith(" since")).toBe(false);
   });
+
+  it("gives longer synthetic chunks more time than shorter ones", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-7",
+          startSeconds: 0,
+          endSeconds: 4,
+          text: "go international",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 6,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    expect(planned).toHaveLength(2);
+    const firstChunkDuration = planned[0].endSeconds - planned[0].startSeconds;
+    const secondChunkDuration = planned[1].endSeconds - planned[1].startSeconds;
+    expect(secondChunkDuration).toBeGreaterThan(firstChunkDuration);
+  });
+
+  it("keeps connector words after commas with the previous chunk when possible", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-8",
+          startSeconds: 0,
+          endSeconds: 8,
+          text: "Je suis alle la bas, puis je suis rentre chez moi",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 16,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    const laterChunks = planned.slice(1).map((cue) => cue.text.replace(/\n/g, " ").trim().toLowerCase());
+    expect(laterChunks.some((text) => text.startsWith("puis "))).toBe(false);
+  });
+
+  it("avoids starting a chunk with 'et' right after a comma", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-9",
+          startSeconds: 0,
+          endSeconds: 8,
+          text: "On sest assis a table, et cetait pas terrible",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 16,
+          linesPerCaption: 1
+        }
+      }
+    );
+
+    const laterChunks = planned.slice(1).map((cue) => cue.text.replace(/\n/g, " ").trim().toLowerCase());
+    expect(laterChunks.some((text) => text.startsWith("et "))).toBe(false);
+  });
 });

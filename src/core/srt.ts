@@ -1,5 +1,6 @@
 // // Parse SRT timestamps and cues into strongly typed caption entries.
 import type { CaptionCue, CaptionWord } from "./types";
+import { buildWeightedCaptionWordsFromText } from "./wordTiming";
 
 const TIMECODE_SEPARATOR = "-->";
 
@@ -23,28 +24,8 @@ function parseTimestamp(timestamp: string): number {
 }
 
 function splitWordsWithTiming(text: string, startSeconds: number, endSeconds: number): CaptionWord[] {
-  // // Distribute timing evenly per word to support word-level animation.
-  const words = text
-    .split(/\s+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  if (words.length === 0) {
-    return [];
-  }
-
-  const totalDuration = Math.max(endSeconds - startSeconds, 0.01);
-  const wordDuration = totalDuration / words.length;
-
-  return words.map((word, index) => {
-    const wordStart = startSeconds + index * wordDuration;
-    const wordEnd = index === words.length - 1 ? endSeconds : wordStart + wordDuration;
-    return {
-      text: word,
-      startSeconds: wordStart,
-      endSeconds: wordEnd
-    };
-  });
+  // // Build synthetic word timings from weighted text length so long words can occupy more of the cue duration.
+  return buildWeightedCaptionWordsFromText(text, startSeconds, endSeconds);
 }
 
 export function parseSrt(input: string): CaptionCue[] {

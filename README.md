@@ -221,8 +221,10 @@ Track behavior in panel:
 Caption planning behavior:
 - Long cues are split by contiguous word groups (not arbitrary character cuts).
 - Chunk timing follows word timing boundaries when available, or proportional word distribution otherwise.
+- When only cue-level timing is available, synthetic word timing is now weighted by word length and punctuation pauses instead of using flat per-word slices.
 - Boundary rebalancing favors readable punctuation grouping (for example avoids starting a chunk with `time,` when a better split exists).
 - Boundary rebalancing also avoids weak connector endings (for example ending a chunk with `since` when next words can absorb it).
+- Boundary rebalancing also keeps short connectors after commas attached to the previous chunk when possible (for example avoids starting a chunk with `puis` / `et` alone).
 
 If panel loading is blocked in development, enable CEP debug mode and restart Premiere.
 

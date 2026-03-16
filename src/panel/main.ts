@@ -936,7 +936,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   captureOpenVisualGroupsFromDom();
   elements.visualPropertyList.innerHTML = "";
-  loadedVisualProperties = properties.slice();
   visualOriginalValuesByPath.clear();
   visualTextStyleTokenMapByBasePath.clear();
 
@@ -1073,6 +1072,64 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   const systemFamilies = systemFontCatalog.available && Array.isArray(systemFontCatalog.families)
     ? systemFontCatalog.families
     : [];
+  const commonSyntheticFontStyles = ["Regular", "Medium", "Semibold", "Bold", "Italic", "Bold Italic", "Black", "ExtraBold"];
+
+  const resolveStyleOptionsForFamily = (family: string, styleMap?: Record<string, string[]>): string[] => {
+    // // Resolve styles for one family using host hints first, then the local system font catalog.
+    const mergedMap = mergeStyleMaps(styleMap || {}, normalizedSystemStyleMap);
+    for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
+      if (Array.isArray(mergedMap[familyLookupKey]) && mergedMap[familyLookupKey].length > 0) {
+        return mergedMap[familyLookupKey].slice();
+      }
+    }
+    return [];
+  };
+
+  const ensureTextStyleControls = (sourceProperties: HostVisualProperty[]): HostVisualProperty[] => {
+    // // Inject a synthetic `Font Style` select when host payload exposes only `Font Family`.
+    const propertiesWithStyleControls: HostVisualProperty[] = [];
+    const styleBasePaths = new Set<string>();
+
+    for (const property of sourceProperties) {
+      const textStylePath = parseTextStyleVirtualPath(property.path);
+      if (textStylePath?.styleKey === "fontStyle") {
+        styleBasePaths.add(textStylePath.basePath);
+      }
+    }
+
+    for (const property of sourceProperties) {
+      propertiesWithStyleControls.push(property);
+
+      const textStylePath = parseTextStyleVirtualPath(property.path);
+      if (!textStylePath || textStylePath.styleKey !== "fontFamily" || styleBasePaths.has(textStylePath.basePath)) {
+        continue;
+      }
+
+      const currentFamily = String(property.value || "").trim();
+      const resolvedStyleOptions = resolveStyleOptionsForFamily(currentFamily, property.styleOptionsByFamily);
+      const syntheticStyleOptions = resolvedStyleOptions.length > 0 ? resolvedStyleOptions : commonSyntheticFontStyles.slice();
+      const syntheticStyleValue = syntheticStyleOptions[0] || "Regular";
+
+      propertiesWithStyleControls.push({
+        path: `${textStylePath.basePath}::textstyle.fontStyle`,
+        displayName: "Font Style",
+        groupPath: property.groupPath,
+        valueType: "string",
+        controlKind: "select",
+        options: syntheticStyleOptions.map((styleOption) => ({
+          value: styleOption,
+          label: styleOption
+        })),
+        styleOptionsByFamily: currentFamily ? { [currentFamily]: syntheticStyleOptions.slice() } : {},
+        value: syntheticStyleValue
+      });
+    }
+
+    return propertiesWithStyleControls;
+  };
+
+  const renderProperties = ensureTextStyleControls(properties);
+  loadedVisualProperties = renderProperties.slice();
 
   const replaceSelectOptions = (
     select: HTMLSelectElement,
@@ -1305,7 +1362,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   };
 
   const grouped = new Map<string, HostVisualProperty[]>();
-  for (const property of properties) {
+  for (const property of renderProperties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
       continue;
     }

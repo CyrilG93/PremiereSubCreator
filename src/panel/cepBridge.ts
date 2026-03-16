@@ -342,7 +342,7 @@ function findWhisperSequencePresetInSystemPresets(modules: CepNodeModules, syste
 }
 
 function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules): string {
-  // // Prefer the newest installed Adobe Media Encoder WAV preset so active-sequence export needs no manual setup.
+  // // Prefer the newest installed Adobe system WAV preset so active-sequence export needs no manual setup.
   const candidates: Array<{ path: string; score: number }> = [];
 
   function pushCandidate(candidatePath: string, score: number): void {
@@ -362,7 +362,7 @@ function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules): str
 
       for (const entry of modules.fs.readdirSync(adobeRoot)) {
         const normalizedEntry = String(entry || "");
-        const versionMatch = normalizedEntry.match(/^Adobe Media Encoder (\d{4})$/);
+        const versionMatch = normalizedEntry.match(/^Adobe (?:Media Encoder|Premiere Pro) (\d{4})$/);
         const betaMatch = /^Adobe Media Encoder(?: \(Beta\)| Beta)$/i.test(normalizedEntry);
         if (!versionMatch && !betaMatch) {
           continue;
@@ -383,7 +383,7 @@ function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules): str
     if (modules.fs.existsSync(applicationsRoot)) {
       for (const entry of modules.fs.readdirSync(applicationsRoot)) {
         const normalizedEntry = String(entry || "");
-        const versionMatch = normalizedEntry.match(/^Adobe Media Encoder (\d{4})$/);
+        const versionMatch = normalizedEntry.match(/^Adobe (?:Media Encoder|Premiere Pro) (\d{4})$/);
         const betaMatch = /^Adobe Media Encoder(?: \(Beta\)| Beta)$/i.test(normalizedEntry);
         if (!versionMatch && !betaMatch) {
           continue;

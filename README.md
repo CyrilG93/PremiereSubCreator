@@ -93,6 +93,7 @@ Whisper active sequence can export the current sequence audible mix to a tempora
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
 If no local Whisper runtime is detected at panel startup, both Whisper source options are hidden automatically.
 Installers also write a user-local runtime config (`subcreator-runtime.json`) with detected `python` / `whisper` / `ffmpeg` paths so CEP can run reliably even when host PATH is incomplete.
+For temporary sequence export, Sub Creator looks for Adobe's built-in WAV system preset in either Premiere Pro or Adobe Media Encoder, so users do not need to install a custom export preset.
 
 Whisper integration now requests `json + srt` output with `--word_timestamps True`, so caption planning can reuse precise word timings whenever Whisper provides them and only fall back to synthetic timing when needed.
 

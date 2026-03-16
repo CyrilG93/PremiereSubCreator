@@ -121,7 +121,7 @@ function subcreator_normalize_system_path(value) {
 }
 
 function subcreator_build_audio_preset_candidates() {
-  // // Build likely Adobe Media Encoder system-preset roots across installed major versions.
+  // // Build likely Adobe system-preset roots across installed major versions.
   var candidates = [];
   var currentYear = new Date().getFullYear() + 1;
 
@@ -141,6 +141,10 @@ function subcreator_build_audio_preset_candidates() {
           candidates,
           root + "/Adobe/Adobe Media Encoder " + year + "/MediaIO/systempresets"
         );
+        subcreator_runtime_push_unique(
+          candidates,
+          root + "/Adobe/Adobe Premiere Pro " + year + "/MediaIO/systempresets"
+        );
       }
       subcreator_runtime_push_unique(candidates, root + "/Adobe/Adobe Media Encoder Beta/MediaIO/systempresets");
       subcreator_runtime_push_unique(candidates, root + "/Adobe/Adobe Media Encoder (Beta)/MediaIO/systempresets");
@@ -150,12 +154,18 @@ function subcreator_build_audio_preset_candidates() {
   }
 
   for (var macYear = currentYear; macYear >= 2023; macYear -= 1) {
-    var appName = "Adobe Media Encoder " + macYear;
+    var mediaEncoderAppName = "Adobe Media Encoder " + macYear;
+    var premiereAppName = "Adobe Premiere Pro " + macYear;
     subcreator_runtime_push_unique(
       candidates,
-      "/Applications/" + appName + "/" + appName + ".app/Contents/MediaIO/systempresets"
+      "/Applications/" + mediaEncoderAppName + "/" + mediaEncoderAppName + ".app/Contents/MediaIO/systempresets"
     );
-    subcreator_runtime_push_unique(candidates, "/Applications/" + appName + ".app/Contents/MediaIO/systempresets");
+    subcreator_runtime_push_unique(candidates, "/Applications/" + mediaEncoderAppName + ".app/Contents/MediaIO/systempresets");
+    subcreator_runtime_push_unique(
+      candidates,
+      "/Applications/" + premiereAppName + "/" + premiereAppName + ".app/Contents/MediaIO/systempresets"
+    );
+    subcreator_runtime_push_unique(candidates, "/Applications/" + premiereAppName + ".app/Contents/MediaIO/systempresets");
   }
 
   subcreator_runtime_push_unique(

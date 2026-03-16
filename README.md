@@ -65,7 +65,9 @@ Quit Premiere before running the installer.
 
 #### macOS
 
-Open Terminal and run:
+Easiest method (recommended): drag and drop install_mac.sh into the Terminal window, then press Enter.
+
+Manual method (command line): run:
 
 ```bash
 ./installers/subcreator_install_mac.sh

@@ -203,6 +203,76 @@ function normalizeFontStyleDisplayKey(value: string): string {
   return normalized;
 }
 
+function findMatchingFontStyleOption(options: string[], targetStyle: string): string {
+  // // Resolve one requested style against available options using the same alias rules as token lookup.
+  const requestedKeys = new Set(listFontStyleLookupKeys(targetStyle));
+  if (requestedKeys.size < 1) {
+    return "";
+  }
+  for (const option of options) {
+    const optionKeys = listFontStyleLookupKeys(option);
+    if (optionKeys.some((entry) => requestedKeys.has(entry))) {
+      return option;
+    }
+  }
+  return "";
+}
+
+function getFontStylePriority(style: string): number {
+  // // Rank neutral/default styles before heavier variants so family switches land on safer defaults.
+  const normalizedKeys = new Set(listFontStyleLookupKeys(style));
+  const priorityBuckets = [
+    ["regular", "plain", "roman"],
+    ["book"],
+    ["medium"],
+    ["semibold", "demibold"],
+    ["bold"],
+    ["italic", "oblique"],
+    ["bold italic", "bolditalic"],
+    ["black", "heavy"],
+    ["extrabold", "ultrabold"]
+  ];
+  for (let index = 0; index < priorityBuckets.length; index += 1) {
+    if (priorityBuckets[index].some((entry) => normalizedKeys.has(entry))) {
+      return index;
+    }
+  }
+  return priorityBuckets.length;
+}
+
+function sortFontStyleOptions(options: string[]): string[] {
+  // // Keep style lists stable and neutral-first so dropdown defaults stay predictable across families.
+  return options
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .sort((left, right) => {
+      const priorityDelta = getFontStylePriority(left) - getFontStylePriority(right);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return left.localeCompare(right, undefined, { sensitivity: "base" });
+    });
+}
+
+function pickPreferredFontStyleOption(options: string[], preferredStyles?: string[]): string {
+  // // Pick the best style for a family, preferring neutral defaults like `Regular` before any fallback.
+  const normalizedOptions = sortFontStyleOptions(options);
+  if (normalizedOptions.length < 1) {
+    return "";
+  }
+  const requestedStyles =
+    preferredStyles && preferredStyles.length > 0
+      ? preferredStyles
+      : ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"];
+  for (const requestedStyle of requestedStyles) {
+    const matchedOption = findMatchingFontStyleOption(normalizedOptions, requestedStyle);
+    if (matchedOption) {
+      return matchedOption;
+    }
+  }
+  return normalizedOptions[0];
+}
+
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
   const missing = Object.entries(elements)
@@ -1079,7 +1149,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     const mergedMap = mergeStyleMaps(styleMap || {}, normalizedSystemStyleMap);
     for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
       if (Array.isArray(mergedMap[familyLookupKey]) && mergedMap[familyLookupKey].length > 0) {
-        return mergedMap[familyLookupKey].slice();
+        return sortFontStyleOptions(mergedMap[familyLookupKey].slice());
       }
     }
     return [];
@@ -1108,7 +1178,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       const currentFamily = String(property.value || "").trim();
       const resolvedStyleOptions = resolveStyleOptionsForFamily(currentFamily, property.styleOptionsByFamily);
       const syntheticStyleOptions = resolvedStyleOptions.length > 0 ? resolvedStyleOptions : commonSyntheticFontStyles.slice();
-      const syntheticStyleValue = syntheticStyleOptions[0] || "Regular";
+      const syntheticStyleValue = pickPreferredFontStyleOption(syntheticStyleOptions) || "Regular";
 
       propertiesWithStyleControls.push({
         path: `${textStylePath.basePath}::textstyle.fontStyle`,
@@ -1177,8 +1247,14 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
   };
 
-  const refreshStyleSelectForFamily = (basePath: string): void => {
-    // // Keep font-style options aligned with currently selected font family when map is available.
+  const refreshStyleSelectForFamily = (
+    basePath: string,
+    options?: {
+      preserveCurrent?: boolean;
+      preferredStyles?: string[];
+    }
+  ): void => {
+    // // Keep font-style options aligned with selected family and optionally reset to neutral defaults on family changes.
     const familySelect = textStyleFamilySelectByBasePath.get(basePath);
     const styleSelect = textStyleStyleSelectByBasePath.get(basePath);
     const styleMap = textStyleStylesByFamilyByBasePath.get(basePath);
@@ -1198,16 +1274,22 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         break;
       }
     }
+    const preserveCurrent = options?.preserveCurrent !== false;
     const currentStyle = String(styleSelect.value || "").trim();
     if (mappedOptions.length > 0) {
-      replaceSelectOptions(styleSelect, mappedOptions, currentStyle, normalizeFontStyleDisplayKey);
+      const orderedOptions = sortFontStyleOptions(mappedOptions);
+      const nextStyle = preserveCurrent
+        ? currentStyle
+        : pickPreferredFontStyleOption(orderedOptions, options?.preferredStyles);
+      replaceSelectOptions(styleSelect, orderedOptions, nextStyle, normalizeFontStyleDisplayKey);
       return;
     }
-    if (currentStyle) {
+    if (preserveCurrent && currentStyle) {
       replaceSelectOptions(styleSelect, [currentStyle], currentStyle, normalizeFontStyleDisplayKey);
       return;
     }
-    replaceSelectOptions(styleSelect, ["Regular"], "Regular", normalizeFontStyleDisplayKey);
+    const fallbackStyle = pickPreferredFontStyleOption(["Regular"], options?.preferredStyles) || "Regular";
+    replaceSelectOptions(styleSelect, ["Regular"], fallbackStyle, normalizeFontStyleDisplayKey);
   };
 
   const syncPrimaryFauxStyleFlags = (basePath: string): void => {
@@ -1739,7 +1821,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           });
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
           select.addEventListener("change", () => {
-            refreshStyleSelectForFamily(textStylePath.basePath);
+            // // Reset family changes to a neutral style so old `Bold`/`Italic` values do not bleed into the new font.
+            refreshStyleSelectForFamily(textStylePath.basePath, {
+              preserveCurrent: false,
+              preferredStyles: ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"]
+            });
             syncPrimaryFauxStyleFlags(textStylePath.basePath);
             scheduleLiveVisualApply();
           });
@@ -1758,13 +1844,23 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
               }
             }
             if (mappedStyles.length > 0) {
-              replaceSelectOptions(select, mappedStyles, String(select.value || currentValue || ""), normalizeFontStyleDisplayKey);
+              replaceSelectOptions(
+                select,
+                sortFontStyleOptions(mappedStyles),
+                String(select.value || currentValue || ""),
+                normalizeFontStyleDisplayKey
+              );
             } else if (selectedFamilyKeys.length > 0) {
-              replaceSelectOptions(select, selectStyles, String(select.value || currentValue || ""), normalizeFontStyleDisplayKey);
+              replaceSelectOptions(
+                select,
+                sortFontStyleOptions(selectStyles),
+                String(select.value || currentValue || ""),
+                normalizeFontStyleDisplayKey
+              );
             } else {
               replaceSelectOptions(
                 select,
-                [...selectStyles, ...Object.values(relatedMap).flat()],
+                sortFontStyleOptions([...selectStyles, ...Object.values(relatedMap).flat()]),
                 String(select.value || currentValue || ""),
                 normalizeFontStyleDisplayKey
               );
@@ -1815,7 +1911,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   for (const basePath of textStyleStyleSelectByBasePath.keys()) {
     // // Run one initial sync so style list follows currently selected family on first render.
-    refreshStyleSelectForFamily(basePath);
+    refreshStyleSelectForFamily(basePath, { preserveCurrent: true });
   }
 }
 

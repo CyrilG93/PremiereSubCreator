@@ -386,12 +386,21 @@ function mergeFontTokenEntry(
 
 function detectMacSystemFontCatalogViaSystemProfiler(modules: CepNodeModules): SystemFontCatalog | null {
   // // Read authoritative macOS font metadata so family/style values match the system text engine.
-  const result = modules.childProcess.spawnSync("system_profiler", ["SPFontsDataType", "-json"], {
-    encoding: "utf8",
-    timeout: 60000,
-    env: modules.process.env
-  });
-  if (result.error || result.status !== 0 || !result.stdout) {
+  const commands = ["/usr/sbin/system_profiler", "system_profiler"];
+  let result:
+    | { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } }
+    | null = null;
+  for (const command of commands) {
+    result = modules.childProcess.spawnSync(command, ["SPFontsDataType", "-json"], {
+      encoding: "utf8",
+      timeout: 60000,
+      env: modules.process.env
+    });
+    if (!result.error && result.status === 0 && result.stdout) {
+      break;
+    }
+  }
+  if (!result || result.error || result.status !== 0 || !result.stdout) {
     return null;
   }
 

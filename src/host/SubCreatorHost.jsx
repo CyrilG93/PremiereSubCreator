@@ -2026,6 +2026,12 @@ function subcreator_visual_build_font_token_candidates(family, style, providedTo
   var exactParts = subcreator_visual_split_font_token(exactToken);
   var familyVariants = [];
   var styleVariants = [];
+  var exactTokenLooksCanonical = !!(exactToken && (exactToken.indexOf(" ") < 0 || !exactParts.style));
+
+  if (exactTokenLooksCanonical) {
+    // // Prefer trusted exact tokens (`Amarillo`, `Avenir-Regular`) before rebuilding variants.
+    subcreator_visual_push_unique_string(candidates, exactToken);
+  }
 
   subcreator_visual_push_unique_string(familyVariants, requestedFamily || exactParts.family || fallbackParts.family);
   subcreator_visual_push_unique_string(familyVariants, exactParts.family);
@@ -2064,7 +2070,8 @@ function subcreator_visual_build_font_token_candidates(family, style, providedTo
     subcreator_visual_push_unique_string(candidates, familyVariant);
   }
 
-  if (exactToken) {
+  if (exactToken && !exactTokenLooksCanonical) {
+    // // Filename-like aliases with spaces (`Avenir Regular`) are tried after canonical variants.
     subcreator_visual_push_unique_string(candidates, exactToken);
   }
 

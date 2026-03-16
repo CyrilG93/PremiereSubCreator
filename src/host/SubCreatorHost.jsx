@@ -1985,6 +1985,19 @@ function subcreator_visual_push_unique_string(target, value) {
   target.push(text);
 }
 
+function subcreator_visual_has_own_entries(target) {
+  // // ExtendScript-safe replacement for `Object.keys(target).length > 0`.
+  if (!target || typeof target !== "object") {
+    return false;
+  }
+  for (var key in target) {
+    if (target.hasOwnProperty(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function subcreator_visual_list_font_style_aliases(style) {
   // // Expand display style aliases so `Regular`, `Roman` and `Plain` all resolve.
   var normalizedStyle = subcreator_trim_string(String(style || ""));
@@ -2436,7 +2449,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
     isNaN(result.fontSize) &&
     result.fontFamilyOptions.length < 1 &&
     result.fontStyleOptions.length < 1 &&
-    !Object.keys(result.fontStylesByFamily).length &&
+    !subcreator_visual_has_own_entries(result.fontStylesByFamily) &&
     result.fontFsBold === null &&
     result.fontFsItalic === null &&
     result.fontFsAllCaps === null &&

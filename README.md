@@ -33,7 +33,7 @@ It supports:
 - The visual editor now keeps a `Font Style` control available whenever a `Font Family` control exists, using host data first and local system styles as fallback so family changes also write an explicit style.
 - When CEP Node is available, the visual editor augments font dropdowns with local OS-installed font families/styles (macOS/Windows font directories) as a fallback when MOGRT options are limited.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
-- Changing `Font Family` / `Font Style` now re-syncs faux `Bold` / `Italic` checkboxes so system font changes do not keep stale style flags from the original template.
+- Faux `Bold` / `Italic` checkboxes remain independent from `Font Style`, because Premiere exposes them as separate text-style parameters and mixing both can produce wrong font tokens.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Visual editor includes optional `Live update` mode (disabled by default, persisted) to push edits while tweaking controls.
 - Manual apply on multi-selection now runs with a visible progress bar (`done/total/remaining`) so long updates are trackable, and the bar stays hidden outside active multi-clip updates.

@@ -1292,29 +1292,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     replaceSelectOptions(styleSelect, ["Regular"], fallbackStyle, normalizeFontStyleDisplayKey);
   };
 
-  const syncPrimaryFauxStyleFlags = (basePath: string): void => {
-    // // Keep faux bold/italic flags aligned with the selected named style after family/style changes.
-    const styleSelect = textStyleStyleSelectByBasePath.get(basePath);
-    const flags = textStyleFlagCheckboxesByBasePath.get(basePath);
-    if (!styleSelect || !flags) {
-      return;
-    }
-
-    const normalizedStyle = String(styleSelect.value || "").trim().toLowerCase();
-    if (!normalizedStyle) {
-      return;
-    }
-
-    const boldLike = /\b(bold|semibold|demibold|extrabold|ultrabold|black|heavy)\b/i.test(normalizedStyle);
-    const italicLike = /\b(italic|oblique)\b/i.test(normalizedStyle);
-    if (flags.bold) {
-      flags.bold.checked = boldLike;
-    }
-    if (flags.italic) {
-      flags.italic.checked = italicLike;
-    }
-  };
-
   const bindLiveUpdateEvent = (
     control: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
     eventName: "input" | "change" = "change"
@@ -1826,7 +1803,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
               preserveCurrent: false,
               preferredStyles: ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"]
             });
-            syncPrimaryFauxStyleFlags(textStylePath.basePath);
             scheduleLiveVisualApply();
           });
         } else if (textStylePath?.styleKey === "fontStyle") {
@@ -1876,9 +1852,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
               tryOpenConstrainedSelect(select, event);
             }
-          });
-          select.addEventListener("change", () => {
-            syncPrimaryFauxStyleFlags(textStylePath.basePath);
           });
           bindLiveUpdateEvent(select, "change");
         } else {

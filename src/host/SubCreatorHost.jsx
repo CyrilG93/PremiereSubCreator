@@ -2053,7 +2053,6 @@ function subcreator_visual_build_font_token_candidates(family, style, providedTo
     if (!familyVariant) {
       continue;
     }
-    subcreator_visual_push_unique_string(candidates, familyVariant);
     for (var styleIndex = 0; styleIndex < styleVariants.length; styleIndex += 1) {
       var styleVariant = styleVariants[styleIndex];
       if (!styleVariant) {
@@ -2062,6 +2061,7 @@ function subcreator_visual_build_font_token_candidates(family, style, providedTo
       subcreator_visual_push_unique_string(candidates, subcreator_visual_join_font_token(familyVariant, styleVariant, fallbackToken));
       subcreator_visual_push_unique_string(candidates, familyVariant + " " + styleVariant);
     }
+    subcreator_visual_push_unique_string(candidates, familyVariant);
   }
 
   if (exactToken) {
@@ -3519,6 +3519,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     var requestedFamily = String(normalizedStyleValue || "");
     var requestedFamilyKey = subcreator_visual_normalize_font_compare_key(requestedFamily);
     var suppliedFontToken = extraOptions && typeof extraOptions.fontToken === "string" ? extraOptions.fontToken : "";
+    var suppliedTokenParts = subcreator_visual_split_font_token(suppliedFontToken);
     var styleOverrides = [];
 
     function pushStyleOverride(value) {
@@ -3533,9 +3534,16 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
       styleOverrides.push(text);
     }
 
-    if (extractedStyleValues && extractedStyleValues.fontStyle) {
-      pushStyleOverride(extractedStyleValues.fontStyle);
+    if (suppliedTokenParts && suppliedTokenParts.style) {
+      pushStyleOverride(suppliedTokenParts.style);
     }
+
+    // // Prefer neutral defaults for a newly selected family before reusing the previous preset style.
+    pushStyleOverride("Regular");
+    pushStyleOverride("Plain");
+    pushStyleOverride("Roman");
+    pushStyleOverride("Book");
+    pushStyleOverride("Medium");
 
     if (extractedStyleValues && extractedStyleValues.fontStylesByFamily && requestedFamilyKey) {
       for (var familyKey in extractedStyleValues.fontStylesByFamily) {
@@ -3555,12 +3563,12 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
       }
     }
 
-    // // Try no-style + common aliases to avoid invalid `family-style` tokens that trigger host fallback fonts.
+    if (extractedStyleValues && extractedStyleValues.fontStyle) {
+      pushStyleOverride(extractedStyleValues.fontStyle);
+    }
+
+    // // Try no-style last because some families need an explicit regular token to avoid visual fallback fonts.
     pushStyleOverride("");
-    pushStyleOverride("Regular");
-    pushStyleOverride("Book");
-    pushStyleOverride("Medium");
-    pushStyleOverride("Roman");
 
     if (!styleOverrides.length) {
       pushStyleOverride("");

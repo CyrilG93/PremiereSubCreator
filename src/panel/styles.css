@@ -1,15 +1,15 @@
 :root {
   --ui-font-family: "Avenir Next", "Helvetica Neue", sans-serif;
-  --bg-primary: rgb(37, 37, 37);
-  --bg-primary-rgb: 37, 37, 37;
-  --bg-surface: rgb(48, 48, 48);
-  --bg-surface-rgb: 48, 48, 48;
-  --bg-soft: rgb(58, 58, 58);
-  --bg-soft-rgb: 58, 58, 58;
-  --bg-input: rgb(30, 30, 30);
-  --bg-input-rgb: 30, 30, 30;
-  --bg-card: rgb(43, 43, 43);
-  --bg-card-rgb: 43, 43, 43;
+  --bg-primary: rgb(47, 47, 47);
+  --bg-primary-rgb: 47, 47, 47;
+  --bg-surface: rgb(54, 54, 54);
+  --bg-surface-rgb: 54, 54, 54;
+  --bg-soft: rgb(60, 60, 60);
+  --bg-soft-rgb: 60, 60, 60;
+  --bg-input: rgb(39, 39, 39);
+  --bg-input-rgb: 39, 39, 39;
+  --bg-card: rgb(51, 51, 51);
+  --bg-card-rgb: 51, 51, 51;
   --text-primary: rgb(236, 236, 236);
   --text-primary-rgb: 236, 236, 236;
   --text-dim: rgb(164, 164, 164);
@@ -45,7 +45,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--ui-font-family);
-  background: linear-gradient(180deg, var(--bg-soft) 0%, var(--bg-primary) 100%);
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-primary) 100%);
   color: var(--text-primary);
 }
 
@@ -283,6 +283,14 @@ input[type="checkbox"] {
 
 .inline-row--actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.inline-row--triple {
+  grid-template-columns: minmax(0, 1fr) minmax(156px, 0.72fr);
+}
+
+.inline-row--triple.is-single {
+  grid-template-columns: 1fr;
 }
 
 .button--toggle.is-active {
@@ -738,6 +746,10 @@ input[type="checkbox"] {
   }
 
   .inline-row--actions {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-row--triple {
     grid-template-columns: 1fr;
   }
 

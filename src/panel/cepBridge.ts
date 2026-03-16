@@ -1,6 +1,7 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
 import type { HostApplyPayload, MogrtTemplateItem } from "../core/types";
 import { unzipSync } from "fflate";
+import type { WhisperSequenceRangeMode } from "../core/types";
 
 declare global {
   interface Window {
@@ -2215,7 +2216,9 @@ export async function pickWhisperAudioPath(): Promise<string> {
   return String(response.data?.path ?? "");
 }
 
-export async function exportActiveSequenceAudioForWhisper(): Promise<WhisperSequenceExportResult> {
+export async function exportActiveSequenceAudioForWhisper(
+  rangeMode: WhisperSequenceRangeMode = "entire_sequence"
+): Promise<WhisperSequenceExportResult> {
   // // Export the active sequence audible mix to a temporary WAV file so Whisper can analyze the current edit directly.
   const modules = resolveCepNodeModules();
   if (!modules) {
@@ -2234,7 +2237,8 @@ export async function exportActiveSequenceAudioForWhisper(): Promise<WhisperSequ
   const encodedPayload = encodeURIComponent(
     JSON.stringify({
       outputPath,
-      presetPath
+      presetPath,
+      rangeMode
     })
   );
   const response = await evalHostJson<WhisperSequenceExportResult>(

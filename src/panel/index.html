@@ -79,14 +79,20 @@
               <button id="whisperBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
             </div>
             <div class="inline-row">
-              <select id="whisperModel">
-                <option value="tiny">tiny</option>
-                <option value="base" selected>base</option>
-                <option value="small">small</option>
-                <option value="medium">medium</option>
-                <option value="large-v3">large-v3</option>
-                <option value="turbo">turbo</option>
-              </select>
+              <div id="whisperModelRow" class="inline-row inline-row--triple">
+                <select id="whisperModel">
+                  <option value="tiny">tiny</option>
+                  <option value="base" selected>base</option>
+                  <option value="small">small</option>
+                  <option value="medium">medium</option>
+                  <option value="large-v3">large-v3</option>
+                  <option value="turbo">turbo</option>
+                </select>
+                <select id="whisperSequenceRange" aria-label="Whisper sequence range">
+                  <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
+                  <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
+                </select>
+              </div>
             </div>
             <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
               La sequence active est exportee temporairement en WAV puis analysee par Whisper.

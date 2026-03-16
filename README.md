@@ -6,7 +6,7 @@ It supports:
 - Three source workflows:
   - SRT import via native file picker.
   - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
-  - Whisper transcription from the active Premiere sequence via temporary WAV export of the current audible mix.
+  - Whisper transcription from the active Premiere sequence via temporary WAV export of either the current audible mix or the active `In/Out` range.
 - Caption planning with max letters, max lines, font size, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - MOGRT gallery now reads installed templates dynamically from the extension `templates/mogrt` folder, including manually added `.mogrt` files and custom top-level folders.
@@ -35,6 +35,7 @@ It supports:
 - Startup restores panel state first, then defers heavier tasks such as Whisper runtime probing, installed MOGRT refresh, and release checks so the extension becomes interactive faster.
 - The generate action now sits directly above the MOGRT gallery, and the gallery folder filter is restored after reopening Premiere instead of resetting to `All formats`.
 - Subtitle generation now shows a dedicated progress bar; Whisper workflows expose stage progress (sequence export, Whisper analysis, timing parse, plan/apply), and CEP Node Whisper runs stream percentage updates when the CLI reports them.
+- The same generation progress bar is also used for SRT builds (read, parse, planning, apply) so caption creation no longer looks stalled on long imports.
 - The panel theme now derives its neutral surface colors from Premiere CEP `appSkinInfo`, so it follows host appearance variants more closely instead of using a fixed dark-blue skin.
 - On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path and an enlarged CEP buffer, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.

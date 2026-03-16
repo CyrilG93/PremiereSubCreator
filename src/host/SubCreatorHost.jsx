@@ -293,6 +293,8 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       return subcreator_error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
     }
 
+    var workAreaType = String(payload.rangeMode || "") === "in_out" ? 1 : 0;
+
     var outputFile = new File(outputPath);
     var outputFolder = outputFile.parent;
     if (outputFolder && !outputFolder.exists) {
@@ -304,7 +306,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
 
     if (typeof sequence.exportAsMediaDirect === "function") {
       try {
-        sequence.exportAsMediaDirect(outputPath, presetPath, 0);
+        sequence.exportAsMediaDirect(outputPath, presetPath, workAreaType);
         exportTriggered = true;
       } catch (directExportError) {
         exportErrors.push("exportAsMediaDirect: " + directExportError);
@@ -313,7 +315,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
 
     if (!exportTriggered && app.encoder && typeof app.encoder.encodeSequence === "function") {
       try {
-        var jobId = app.encoder.encodeSequence(sequence, outputPath, presetPath, 0, 0);
+        var jobId = app.encoder.encodeSequence(sequence, outputPath, presetPath, workAreaType, 0);
         if (jobId) {
           app.encoder.startBatch();
           exportTriggered = true;

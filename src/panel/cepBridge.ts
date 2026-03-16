@@ -34,9 +34,16 @@ interface WhisperTranscriptionRequest {
 
 interface WhisperTranscriptionResult {
   srtText: string;
+  jsonText?: string;
   model: string;
   audioPath: string;
   commandOutput?: string;
+}
+
+interface WhisperSequenceExportResult {
+  audioPath: string;
+  presetPath: string;
+  sequenceName?: string;
 }
 
 export interface WhisperRuntimeStatus {
@@ -121,6 +128,7 @@ interface CepNodeModules {
       isFile?: () => boolean;
     };
     writeFileSync: (path: string, data: Uint8Array) => void;
+    unlinkSync: (path: string) => void;
   };
   os: {
     tmpdir: () => string;
@@ -233,7 +241,19 @@ function resolveCepNodeModules(): CepNodeModules | null {
 function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: string): string[] {
   // // Build CLI arguments for local Whisper invocation.
   const model = request.model?.trim() || "base";
-  const args = [request.audioPath, "--model", model, "--output_format", "srt", "--output_dir", outputDir, "--fp16", "False"];
+  const args = [
+    request.audioPath,
+    "--model",
+    model,
+    "--output_format",
+    "all",
+    "--output_dir",
+    outputDir,
+    "--fp16",
+    "False",
+    "--word_timestamps",
+    "True"
+  ];
 
   const language = request.languageCode?.trim();
   if (language && language.toLowerCase() !== "auto") {
@@ -241,6 +261,155 @@ function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: strin
   }
 
   return args;
+}
+
+function buildWhisperOutputPath(modules: CepNodeModules, outputDir: string, audioPath: string, extension: string): string {
+  // // Resolve one Whisper output file by preferred basename first, then by directory scan fallback.
+  const normalizedExtension = String(extension || "").replace(/^\./, "").toLowerCase();
+  const baseName = modules.path.basename(audioPath).replace(/\.[^/.]+$/, "");
+  const direct = modules.path.join(outputDir, `${baseName}.${normalizedExtension}`);
+  if (modules.fs.existsSync(direct)) {
+    return direct;
+  }
+
+  const entries = modules.fs.readdirSync(outputDir);
+  for (const entry of entries) {
+    const lower = String(entry).toLowerCase();
+    if (lower.endsWith(`.${normalizedExtension}`) && lower.startsWith(baseName.toLowerCase())) {
+      return modules.path.join(outputDir, entry);
+    }
+  }
+
+  return "";
+}
+
+function cleanupWhisperOutputFiles(modules: CepNodeModules, outputDir: string, audioPath: string): void {
+  // // Delete temporary Whisper output artifacts once the panel has loaded them into memory.
+  const extensions = ["json", "srt", "txt", "tsv", "vtt"];
+  for (const extension of extensions) {
+    const filePath = buildWhisperOutputPath(modules, outputDir, audioPath, extension);
+    if (!filePath || !modules.fs.existsSync(filePath)) {
+      continue;
+    }
+
+    try {
+      modules.fs.unlinkSync(filePath);
+    } catch {
+      // // Ignore cleanup failures because transcription already succeeded.
+    }
+  }
+}
+
+function findWhisperSequencePresetInSystemPresets(modules: CepNodeModules, systemPresetsRoot: string): string {
+  // // Scan one level under AME system presets to find a usable WAV audio-only preset across app versions.
+  if (!systemPresetsRoot || !modules.fs.existsSync(systemPresetsRoot)) {
+    return "";
+  }
+
+  const preferredNames = [/^waveform audio 48khz 16-bit\.epr$/i, /^wav 48khz 16 bit\.epr$/i];
+
+  function matchEntry(entryPath: string): string {
+    if (!modules.fs.existsSync(entryPath)) {
+      return "";
+    }
+
+    const stats = modules.fs.statSync(entryPath);
+    if (stats?.isFile && stats.isFile()) {
+      const fileName = modules.path.basename(entryPath);
+      for (const pattern of preferredNames) {
+        if (pattern.test(fileName)) {
+          return entryPath;
+        }
+      }
+      return "";
+    }
+
+    if (!stats?.isDirectory || !stats.isDirectory()) {
+      return "";
+    }
+
+    for (const childEntry of modules.fs.readdirSync(entryPath)) {
+      const matchedChild = matchEntry(modules.path.join(entryPath, childEntry));
+      if (matchedChild) {
+        return matchedChild;
+      }
+    }
+
+    return "";
+  }
+
+  return matchEntry(systemPresetsRoot);
+}
+
+function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules): string {
+  // // Prefer the newest installed Adobe Media Encoder WAV preset so active-sequence export needs no manual setup.
+  const candidates: Array<{ path: string; score: number }> = [];
+
+  function pushCandidate(candidatePath: string, score: number): void {
+    if (!candidatePath || !modules.fs.existsSync(candidatePath)) {
+      return;
+    }
+    candidates.push({ path: candidatePath, score });
+  }
+
+  if (detectWindowsRuntime()) {
+    const roots = [modules.process.env.ProgramFiles, modules.process.env["ProgramFiles(x86)"]].filter(Boolean) as string[];
+    for (const root of roots) {
+      const adobeRoot = modules.path.join(root, "Adobe");
+      if (!modules.fs.existsSync(adobeRoot)) {
+        continue;
+      }
+
+      for (const entry of modules.fs.readdirSync(adobeRoot)) {
+        const normalizedEntry = String(entry || "");
+        const versionMatch = normalizedEntry.match(/^Adobe Media Encoder (\d{4})$/);
+        const betaMatch = /^Adobe Media Encoder(?: \(Beta\)| Beta)$/i.test(normalizedEntry);
+        if (!versionMatch && !betaMatch) {
+          continue;
+        }
+
+        const versionScore = versionMatch ? Number(versionMatch[1]) : 0;
+        pushCandidate(
+          findWhisperSequencePresetInSystemPresets(
+            modules,
+            modules.path.join(adobeRoot, normalizedEntry, "MediaIO", "systempresets")
+          ),
+          versionScore
+        );
+      }
+    }
+  } else {
+    const applicationsRoot = "/Applications";
+    if (modules.fs.existsSync(applicationsRoot)) {
+      for (const entry of modules.fs.readdirSync(applicationsRoot)) {
+        const normalizedEntry = String(entry || "");
+        const versionMatch = normalizedEntry.match(/^Adobe Media Encoder (\d{4})$/);
+        const betaMatch = /^Adobe Media Encoder(?: \(Beta\)| Beta)$/i.test(normalizedEntry);
+        if (!versionMatch && !betaMatch) {
+          continue;
+        }
+
+        const versionScore = versionMatch ? Number(versionMatch[1]) : 0;
+        pushCandidate(
+          findWhisperSequencePresetInSystemPresets(
+            modules,
+            modules.path.join(applicationsRoot, normalizedEntry, `${normalizedEntry}.app`, "Contents", "MediaIO", "systempresets")
+          ),
+          versionScore
+        );
+        pushCandidate(
+          findWhisperSequencePresetInSystemPresets(
+            modules,
+            modules.path.join(applicationsRoot, `${normalizedEntry}.app`, "Contents", "MediaIO", "systempresets")
+          ),
+          versionScore
+        );
+      }
+    }
+  }
+
+  candidates.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+  return candidates[0]?.path || "";
 }
 
 function detectWindowsRuntime(): boolean {
@@ -1573,21 +1742,12 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
 
 function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
   // // Resolve Whisper output SRT from expected filename or directory scan fallback.
-  const baseName = modules.path.basename(audioPath).replace(/\.[^/.]+$/, "");
-  const direct = modules.path.join(outputDir, `${baseName}.srt`);
-  if (modules.fs.existsSync(direct)) {
-    return direct;
-  }
+  return buildWhisperOutputPath(modules, outputDir, audioPath, "srt");
+}
 
-  const entries = modules.fs.readdirSync(outputDir);
-  for (const entry of entries) {
-    const lower = String(entry).toLowerCase();
-    if (lower.endsWith(".srt") && lower.startsWith(baseName.toLowerCase())) {
-      return modules.path.join(outputDir, entry);
-    }
-  }
-
-  return "";
+function resolveWhisperJsonPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
+  // // Resolve Whisper JSON output so the planner can reuse precise word timestamps when available.
+  return buildWhisperOutputPath(modules, outputDir, audioPath, "json");
 }
 
 function summarizeWhisperErrorOutput(output: string): string {
@@ -1644,10 +1804,12 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
     return null;
   }
 
-  const outputDir = modules.path.join(modules.os.tmpdir(), "SubCreatorWhisper");
-  if (!modules.fs.existsSync(outputDir)) {
-    modules.fs.mkdirSync(outputDir, { recursive: true });
-  }
+  const outputDir = modules.path.join(
+    modules.os.tmpdir(),
+    "SubCreatorWhisper",
+    `run-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+  );
+  modules.fs.mkdirSync(outputDir, { recursive: true });
 
   const runtimeConfig = getRuntimeConfig(modules);
   const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
@@ -1702,12 +1864,19 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
       continue;
     }
 
-    return {
+    const jsonPath = resolveWhisperJsonPath(modules, outputDir, request.audioPath);
+    const jsonText = jsonPath && modules.fs.existsSync(jsonPath) ? String(modules.fs.readFileSync(jsonPath, "utf8") || "") : "";
+
+    const result = {
       srtText,
+      jsonText: jsonText.trim() ? jsonText : undefined,
       model: request.model?.trim() || "base",
       audioPath: request.audioPath,
       commandOutput: attemptOutput
     };
+
+    cleanupWhisperOutputFiles(modules, outputDir, request.audioPath);
+    return result;
   }
 
   let installHint = "";
@@ -1799,6 +1968,66 @@ export async function pickWhisperAudioPath(): Promise<string> {
   }
 
   return String(response.data?.path ?? "");
+}
+
+export async function exportActiveSequenceAudioForWhisper(): Promise<WhisperSequenceExportResult> {
+  // // Export the active sequence audible mix to a temporary WAV file so Whisper can analyze the current edit directly.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    throw new Error("CEP Node runtime unavailable. Unable to export active sequence audio for Whisper.");
+  }
+
+  const presetPath = detectWhisperSequencePresetPathViaCepNode(modules);
+  if (!presetPath) {
+    throw new Error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
+  }
+
+  const outputDir = modules.path.join(modules.os.tmpdir(), "SubCreatorWhisperSequence");
+  modules.fs.mkdirSync(outputDir, { recursive: true });
+
+  const outputPath = modules.path.join(outputDir, `subcreator-sequence-${Date.now()}.wav`);
+  const encodedPayload = encodeURIComponent(
+    JSON.stringify({
+      outputPath,
+      presetPath
+    })
+  );
+  const response = await evalHostJson<WhisperSequenceExportResult>(
+    `subcreator_export_active_sequence_audio("${escapeForJsx(encodedPayload)}")`
+  );
+
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to export active sequence audio for Whisper.");
+  }
+
+  return {
+    audioPath: String(response.data?.audioPath ?? outputPath),
+    presetPath: String(response.data?.presetPath ?? presetPath),
+    sequenceName: String(response.data?.sequenceName ?? "")
+  };
+}
+
+export async function deleteTemporaryWhisperAudio(filePath: string): Promise<void> {
+  // // Remove temporary exported audio files once Whisper analysis has consumed them.
+  const normalizedPath = String(filePath || "").trim();
+  if (!normalizedPath) {
+    return;
+  }
+
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return;
+  }
+
+  if (!modules.fs.existsSync(normalizedPath)) {
+    return;
+  }
+
+  try {
+    modules.fs.unlinkSync(normalizedPath);
+  } catch {
+    // // Ignore cleanup failures because they should not block subtitle generation.
+  }
 }
 
 function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualPropertyList {
@@ -2129,6 +2358,7 @@ export async function transcribeWithWhisper(request: WhisperTranscriptionRequest
 
   return {
     srtText: String(response.data?.srtText ?? ""),
+    jsonText: typeof response.data?.jsonText === "string" ? response.data.jsonText : undefined,
     model: String(response.data?.model ?? request.model),
     audioPath: String(response.data?.audioPath ?? request.audioPath),
     commandOutput: String(response.data?.commandOutput ?? "")

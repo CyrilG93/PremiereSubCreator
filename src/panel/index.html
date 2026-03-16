@@ -50,6 +50,7 @@
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
               <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
+              <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper sequence active</option>
             </select>
           </label>
 
@@ -68,7 +69,7 @@
 
           <section class="field field--full" id="whisperField">
             <span data-i18n="field.whisperAudio">Fichier audio/video pour Whisper</span>
-            <div class="inline-row">
+            <div id="whisperAudioPickerRow" class="inline-row">
               <input
                 id="whisperAudioPath"
                 type="text"
@@ -87,6 +88,9 @@
                 <option value="turbo">turbo</option>
               </select>
             </div>
+            <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
+              La sequence active est exportee temporairement en WAV puis analysee par Whisper.
+            </p>
             <p class="hint" data-i18n="help.whisper">
               Whisper doit etre installe localement et accessible via la commande `whisper`.
             </p>

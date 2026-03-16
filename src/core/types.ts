@@ -1,5 +1,5 @@
 // // Define strongly typed structures shared by the panel and host bridge.
-export type SourceMode = "srt" | "whisper_local";
+export type SourceMode = "srt" | "whisper_local" | "whisper_sequence";
 
 // // Support both per-word and per-line animation strategies.
 export type AnimationMode = "word" | "line" | "none";

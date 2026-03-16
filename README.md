@@ -3,9 +3,10 @@
 Sub Creator is a CEP panel extension for Adobe Premiere Pro 2025+ focused on dynamic/design subtitles.
 
 It supports:
-- Two source workflows:
+- Three source workflows:
   - SRT import via native file picker.
   - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
+  - Whisper transcription from the active Premiere sequence via temporary WAV export of the current audible mix.
 - Caption planning with max letters, max lines, font size, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
 - MOGRT gallery now reads installed templates dynamically from the extension `templates/mogrt` folder, including manually added `.mogrt` files and custom top-level folders.
@@ -87,10 +88,13 @@ Sub Creator can apply explicit family/style names, and can show dropdown options
 ### Do we need an SRT file?
 SRT works immediately.
 
-Whisper local can generate SRT on the fly from an audio/video file.
+Whisper local can generate subtitles on the fly from an audio/video file.
+Whisper active sequence can export the current sequence audible mix to a temporary WAV, then transcribe it automatically.
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
-If no local Whisper runtime is detected at panel startup, the `Whisper local (audio)` source option is hidden automatically.
+If no local Whisper runtime is detected at panel startup, both Whisper source options are hidden automatically.
 Installers also write a user-local runtime config (`subcreator-runtime.json`) with detected `python` / `whisper` / `ffmpeg` paths so CEP can run reliably even when host PATH is incomplete.
+
+Whisper integration now requests `json + srt` output with `--word_timestamps True`, so caption planning can reuse precise word timings whenever Whisper provides them and only fall back to synthetic timing when needed.
 
 ## Project structure
 
@@ -128,6 +132,13 @@ Then verify:
 ```bash
 whisper --help
 ```
+
+Sub Creator uses the local Whisper CLI with:
+
+- `--output_format all`
+- `--word_timestamps True`
+
+This allows the panel to consume word-level timing data from Whisper JSON for more accurate chunk timing.
 
 Note: first Whisper transcription downloads the selected model. In enterprise/proxy environments, Python SSL trust issues can block this download (`CERTIFICATE_VERIFY_FAILED`).
 

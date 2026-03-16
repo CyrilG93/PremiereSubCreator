@@ -114,6 +114,225 @@ function subcreator_pick_audio_file() {
   }
 }
 
+function subcreator_normalize_system_path(value) {
+  // // Normalize file-system paths for the current host platform before passing them into export APIs.
+  var normalized = String(value || "");
+  return subcreator_is_windows() ? normalized.replace(/\//g, "\\") : normalized.replace(/\\/g, "/");
+}
+
+function subcreator_build_audio_preset_candidates() {
+  // // Build likely Adobe Media Encoder system-preset roots across installed major versions.
+  var candidates = [];
+  var currentYear = new Date().getFullYear() + 1;
+
+  if (subcreator_is_windows()) {
+    var roots = [];
+    try {
+      subcreator_runtime_push_unique(roots, $.getenv("ProgramFiles"));
+    } catch (error) {}
+    try {
+      subcreator_runtime_push_unique(roots, $.getenv("ProgramFiles(x86)"));
+    } catch (error2) {}
+
+    for (var rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+      var root = String(roots[rootIndex] || "");
+      for (var year = currentYear; year >= 2023; year -= 1) {
+        subcreator_runtime_push_unique(
+          candidates,
+          root + "/Adobe/Adobe Media Encoder " + year + "/MediaIO/systempresets"
+        );
+      }
+      subcreator_runtime_push_unique(candidates, root + "/Adobe/Adobe Media Encoder Beta/MediaIO/systempresets");
+      subcreator_runtime_push_unique(candidates, root + "/Adobe/Adobe Media Encoder (Beta)/MediaIO/systempresets");
+    }
+
+    return candidates;
+  }
+
+  for (var macYear = currentYear; macYear >= 2023; macYear -= 1) {
+    var appName = "Adobe Media Encoder " + macYear;
+    subcreator_runtime_push_unique(
+      candidates,
+      "/Applications/" + appName + "/" + appName + ".app/Contents/MediaIO/systempresets"
+    );
+    subcreator_runtime_push_unique(candidates, "/Applications/" + appName + ".app/Contents/MediaIO/systempresets");
+  }
+
+  subcreator_runtime_push_unique(
+    candidates,
+    "/Applications/Adobe Media Encoder (Beta)/Adobe Media Encoder (Beta).app/Contents/MediaIO/systempresets"
+  );
+  subcreator_runtime_push_unique(candidates, "/Applications/Adobe Media Encoder (Beta).app/Contents/MediaIO/systempresets");
+  subcreator_runtime_push_unique(candidates, "/Applications/Adobe Media Encoder Beta/Adobe Media Encoder Beta.app/Contents/MediaIO/systempresets");
+  subcreator_runtime_push_unique(candidates, "/Applications/Adobe Media Encoder Beta.app/Contents/MediaIO/systempresets");
+
+  return candidates;
+}
+
+function subcreator_find_audio_preset_in_systempresets(rootPath) {
+  // // Scan Adobe Media Encoder system presets for a stable WAV audio-only preset across versions.
+  var rootFolder = new Folder(subcreator_normalize_system_path(rootPath || ""));
+  if (!rootFolder.exists) {
+    return "";
+  }
+
+  var preferredPatterns = [/^Waveform Audio 48kHz 16-bit\.epr$/i, /^WAV 48kHz 16 bit\.epr$/i];
+
+  function scanFolder(folderRef) {
+    if (!folderRef || !folderRef.exists) {
+      return "";
+    }
+
+    var entries = folderRef.getFiles();
+    for (var entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+      var entry = entries[entryIndex];
+      if (entry instanceof File) {
+        var entryName = String(entry.name || "");
+        for (var patternIndex = 0; patternIndex < preferredPatterns.length; patternIndex += 1) {
+          if (preferredPatterns[patternIndex].test(entryName)) {
+            return entry.fsName;
+          }
+        }
+      }
+    }
+
+    for (var folderIndex = 0; folderIndex < entries.length; folderIndex += 1) {
+      var child = entries[folderIndex];
+      if (child instanceof Folder) {
+        var match = scanFolder(child);
+        if (match) {
+          return match;
+        }
+      }
+    }
+
+    return "";
+  }
+
+  return scanFolder(rootFolder);
+}
+
+function subcreator_find_audio_export_preset(preferredPath) {
+  // // Resolve a usable audio-only export preset so active-sequence Whisper export stays automatic.
+  var normalizedPreferred = subcreator_trim_string(preferredPath || "");
+  if (normalizedPreferred) {
+    var preferredFile = new File(subcreator_normalize_system_path(normalizedPreferred));
+    if (preferredFile.exists) {
+      return preferredFile.fsName;
+    }
+  }
+
+  var candidates = subcreator_build_audio_preset_candidates();
+  for (var i = 0; i < candidates.length; i += 1) {
+    var candidatePath = subcreator_find_audio_preset_in_systempresets(candidates[i]);
+    if (candidatePath) {
+      return candidatePath;
+    }
+  }
+
+  return "";
+}
+
+function subcreator_wait_for_file_stable(filePath, timeoutMs, stablePasses) {
+  // // Poll an exported file until it exists with a non-zero size and stops growing for a few checks.
+  var normalizedPath = subcreator_normalize_system_path(filePath);
+  var deadline = new Date().getTime() + Math.max(Number(timeoutMs) || 0, 1000);
+  var lastSize = -1;
+  var stableCount = 0;
+
+  while (new Date().getTime() < deadline) {
+    var fileRef = new File(normalizedPath);
+    if (fileRef.exists && Number(fileRef.length) > 0) {
+      var currentSize = Number(fileRef.length);
+      if (currentSize === lastSize) {
+        stableCount += 1;
+        if (stableCount >= Math.max(Number(stablePasses) || 0, 2)) {
+          return true;
+        }
+      } else {
+        lastSize = currentSize;
+        stableCount = 0;
+      }
+    }
+
+    $.sleep(500);
+  }
+
+  var finalFile = new File(normalizedPath);
+  return finalFile.exists && Number(finalFile.length) > 0;
+}
+
+function subcreator_export_active_sequence_audio(payloadEncoded) {
+  // // Render the active-sequence audible mix to a temporary WAV file for Whisper transcription.
+  try {
+    var payloadText = subcreator_decode_payload(payloadEncoded || "");
+    var payload = payloadText ? JSON.parse(payloadText) : {};
+
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence available for Whisper export.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var outputPath = subcreator_normalize_system_path(payload.outputPath || "");
+    if (!outputPath) {
+      return subcreator_error("Missing output path for Whisper sequence export.");
+    }
+
+    var presetPath = subcreator_find_audio_export_preset(payload.presetPath || "");
+    if (!presetPath) {
+      return subcreator_error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
+    }
+
+    var outputFile = new File(outputPath);
+    var outputFolder = outputFile.parent;
+    if (outputFolder && !outputFolder.exists) {
+      outputFolder.create();
+    }
+
+    var exportErrors = [];
+    var exportTriggered = false;
+
+    if (typeof sequence.exportAsMediaDirect === "function") {
+      try {
+        sequence.exportAsMediaDirect(outputPath, presetPath, 0);
+        exportTriggered = true;
+      } catch (directExportError) {
+        exportErrors.push("exportAsMediaDirect: " + directExportError);
+      }
+    }
+
+    if (!exportTriggered && app.encoder && typeof app.encoder.encodeSequence === "function") {
+      try {
+        var jobId = app.encoder.encodeSequence(sequence, outputPath, presetPath, 0, 0);
+        if (jobId) {
+          app.encoder.startBatch();
+          exportTriggered = true;
+        } else {
+          exportErrors.push("encodeSequence returned no job id");
+        }
+      } catch (encoderError) {
+        exportErrors.push("encodeSequence: " + encoderError);
+      }
+    }
+
+    if (!exportTriggered) {
+      return subcreator_error("Unable to start active-sequence audio export. " + exportErrors.join(" | "));
+    }
+
+    if (!subcreator_wait_for_file_stable(outputPath, 600000, 3)) {
+      return subcreator_error("Timed out waiting for exported Whisper audio file: " + outputPath);
+    }
+
+    return subcreator_ok({
+      audioPath: outputFile.fsName,
+      presetPath: presetPath,
+      sequenceName: String(sequence.name || "")
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_runtime_push_unique(list, value) {
   // // Push unique string values while keeping ExtendScript compatibility.
   var normalized = subcreator_trim_string(String(value || ""));
@@ -298,9 +517,9 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
       subcreator_quote_cmd(audioPath) +
       " --model " +
       subcreator_quote_cmd(modelArg) +
-      " --output_format srt --output_dir " +
+      " --output_format all --output_dir " +
       subcreator_quote_cmd(outputDir) +
-      " --fp16 False";
+      " --fp16 False --word_timestamps True";
 
     if (languageArg && languageArg.toLowerCase() !== "auto") {
       cmd += " --language " + subcreator_quote_cmd(languageArg);
@@ -324,9 +543,9 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
     subcreator_quote_posix(audioPath) +
     " --model " +
     subcreator_quote_posix(modelArg) +
-    " --output_format srt --output_dir " +
+    " --output_format all --output_dir " +
     subcreator_quote_posix(outputDir) +
-    " --fp16 False";
+    " --fp16 False --word_timestamps True";
 
   if (languageArg && languageArg.toLowerCase() !== "auto") {
     shellCmd += " --language " + subcreator_quote_posix(languageArg);
@@ -343,6 +562,27 @@ function subcreator_find_whisper_srt_file(tempFolder, baseName) {
   }
 
   var files = tempFolder.getFiles("*.srt");
+  for (var i = 0; i < files.length; i += 1) {
+    var candidate = files[i];
+    if (candidate instanceof File) {
+      var candidateName = String(candidate.name || "").toLowerCase();
+      if (candidateName.indexOf(String(baseName).toLowerCase()) === 0) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function subcreator_find_whisper_json_file(tempFolder, baseName) {
+  // // Resolve the JSON file created by Whisper so panel can reuse exact word timestamps.
+  var directPath = new File(tempFolder.fsName + "/" + baseName + ".json");
+  if (directPath.exists) {
+    return directPath;
+  }
+
+  var files = tempFolder.getFiles("*.json");
   for (var i = 0; i < files.length; i += 1) {
     var candidate = files[i];
     if (candidate instanceof File) {
@@ -399,8 +639,15 @@ function subcreator_transcribe_whisper(payloadEncoded) {
       return subcreator_error("Whisper produced an empty SRT file: " + srtFile.fsName);
     }
 
+    var jsonText = "";
+    var jsonFile = subcreator_find_whisper_json_file(tempFolder, baseName);
+    if (jsonFile && jsonFile.exists) {
+      jsonText = subcreator_read_file_text(jsonFile);
+    }
+
     return subcreator_ok({
       srtText: srtText,
+      jsonText: jsonText,
       model: model,
       audioPath: audioFile.fsName,
       commandOutput: commandOutput

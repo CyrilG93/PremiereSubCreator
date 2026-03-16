@@ -1,10 +1,13 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
+import { parseWhisperJson } from "../core/whisper";
 import { parseSrt } from "../core/srt";
-import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, MogrtTemplateItem } from "../core/types";
+import type { AnimationMode, CaptionBuildOptions, CaptionCue, HostApplyPayload, MogrtTemplateItem, SourceMode } from "../core/types";
 import {
   applyCaptionPlan,
   applyVisualPropertiesToSelectedMogrts,
+  deleteTemporaryWhisperAudio,
+  exportActiveSequenceAudioForWhisper,
   getSelectedMogrtCount,
   getWhisperRuntimeStatus,
   openExternalUrl,
@@ -61,7 +64,7 @@ interface HostVisualProperty {
 interface PanelStateSnapshot {
   languageCode: string;
   activeMode: PanelMode;
-  sourceMode: "srt" | "whisper_local";
+  sourceMode: SourceMode;
   srtPath: string;
   whisperAudioPath: string;
   whisperModel: string;
@@ -90,9 +93,11 @@ const elements = {
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
   srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
+  whisperAudioPickerRow: document.querySelector<HTMLElement>("#whisperAudioPickerRow"),
   whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
   whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
+  whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
@@ -840,9 +845,9 @@ async function loadLocale(languageCode: string): Promise<void> {
   refreshUpdateBanner();
 }
 
-function getSourceMode(): "srt" | "whisper_local" {
+function getSourceMode(): SourceMode {
   // // Normalize source mode value from UI select control.
-  return (elements.sourceMode?.value as "srt" | "whisper_local") || "srt";
+  return (elements.sourceMode?.value as SourceMode) || "srt";
 }
 
 function resolveExtensionRootPath(): string {
@@ -878,13 +883,22 @@ function buildAbsoluteMogrtPath(extensionRootPath: string, templateRelativePath:
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
+  const whisperModeActive = mode === "whisper_local" || mode === "whisper_sequence";
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
   }
 
   if (elements.whisperField) {
-    elements.whisperField.style.display = mode === "whisper_local" ? "grid" : "none";
+    elements.whisperField.style.display = whisperModeActive ? "grid" : "none";
+  }
+
+  if (elements.whisperAudioPickerRow) {
+    elements.whisperAudioPickerRow.style.display = mode === "whisper_local" ? "flex" : "none";
+  }
+
+  if (elements.whisperSequenceHint) {
+    elements.whisperSequenceHint.style.display = mode === "whisper_sequence" ? "block" : "none";
   }
 }
 
@@ -894,8 +908,10 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     return;
   }
 
-  const whisperOption = elements.sourceMode.querySelector<HTMLOptionElement>('option[value="whisper_local"]');
-  if (!whisperOption) {
+  const whisperOptions = Array.from(
+    elements.sourceMode.querySelectorAll<HTMLOptionElement>('option[value="whisper_local"], option[value="whisper_sequence"]')
+  );
+  if (!whisperOptions.length) {
     return;
   }
 
@@ -905,8 +921,10 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
       return;
     }
 
-    whisperOption.remove();
-    if (elements.sourceMode.value === "whisper_local") {
+    for (const whisperOption of whisperOptions) {
+      whisperOption.remove();
+    }
+    if (elements.sourceMode.value === "whisper_local" || elements.sourceMode.value === "whisper_sequence") {
       elements.sourceMode.value = "srt";
     }
 
@@ -2830,23 +2848,49 @@ async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise
     return cues;
   }
 
-  if (!options.whisperAudioPath) {
-    throw new Error(translate("error.missingWhisperAudio"));
+  let whisperAudioPath = options.whisperAudioPath;
+  let cleanupAudioPath = "";
+  if (options.sourceMode === "whisper_sequence") {
+    setLog(translate("log.whisperSequenceExport"));
+    const exportResult = await exportActiveSequenceAudioForWhisper();
+    whisperAudioPath = exportResult.audioPath;
+    cleanupAudioPath = exportResult.audioPath;
   }
 
-  const whisperResult = await transcribeWithWhisper({
-    audioPath: options.whisperAudioPath,
-    languageCode: options.languageCode,
-    model: options.whisperModel
-  });
-
-  const cues = parseSrt(whisperResult.srtText);
-  if (!cues.length) {
-    throw new Error(translate("error.emptyWhisper"));
+  if (!whisperAudioPath) {
+    throw new Error(
+      options.sourceMode === "whisper_sequence" ? translate("error.missingActiveSequenceAudio") : translate("error.missingWhisperAudio")
+    );
   }
 
-  setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
-  return cues;
+  try {
+    const whisperResult = await transcribeWithWhisper({
+      audioPath: whisperAudioPath,
+      languageCode: options.languageCode,
+      model: options.whisperModel
+    });
+
+    let cues: CaptionCue[] = [];
+    if (whisperResult.jsonText) {
+      try {
+        cues = parseWhisperJson(whisperResult.jsonText);
+      } catch {
+        // // Fall back to SRT parsing when Whisper JSON is unavailable or malformed on this host/runtime.
+        cues = [];
+      }
+    }
+    const fallbackCues = cues.length > 0 ? cues : parseSrt(whisperResult.srtText);
+    if (!fallbackCues.length) {
+      throw new Error(translate("error.emptyWhisper"));
+    }
+
+    setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
+    return fallbackCues;
+  } finally {
+    if (cleanupAudioPath) {
+      await deleteTemporaryWhisperAudio(cleanupAudioPath);
+    }
+  }
 }
 
 async function generate(): Promise<void> {

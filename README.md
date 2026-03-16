@@ -28,6 +28,7 @@ It supports:
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
 - On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) instead of filename guesses, which improves matching for collection fonts like `Al Bayan` and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
+- Font token apply now retries canonical variants (`Family-Style`, compact internal ids, and cached aliases) and keeps text style dropdowns visible even when host readback is incomplete after a failed font change.
 - When CEP Node is available, the visual editor augments font dropdowns with local OS-installed font families/styles (macOS/Windows font directories) as a fallback when MOGRT options are limited.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
 - Changing `Font Family` / `Font Style` now re-syncs faux `Bold` / `Italic` checkboxes so system font changes do not keep stale style flags from the original template.

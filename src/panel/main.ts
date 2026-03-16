@@ -1801,16 +1801,22 @@ function resolveVisualTextStyleToken(basePath: string): string {
     .trim();
   const styleValue = String(styleControl instanceof HTMLSelectElement || styleControl instanceof HTMLInputElement ? styleControl.value : "")
     .trim();
-  if (!familyValue || !styleValue) {
+  if (!familyValue) {
     return "";
   }
 
+  const styleLookupValues = styleValue ? listFontStyleLookupKeys(styleValue) : ["regular", "roman", "plain"];
   for (const familyLookupKey of listFontFamilyLookupKeys(familyValue)) {
-    for (const styleLookupKey of listFontStyleLookupKeys(styleValue)) {
+    for (const styleLookupKey of styleLookupValues) {
       const token = tokenMap[`${familyLookupKey}::${styleLookupKey}`];
       if (token) {
         return token;
       }
+    }
+    const familyPrefix = `${familyLookupKey}::`;
+    const anyFamilyEntry = Object.entries(tokenMap).find(([lookupKey]) => lookupKey.startsWith(familyPrefix));
+    if (anyFamilyEntry?.[1]) {
+      return anyFamilyEntry[1];
     }
   }
   return "";

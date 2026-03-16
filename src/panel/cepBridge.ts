@@ -483,14 +483,25 @@ function listSystemFontDirectories(modules: CepNodeModules): string[] {
 
 function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
   // // Scan local font folders from CEP Node runtime and build family/style catalog for dropdown fallback.
-  if (typeof subcreatorSystemFontCatalogCache !== "undefined") {
-    return subcreatorSystemFontCatalogCache;
-  }
-
   const modules = resolveCepNodeModules();
   if (!modules) {
     subcreatorSystemFontCatalogCache = null;
     return null;
+  }
+
+  if (typeof subcreatorSystemFontCatalogCache !== "undefined") {
+    if (
+      subcreatorSystemFontCatalogCache &&
+      !detectWindowsRuntime() &&
+      subcreatorSystemFontCatalogCache.source === "mac-font-dirs"
+    ) {
+      // // Allow one lazy upgrade from filename fallback cache to authoritative `system_profiler` metadata.
+      const upgradedCatalog = detectMacSystemFontCatalogViaSystemProfiler(modules);
+      if (upgradedCatalog && upgradedCatalog.available) {
+        subcreatorSystemFontCatalogCache = upgradedCatalog;
+      }
+    }
+    return subcreatorSystemFontCatalogCache;
   }
 
   if (!detectWindowsRuntime()) {

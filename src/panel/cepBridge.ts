@@ -6,6 +6,9 @@ declare global {
   interface Window {
     __adobe_cep__?: {
       evalScript: (script: string, callback: (result: string) => void) => void;
+      getHostEnvironment?: () => string;
+      addEventListener?: (eventName: string, listener: (event?: unknown) => void) => void;
+      removeEventListener?: (eventName: string, listener: (event?: unknown) => void) => void;
     };
     cep?: {
       util?: {
@@ -38,6 +41,11 @@ interface WhisperTranscriptionResult {
   model: string;
   audioPath: string;
   commandOutput?: string;
+}
+
+export interface WhisperProgressUpdate {
+  percent: number;
+  detail: string;
 }
 
 interface WhisperSequenceExportResult {
@@ -104,6 +112,19 @@ export interface ApplyVisualPropertiesResult {
 
 interface CepNodeModules {
   childProcess: {
+    spawn?: (
+      command: string,
+      args: string[],
+      options: {
+        shell?: boolean;
+        env?: Record<string, string | undefined>;
+      }
+    ) => {
+      stdout?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
+      stderr?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
+      on: (eventName: "error" | "close", listener: (value: unknown) => void) => void;
+      kill?: (signal?: string) => void;
+    };
     spawnSync: (
       command: string,
       args: string[],
@@ -1797,6 +1818,40 @@ function isWhisperFatalDownloadError(summary: string): boolean {
   return normalized.indexOf("sslcertverificationerror") !== -1 || normalized.indexOf("certificate_verify_failed") !== -1;
 }
 
+function normalizeWhisperOutputChunk(chunk: string | Uint8Array): string {
+  // // Convert Node stream chunks into comparable text for progress/error parsing.
+  if (typeof chunk === "string") {
+    return chunk;
+  }
+
+  try {
+    const decoder = new TextDecoder("utf-8");
+    return decoder.decode(chunk);
+  } catch {
+    return String(chunk || "");
+  }
+}
+
+function extractWhisperProgressUpdate(output: string): WhisperProgressUpdate | null {
+  // // Parse Whisper/tqdm stderr progress like ` 42%|...` into a panel-friendly percentage update.
+  const normalized = String(output || "");
+  if (!normalized) {
+    return null;
+  }
+
+  const matches = Array.from(normalized.matchAll(/(\d{1,3})%\|/g));
+  if (!matches.length) {
+    return null;
+  }
+
+  const lastMatch = matches[matches.length - 1];
+  const percent = Math.max(0, Math.min(100, Number(lastMatch[1] || 0)));
+  return {
+    percent,
+    detail: `Whisper ${percent}%`
+  };
+}
+
 function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): WhisperTranscriptionResult | null {
   // // Run Whisper with CEP Node runtime to avoid ExtendScript `system.callSystem` availability issues.
   const modules = resolveCepNodeModules();
@@ -1866,6 +1921,196 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
 
     const jsonPath = resolveWhisperJsonPath(modules, outputDir, request.audioPath);
     const jsonText = jsonPath && modules.fs.existsSync(jsonPath) ? String(modules.fs.readFileSync(jsonPath, "utf8") || "") : "";
+
+    const result = {
+      srtText,
+      jsonText: jsonText.trim() ? jsonText : undefined,
+      model: request.model?.trim() || "base",
+      audioPath: request.audioPath,
+      commandOutput: attemptOutput
+    };
+
+    cleanupWhisperOutputFiles(modules, outputDir, request.audioPath);
+    return result;
+  }
+
+  let installHint = "";
+  let runtimeHint = "";
+  if (detectWindowsRuntime()) {
+    if (runtimeConfig?.pythonPath) {
+      installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user -U openai-whisper`;
+    } else if (runtimeConfig?.pythonCommand) {
+      installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user -U openai-whisper`;
+    } else {
+      installHint = "Install command: py -m pip install --user -U openai-whisper";
+    }
+  } else {
+    let interpreterHint = "";
+    if (runtimeConfig?.pythonPath) {
+      interpreterHint = runtimeConfig.pythonPath;
+    } else if (runtimeConfig?.pythonCommand) {
+      interpreterHint = runtimeConfig.pythonCommand;
+    }
+    if (!interpreterHint) {
+      for (const executablePath of userExecutables) {
+        interpreterHint = resolveWhisperInterpreterFromScript(modules, executablePath);
+        if (interpreterHint) {
+          break;
+        }
+      }
+    }
+
+    if (interpreterHint) {
+      installHint = `Install command: ${interpreterHint} -m pip install --user -U openai-whisper`;
+    } else {
+      installHint = "Install command: python3 -m pip install --user -U openai-whisper";
+    }
+  }
+  if (rootCauseSummary && /sslcertverificationerror|certificate_verify_failed|urllib\.error\.urlerror/i.test(rootCauseSummary)) {
+    runtimeHint =
+      "Model download failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or pre-download Whisper models.";
+  }
+  throw new Error(
+    `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
+      runtimeConfig ? `Runtime config: ${runtimeConfig.sourcePath}. ` : ""
+    }${runtimeHint ? `${runtimeHint}. ` : ""}${collectedOutput || ""}`
+  );
+}
+
+async function transcribeWithWhisperViaCepNodeAsync(
+  request: WhisperTranscriptionRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<WhisperTranscriptionResult | null> {
+  // // Stream Whisper execution through CEP Node so the panel can update progress while transcription is running.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return null;
+  }
+
+  if (typeof modules.childProcess.spawn !== "function") {
+    return transcribeWithWhisperViaCepNode(request);
+  }
+
+  const outputDir = modules.path.join(
+    modules.os.tmpdir(),
+    "SubCreatorWhisper",
+    `run-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+  );
+  modules.fs.mkdirSync(outputDir, { recursive: true });
+
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
+  const attempts: string[] = [];
+  const commandCandidates = buildWhisperCommandCandidates(modules, request, outputDir, userExecutables, runtimeConfig);
+  let collectedOutput = "";
+  let rootCauseSummary = "";
+
+  for (const candidate of commandCandidates) {
+    let latestProgressPercent = -1;
+    const attemptChunks: string[] = [];
+    let attemptTailOutput = "";
+    const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
+      // // Attach stdout/stderr listeners before Whisper starts so tqdm progress can feed the panel immediately.
+      let settled = false;
+      const child = modules.childProcess.spawn?.(candidate.command, candidate.args, {
+        shell: false,
+        env: spawnEnv
+      });
+      if (!child) {
+        resolve({
+          code: null,
+          error: {
+            message: "child_process.spawn unavailable"
+          }
+        });
+        return;
+      }
+
+      const handleChunk = (chunk: string | Uint8Array): void => {
+        // // Keep the latest progress percentage from Whisper stderr without flooding the UI with duplicate values.
+        const normalizedChunk = normalizeWhisperOutputChunk(chunk);
+        if (!normalizedChunk) {
+          return;
+        }
+        attemptChunks.push(normalizedChunk);
+        attemptTailOutput = `${attemptTailOutput}${normalizedChunk}`.slice(-4096);
+        const progress = extractWhisperProgressUpdate(attemptTailOutput);
+        if (!progress || progress.percent <= latestProgressPercent) {
+          return;
+        }
+        latestProgressPercent = progress.percent;
+        onProgress?.(progress);
+      };
+
+      child.stdout?.on("data", handleChunk);
+      child.stderr?.on("data", handleChunk);
+      child.on("error", (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({
+          code: null,
+          error: error && typeof error === "object" ? (error as { message?: string; code?: string }) : { message: String(error) }
+        });
+      });
+      child.on("close", (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({
+          code: typeof value === "number" ? value : null
+        });
+      });
+    });
+
+    if (attemptResult.error) {
+      const code = String(attemptResult.error.code || "");
+      attempts.push(`${candidate.label}: ${String(attemptResult.error.message || attemptResult.error)}`);
+      if (code === "ENOENT") {
+        continue;
+      }
+      continue;
+    }
+
+    const attemptOutput = attemptChunks.join("").trim();
+    if (attemptOutput && !collectedOutput) {
+      collectedOutput = attemptOutput;
+    }
+
+    if (typeof attemptResult.code === "number" && attemptResult.code !== 0) {
+      const summary = summarizeWhisperErrorOutput(attemptOutput);
+      if (summary && !rootCauseSummary) {
+        rootCauseSummary = summary;
+      }
+      attempts.push(`${candidate.label}: exit ${attemptResult.code}${summary ? ` (${summary})` : ""}`);
+      if (isWhisperFatalDownloadError(summary)) {
+        break;
+      }
+      continue;
+    }
+
+    const srtPath = resolveWhisperSrtPath(modules, outputDir, request.audioPath);
+    if (!srtPath) {
+      attempts.push(`${candidate.label}: no srt output`);
+      continue;
+    }
+
+    const srtText = String(modules.fs.readFileSync(srtPath, "utf8") || "");
+    if (!srtText.trim()) {
+      attempts.push(`${candidate.label}: empty srt output`);
+      continue;
+    }
+
+    const jsonPath = resolveWhisperJsonPath(modules, outputDir, request.audioPath);
+    const jsonText = jsonPath && modules.fs.existsSync(jsonPath) ? String(modules.fs.readFileSync(jsonPath, "utf8") || "") : "";
+
+    onProgress?.({
+      percent: 100,
+      detail: "Whisper 100%"
+    });
 
     const result = {
       srtText,
@@ -2340,9 +2585,12 @@ export async function applyVisualPropertiesToSelectedMogrts(
   };
 }
 
-export async function transcribeWithWhisper(request: WhisperTranscriptionRequest): Promise<WhisperTranscriptionResult> {
+export async function transcribeWithWhisper(
+  request: WhisperTranscriptionRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<WhisperTranscriptionResult> {
   // // Prefer CEP Node runtime for Whisper CLI, fallback to host ExtendScript bridge.
-  const nodeResult = transcribeWithWhisperViaCepNode(request);
+  const nodeResult = await transcribeWithWhisperViaCepNodeAsync(request, onProgress);
   if (nodeResult) {
     return nodeResult;
   }

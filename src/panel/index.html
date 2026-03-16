@@ -120,6 +120,16 @@
             <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
           </label>
 
+          <section class="field field--full field--actions">
+            <div class="generate-actions">
+              <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
+              <div id="generateProgress" class="visual-progress" hidden>
+                <progress id="generateProgressBar" max="100" value="0"></progress>
+                <span id="generateProgressText" class="hint">0%</span>
+              </div>
+            </div>
+          </section>
+
           <section class="field field--full" id="mogrtGalleryField">
             <div class="field__header">
               <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
@@ -146,10 +156,6 @@
             Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
           </p>
         </section>
-
-        <footer class="panel__footer">
-          <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
-        </footer>
       </section>
 
       <section id="modeVisual" class="mode-panel" data-mode="visual" hidden>

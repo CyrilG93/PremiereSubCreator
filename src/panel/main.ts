@@ -20,7 +20,7 @@ import {
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
-import type { InstalledMogrtCatalog, SystemFontCatalog } from "./cepBridge";
+import type { InstalledMogrtCatalog, SystemFontCatalog, WhisperProgressUpdate } from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
 
@@ -79,6 +79,23 @@ interface PanelStateSnapshot {
   verboseLogs: boolean;
 }
 
+interface RgbColor {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+interface CepHostSkinInfo {
+  baseFontFamily?: string;
+  panelBackgroundColor?: Partial<RgbColor>;
+  panelBackgroundColorSRGB?: Partial<RgbColor>;
+  systemHighlightColor?: Partial<RgbColor>;
+}
+
+interface CepHostEnvironment {
+  appSkinInfo?: CepHostSkinInfo;
+}
+
 const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
   appVersion: document.querySelector<HTMLSpanElement>("#appVersion"),
@@ -116,6 +133,9 @@ const elements = {
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
+  generateProgress: document.querySelector<HTMLElement>("#generateProgress"),
+  generateProgressBar: document.querySelector<HTMLProgressElement>("#generateProgressBar"),
+  generateProgressText: document.querySelector<HTMLElement>("#generateProgressText"),
   logPanel: document.querySelector<HTMLElement>("#logPanel"),
   logToggleButton: document.querySelector<HTMLButtonElement>("#logToggleButton"),
   logVerbosityButton: document.querySelector<HTMLButtonElement>("#logVerbosityButton"),
@@ -164,6 +184,8 @@ let verboseLogsEnabled = false;
 let currentLogState: PanelLogState | null = null;
 let passiveMogrtRefreshTimer: number | null = null;
 let lastPassiveMogrtCatalogRefreshAt = 0;
+let generateInProgress = false;
+let hostThemeListenerBound = false;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -172,6 +194,9 @@ let systemFontCatalog: SystemFontCatalog = {
   stylesByFamily: {},
   fontTokensByFamilyStyle: {}
 };
+
+const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
+const GENERATE_PROGRESS_MAX = 100;
 
 function parseTextStyleVirtualPath(path: string): { basePath: string; styleKey: string } | null {
   // // Decode synthetic text-style editor paths like `4::textstyle.fontStyle`.
@@ -314,6 +339,161 @@ function assertDomBindings(): void {
   }
 }
 
+function clampColorChannel(value: unknown): number {
+  // // Normalize unknown numeric channel values into valid RGB integer channels.
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(255, Math.round(numericValue)));
+}
+
+function readRgbColor(value: unknown): RgbColor | null {
+  // // Parse CEP skin color payloads which expose `{ red, green, blue }` channel objects.
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const payload = value as Record<string, unknown>;
+  return {
+    red: clampColorChannel(payload.red),
+    green: clampColorChannel(payload.green),
+    blue: clampColorChannel(payload.blue)
+  };
+}
+
+function mixRgbColor(left: RgbColor, right: RgbColor, rightWeight: number): RgbColor {
+  // // Blend two colors so panel surfaces can stay close to Premiere base shades.
+  const clampedWeight = Math.max(0, Math.min(1, rightWeight));
+  const leftWeight = 1 - clampedWeight;
+  return {
+    red: clampColorChannel(left.red * leftWeight + right.red * clampedWeight),
+    green: clampColorChannel(left.green * leftWeight + right.green * clampedWeight),
+    blue: clampColorChannel(left.blue * leftWeight + right.blue * clampedWeight)
+  };
+}
+
+function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
+  // // Brighten or darken one color uniformly while keeping channels inside RGB bounds.
+  return {
+    red: clampColorChannel(color.red + delta),
+    green: clampColorChannel(color.green + delta),
+    blue: clampColorChannel(color.blue + delta)
+  };
+}
+
+function rgbColorLuminance(color: RgbColor): number {
+  // // Estimate perceived brightness to switch between light/dark Premiere skin variants.
+  return (0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue) / 255;
+}
+
+function setRootRgbVariable(variableName: string, color: RgbColor): void {
+  // // Publish one RGB color both as `rgb(...)` and raw `r, g, b` triplet for CSS reuse.
+  const root = document.documentElement;
+  root.style.setProperty(variableName, `rgb(${color.red}, ${color.green}, ${color.blue})`);
+  root.style.setProperty(`${variableName}-rgb`, `${color.red}, ${color.green}, ${color.blue}`);
+}
+
+function readHostEnvironmentSkin(): CepHostEnvironment | null {
+  // // Read Premiere CEP host skin information without depending on an external CSInterface bundle.
+  const rawEnvironment = window.__adobe_cep__?.getHostEnvironment?.();
+  if (!rawEnvironment) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawEnvironment) as CepHostEnvironment;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyHostPanelTheme(): void {
+  // // Derive neutral Premiere-like surfaces from the current CEP skin and react to host theme changes.
+  const hostEnvironment = readHostEnvironmentSkin();
+  if (!hostEnvironment?.appSkinInfo) {
+    return;
+  }
+
+  const skinInfo = hostEnvironment.appSkinInfo;
+  const panelBackground =
+    readRgbColor(skinInfo.panelBackgroundColorSRGB) ||
+    readRgbColor(skinInfo.panelBackgroundColor) || {
+      red: 48,
+      green: 48,
+      blue: 48
+    };
+  const highlightColor = readRgbColor(skinInfo.systemHighlightColor) || {
+    red: 70,
+    green: 137,
+    blue: 255
+  };
+  const isLightTheme = rgbColorLuminance(panelBackground) >= 0.55;
+  const isDarkestTheme = rgbColorLuminance(panelBackground) <= 0.18;
+  const textPrimary = isLightTheme
+    ? { red: 36, green: 36, blue: 36 }
+    : { red: 236, green: 236, blue: 236 };
+  const textDim = mixRgbColor(textPrimary, panelBackground, isLightTheme ? 0.48 : 0.38);
+  const bgPrimary = offsetRgbColor(panelBackground, isLightTheme ? 10 : isDarkestTheme ? -12 : -6);
+  const bgSurface = offsetRgbColor(panelBackground, isLightTheme ? 18 : 5);
+  const bgSoft = offsetRgbColor(panelBackground, isLightTheme ? 24 : 10);
+  const bgInput = offsetRgbColor(panelBackground, isLightTheme ? 14 : -4);
+  const bgCard = offsetRgbColor(panelBackground, isLightTheme ? 12 : 2);
+  const accent = mixRgbColor(highlightColor, panelBackground, 0.12);
+  const accentSoft = mixRgbColor(highlightColor, textPrimary, isLightTheme ? 0.22 : 0.18);
+  const border = offsetRgbColor(panelBackground, isLightTheme ? -24 : 20);
+  const borderStrong = offsetRgbColor(panelBackground, isLightTheme ? -38 : 32);
+  const buttonPrimary = mixRgbColor(accent, bgSurface, 0.28);
+  const buttonPrimaryAlt = mixRgbColor(accent, bgPrimary, 0.2);
+  const buttonPrimaryText = rgbColorLuminance(buttonPrimary) >= 0.5
+    ? { red: 16, green: 16, blue: 16 }
+    : { red: 246, green: 246, blue: 246 };
+  const root = document.documentElement;
+
+  root.dataset.themeVariant = isLightTheme ? "light" : isDarkestTheme ? "darkest" : "dark";
+  setRootRgbVariable("--bg-primary", bgPrimary);
+  setRootRgbVariable("--bg-surface", bgSurface);
+  setRootRgbVariable("--bg-soft", bgSoft);
+  setRootRgbVariable("--bg-input", bgInput);
+  setRootRgbVariable("--bg-card", bgCard);
+  setRootRgbVariable("--text-primary", textPrimary);
+  setRootRgbVariable("--text-dim", textDim);
+  setRootRgbVariable("--accent", accent);
+  setRootRgbVariable("--accent-soft", accentSoft);
+  setRootRgbVariable("--border", border);
+  setRootRgbVariable("--border-strong", borderStrong);
+  setRootRgbVariable("--button-primary-bg", buttonPrimary);
+  setRootRgbVariable("--button-primary-bg-alt", buttonPrimaryAlt);
+  setRootRgbVariable("--button-primary-text", buttonPrimaryText);
+  root.style.setProperty("--shadow", isLightTheme ? "0 6px 18px rgba(0, 0, 0, 0.08)" : "0 6px 18px rgba(0, 0, 0, 0.24)");
+
+  const baseFontFamily = String(skinInfo.baseFontFamily || "").trim();
+  if (baseFontFamily) {
+    root.style.setProperty("--ui-font-family", `"${baseFontFamily}", "Avenir Next", "Helvetica Neue", sans-serif`);
+  }
+}
+
+function bindHostThemeListener(): void {
+  // // Subscribe once to CEP theme changes so the panel follows Premiere appearance switches live.
+  if (hostThemeListenerBound || typeof window.__adobe_cep__?.addEventListener !== "function") {
+    return;
+  }
+
+  hostThemeListenerBound = true;
+  window.__adobe_cep__.addEventListener(CEP_THEME_COLOR_CHANGED_EVENT, () => {
+    applyHostPanelTheme();
+  });
+}
+
+function waitForNextPaint(): Promise<void> {
+  // // Yield one frame so progress-bar/state changes paint before lengthy async work continues.
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 function translate(key: string): string {
   // // Resolve translated labels and fallback to key when missing.
   return currentLocale[key] ?? key;
@@ -381,8 +561,8 @@ function persistPanelState(): void {
     maxCharsPerLine: Number(elements.maxChars.value),
     linesPerCaption: Number(elements.linesPerCaption.value),
     fontSize: Number(elements.fontSize.value),
-    mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
-    selectedMogrtId: selectedMogrt?.id || "",
+    mogrtAspectFilter: pendingMogrtAspectFilter || elements.mogrtAspectFilter.value || "all",
+    selectedMogrtId: selectedMogrt?.id || pendingSelectedMogrtId || "",
     visualLiveUpdate: visualLiveUpdateEnabled,
     logExpanded: logPanelExpanded,
     verboseLogs: verboseLogsEnabled
@@ -1228,6 +1408,77 @@ function setVisualApplyButtonsBusy(isBusy: boolean): void {
   if (elements.visualReadButton) {
     elements.visualReadButton.disabled = isBusy;
   }
+}
+
+function setGenerateButtonsBusy(isBusy: boolean): void {
+  // // Prevent duplicate generate runs while export/transcription/apply is already active.
+  if (elements.generateButton) {
+    elements.generateButton.disabled = isBusy;
+  }
+  if (elements.languageSelect) {
+    elements.languageSelect.disabled = isBusy;
+  }
+  if (elements.srtBrowseButton) {
+    elements.srtBrowseButton.disabled = isBusy;
+  }
+  if (elements.srtPath) {
+    elements.srtPath.disabled = isBusy;
+  }
+  if (elements.whisperBrowseButton) {
+    elements.whisperBrowseButton.disabled = isBusy;
+  }
+  if (elements.whisperAudioPath) {
+    elements.whisperAudioPath.disabled = isBusy;
+  }
+  if (elements.sourceMode) {
+    elements.sourceMode.disabled = isBusy;
+  }
+  if (elements.whisperModel) {
+    elements.whisperModel.disabled = isBusy;
+  }
+  if (elements.animationMode) {
+    elements.animationMode.disabled = isBusy;
+  }
+  if (elements.maxChars) {
+    elements.maxChars.disabled = isBusy;
+  }
+  if (elements.linesPerCaption) {
+    elements.linesPerCaption.disabled = isBusy;
+  }
+  if (elements.fontSize) {
+    elements.fontSize.disabled = isBusy;
+  }
+  if (elements.mogrtAspectFilter) {
+    elements.mogrtAspectFilter.disabled = isBusy;
+  }
+  if (elements.mogrtFolderButton) {
+    elements.mogrtFolderButton.disabled = isBusy;
+  }
+  if (elements.mogrtRefreshButton) {
+    elements.mogrtRefreshButton.disabled = isBusy;
+  }
+}
+
+function setGenerateProgressState(visible: boolean, done = 0, total = GENERATE_PROGRESS_MAX, label = ""): void {
+  // // Render generation/transcription progress using the same compact progress component style as visual apply.
+  if (!elements.generateProgress || !elements.generateProgressBar || !elements.generateProgressText) {
+    return;
+  }
+
+  if (!visible || total < 1) {
+    elements.generateProgress.hidden = true;
+    elements.generateProgressBar.max = GENERATE_PROGRESS_MAX;
+    elements.generateProgressBar.value = 0;
+    elements.generateProgressText.textContent = "0%";
+    return;
+  }
+
+  const clampedTotal = Math.max(1, total);
+  const clampedDone = Math.max(0, Math.min(clampedTotal, done));
+  elements.generateProgress.hidden = false;
+  elements.generateProgressBar.max = clampedTotal;
+  elements.generateProgressBar.value = clampedDone;
+  elements.generateProgressText.textContent = label || `${Math.round((clampedDone / clampedTotal) * 100)}%`;
 }
 
 function setVisualApplyProgressState(visible: boolean, done = 0, total = 0): void {
@@ -2832,14 +3083,44 @@ function collectBuildOptions(): CaptionBuildOptions {
   };
 }
 
-async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise<CaptionCue[]> {
+function mapWhisperPercentToGenerateProgress(progress: WhisperProgressUpdate): number {
+  // // Reserve most of the generate bar for Whisper analysis while keeping room for planning/apply steps.
+  const clampedPercent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  return 22 + Math.round((clampedPercent / 100) * 58);
+}
+
+function buildWhisperProgressLabel(progress: WhisperProgressUpdate): string {
+  // // Keep transcription feedback explicit so a long Whisper run looks active instead of blocked.
+  return translateTemplate("progress.whisperAnalysis", {
+    percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
+  });
+}
+
+async function updateGenerateProgress(done: number, label: string, waitForPaint = false): Promise<void> {
+  // // Centralize generate progress updates and optionally yield a frame before the next expensive step.
+  setGenerateProgressState(true, done, GENERATE_PROGRESS_MAX, label);
+  if (waitForPaint) {
+    await waitForNextPaint();
+  }
+}
+
+async function loadCuesFromSelectedSource(
+  options: CaptionBuildOptions,
+  onProgress?: (done: number, label: string, waitForPaint?: boolean) => Promise<void>
+): Promise<CaptionCue[]> {
   // // Build cues from the currently selected source mode.
   if (options.sourceMode === "srt") {
     if (!elements.srtPath || !elements.srtPath.value.trim()) {
       throw new Error(translate("error.missingSrtPath"));
     }
 
+    if (onProgress) {
+      await onProgress(10, translate("progress.readSrt"), true);
+    }
     const srtText = await readTextFileFromHost(elements.srtPath.value.trim());
+    if (onProgress) {
+      await onProgress(28, translate("progress.parseSrt"));
+    }
     const cues = parseSrt(srtText);
     if (!cues.length) {
       throw new Error(translate("error.emptySrt"));
@@ -2852,6 +3133,9 @@ async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise
   let cleanupAudioPath = "";
   if (options.sourceMode === "whisper_sequence") {
     setLog(translate("log.whisperSequenceExport"));
+    if (onProgress) {
+      await onProgress(10, translate("progress.exportSequence"), true);
+    }
     const exportResult = await exportActiveSequenceAudioForWhisper();
     whisperAudioPath = exportResult.audioPath;
     cleanupAudioPath = exportResult.audioPath;
@@ -2864,13 +3148,21 @@ async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise
   }
 
   try {
+    if (onProgress) {
+      await onProgress(22, translate("progress.whisperStarting"), true);
+    }
     const whisperResult = await transcribeWithWhisper({
       audioPath: whisperAudioPath,
       languageCode: options.languageCode,
       model: options.whisperModel
+    }, (progress) => {
+      void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
     });
 
     let cues: CaptionCue[] = [];
+    if (onProgress) {
+      await onProgress(84, translate("progress.parseWhisper"));
+    }
     if (whisperResult.jsonText) {
       try {
         cues = parseWhisperJson(whisperResult.jsonText);
@@ -2895,24 +3187,40 @@ async function loadCuesFromSelectedSource(options: CaptionBuildOptions): Promise
 
 async function generate(): Promise<void> {
   // // Build the caption plan from selected source and push to Premiere host.
-  const options = collectBuildOptions();
-  setLog(translate("log.processing"));
+  if (generateInProgress) {
+    return;
+  }
 
-  const cues = await loadCuesFromSelectedSource(options);
-  const plannedCues = buildCaptionPlan(cues, options);
+  generateInProgress = true;
+  setGenerateButtonsBusy(true);
+  try {
+    const options = collectBuildOptions();
+    setLog(translate("log.processing"));
+    await updateGenerateProgress(4, translate("progress.prepareGeneration"), true);
+    const cues = await loadCuesFromSelectedSource(options, updateGenerateProgress);
+    await updateGenerateProgress(90, translate("progress.planCaptions"), true);
+    const plannedCues = buildCaptionPlan(cues, options);
 
-  const payload: HostApplyPayload = {
-    options,
-    cues: plannedCues
-  };
+    const payload: HostApplyPayload = {
+      options,
+      cues: plannedCues
+    };
 
-  const hostResultRaw = await applyCaptionPlan(payload);
-  setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+    await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
+    const hostResultRaw = await applyCaptionPlan(payload);
+    setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+  } finally {
+    generateInProgress = false;
+    setGenerateButtonsBusy(false);
+    setGenerateProgressState(false);
+  }
 }
 
 async function initialize(): Promise<void> {
   // // Initialize locale, controls, and event listeners once panel is loaded.
   assertDomBindings();
+  applyHostPanelTheme();
+  bindHostThemeListener();
   await loadPanelMeta();
   refreshVersionLabel();
   const persistedState = readPersistedPanelState();

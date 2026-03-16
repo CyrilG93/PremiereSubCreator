@@ -20,7 +20,7 @@ It supports:
   - Fallback to timeline markers when no MOGRT is provided.
 - Interface localization (French + English, easy to extend).
 - Version label in panel header + automatic GitHub release update banner.
-- Persisted panel settings (source, style, limits, language, and selected MOGRT).
+- Persisted panel settings (source, style, limits, language, selected gallery folder, and selected MOGRT).
 - Mac + Windows installers.
 - Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`, faux style toggles) without exposing editable caption text.
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
@@ -33,6 +33,9 @@ It supports:
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
 - Startup restores panel state first, then defers heavier tasks such as Whisper runtime probing, installed MOGRT refresh, and release checks so the extension becomes interactive faster.
+- The generate action now sits directly above the MOGRT gallery, and the gallery folder filter is restored after reopening Premiere instead of resetting to `All formats`.
+- Subtitle generation now shows a dedicated progress bar; Whisper workflows expose stage progress (sequence export, Whisper analysis, timing parse, plan/apply), and CEP Node Whisper runs stream percentage updates when the CLI reports them.
+- The panel theme now derives its neutral surface colors from Premiere CEP `appSkinInfo`, so it follows host appearance variants more closely instead of using a fixed dark-blue skin.
 - On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path and an enlarged CEP buffer, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
 - System font catalog loading is now lazy and starts when the visual editor needs font-family/style expansion, instead of blocking panel startup.

@@ -1,15 +1,36 @@
 :root {
-  --bg-primary: #111723;
-  --bg-surface: #1f2937;
-  --bg-soft: #243346;
-  --text-primary: #e9eef6;
-  --text-dim: #a8b4c6;
-  --accent: #3ecf8e;
-  --accent-soft: #8ad7b7;
+  --ui-font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  --bg-primary: rgb(37, 37, 37);
+  --bg-primary-rgb: 37, 37, 37;
+  --bg-surface: rgb(48, 48, 48);
+  --bg-surface-rgb: 48, 48, 48;
+  --bg-soft: rgb(58, 58, 58);
+  --bg-soft-rgb: 58, 58, 58;
+  --bg-input: rgb(30, 30, 30);
+  --bg-input-rgb: 30, 30, 30;
+  --bg-card: rgb(43, 43, 43);
+  --bg-card-rgb: 43, 43, 43;
+  --text-primary: rgb(236, 236, 236);
+  --text-primary-rgb: 236, 236, 236;
+  --text-dim: rgb(164, 164, 164);
+  --text-dim-rgb: 164, 164, 164;
+  --accent: rgb(74, 146, 222);
+  --accent-rgb: 74, 146, 222;
+  --accent-soft: rgb(136, 186, 241);
+  --accent-soft-rgb: 136, 186, 241;
   --danger: #f48a8a;
-  --border: #344861;
+  --border: rgb(79, 79, 79);
+  --border-rgb: 79, 79, 79;
+  --border-strong: rgb(101, 101, 101);
+  --border-strong-rgb: 101, 101, 101;
+  --button-primary-bg: rgb(66, 110, 161);
+  --button-primary-bg-rgb: 66, 110, 161;
+  --button-primary-bg-alt: rgb(58, 98, 144);
+  --button-primary-bg-alt-rgb: 58, 98, 144;
+  --button-primary-text: rgb(245, 245, 245);
+  --button-primary-text-rgb: 245, 245, 245;
   --radius: 10px;
-  --shadow: 0 8px 24px rgba(7, 11, 17, 0.35);
+  --shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
 }
 
 * {
@@ -23,8 +44,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
-  background: radial-gradient(circle at top right, #20334f 0%, var(--bg-primary) 46%);
+  font-family: var(--ui-font-family);
+  background: linear-gradient(180deg, var(--bg-soft) 0%, var(--bg-primary) 100%);
   color: var(--text-primary);
 }
 
@@ -65,7 +86,7 @@ body {
 .app-version {
   font-size: 0.72rem;
   color: var(--accent-soft);
-  border: 1px solid rgba(138, 215, 183, 0.45);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
   border-radius: 999px;
   padding: 2px 8px;
 }
@@ -76,16 +97,16 @@ body {
 }
 
 .update-banner {
-  border: 1px solid rgba(138, 215, 183, 0.45);
+  border: 1px solid rgba(var(--accent-rgb), 0.36);
   border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(62, 207, 142, 0.2), #0f1726);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.12), var(--bg-surface));
   padding: 8px 10px;
   cursor: pointer;
 }
 
 .update-link {
   display: block;
-  color: #dbffe8;
+  color: var(--text-primary);
   font-size: 0.76rem;
   text-decoration: none;
 }
@@ -108,7 +129,7 @@ body {
 
 .tab-button {
   border: 1px solid var(--border);
-  background: #0f1726;
+  background: var(--bg-input);
   color: var(--text-dim);
   border-radius: 9px;
   padding: 8px 10px;
@@ -120,7 +141,7 @@ body {
 .tab-button.is-active {
   color: var(--text-primary);
   border-color: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px rgba(138, 215, 183, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.42);
 }
 
 .field {
@@ -131,6 +152,10 @@ body {
   display: grid;
   gap: 6px;
   box-shadow: var(--shadow);
+}
+
+.field--actions {
+  padding: 10px;
 }
 
 .field span {
@@ -200,7 +225,7 @@ button {
   width: 100%;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: #101927;
+  background: var(--bg-input);
   color: var(--text-primary);
   padding: 8px;
   font-size: 0.82rem;
@@ -215,9 +240,9 @@ input[type="checkbox"] {
 }
 
 .button {
-  border: 1px solid transparent;
-  background: linear-gradient(135deg, var(--accent), #1bb67a);
-  color: #07240f;
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(180deg, var(--button-primary-bg), var(--button-primary-bg-alt));
+  color: var(--button-primary-text);
   font-weight: 700;
   cursor: pointer;
 }
@@ -227,15 +252,22 @@ input[type="checkbox"] {
 }
 
 .button--secondary {
-  background: transparent;
-  border-color: var(--accent-soft);
-  color: var(--accent-soft);
+  background: linear-gradient(180deg, var(--bg-surface), var(--bg-input));
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 .mogrt-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 8px;
+}
+
+.generate-actions {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
 }
 
 .inline-row {
@@ -254,15 +286,15 @@ input[type="checkbox"] {
 }
 
 .button--toggle.is-active {
-  background: linear-gradient(135deg, var(--accent), #1bb67a);
-  border-color: transparent;
-  color: #07240f;
+  background: linear-gradient(180deg, var(--button-primary-bg), var(--button-primary-bg-alt));
+  border-color: var(--border-strong);
+  color: var(--button-primary-text);
 }
 
 .button--toggle:not(.is-active) {
-  background: transparent;
-  border-color: var(--accent-soft);
-  color: var(--accent-soft);
+  background: linear-gradient(180deg, var(--bg-surface), var(--bg-input));
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 .visual-progress {
@@ -282,7 +314,7 @@ input[type="checkbox"] {
 .mogrt-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #0f1726;
+  background: var(--bg-card);
   color: var(--text-primary);
   padding: 8px;
   text-align: left;
@@ -301,7 +333,7 @@ input[type="checkbox"] {
 
 .mogrt-card.is-active {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px rgba(62, 207, 142, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5);
 }
 
 .mogrt-card__preview {
@@ -315,8 +347,8 @@ input[type="checkbox"] {
   place-items: center;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  background: linear-gradient(135deg, #1f2b3f, #314b75);
-  color: #dce7ff;
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-soft));
+  color: var(--text-primary);
 }
 
 .mogrt-card__name {
@@ -449,9 +481,9 @@ input[type="checkbox"] {
 }
 
 .visual-group {
-  border: 1px solid rgba(52, 72, 97, 0.75);
+  border: 1px solid rgba(var(--border-rgb), 0.85);
   border-radius: 8px;
-  background: #0f1726;
+  background: var(--bg-card);
   overflow: visible;
 }
 
@@ -483,7 +515,7 @@ input[type="checkbox"] {
 .visual-group__body {
   display: grid;
   gap: 4px;
-  border-top: 1px solid rgba(52, 72, 97, 0.45);
+  border-top: 1px solid rgba(var(--border-rgb), 0.55);
   padding: 6px 8px;
 }
 
@@ -545,7 +577,7 @@ input[type="checkbox"] {
   height: 24px;
   padding: 0;
   border-radius: 6px;
-  border: 1px solid rgba(233, 238, 246, 0.25);
+  border: 1px solid rgba(var(--text-primary-rgb), 0.24);
   background: #ffffff;
   cursor: pointer;
 }
@@ -646,7 +678,7 @@ input[type="checkbox"] {
   overflow: auto;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #0d1420;
+  background: var(--bg-input);
   color: var(--accent-soft);
   font-family: "SF Mono", Menlo, monospace;
   font-size: 0.72rem;
@@ -706,6 +738,10 @@ input[type="checkbox"] {
   }
 
   .inline-row--actions {
+    grid-template-columns: 1fr;
+  }
+
+  .generate-actions {
     grid-template-columns: 1fr;
   }
 

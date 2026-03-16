@@ -21,7 +21,6 @@ import {
   openExternalUrl,
   openInstalledMogrtFolder,
   pickSrtPath,
-  pickWhisperAudioPath,
   readInstalledMogrtCatalog,
   readSelectedMogrtVisualProperties,
   readSystemFontCatalog,
@@ -74,7 +73,6 @@ interface PanelStateSnapshot {
   activeMode: PanelMode;
   sourceMode: SourceMode;
   srtPath: string;
-  whisperAudioPath: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
   animationMode: AnimationMode;
@@ -119,9 +117,6 @@ const elements = {
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
   srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
-  whisperAudioPickerRow: document.querySelector<HTMLElement>("#whisperAudioPickerRow"),
-  whisperAudioPath: document.querySelector<HTMLInputElement>("#whisperAudioPath"),
-  whisperBrowseButton: document.querySelector<HTMLButtonElement>("#whisperBrowseButton"),
   whisperModelRow: document.querySelector<HTMLElement>("#whisperModelRow"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
@@ -394,6 +389,15 @@ function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
   };
 }
 
+function liftDarkThemeFloor(color: RgbColor, minimumChannel: number): RgbColor {
+  // // Prevent CEP darkest themes from collapsing the whole panel to near-black instead of Premiere-like gray.
+  return {
+    red: Math.max(color.red, minimumChannel),
+    green: Math.max(color.green, minimumChannel),
+    blue: Math.max(color.blue, minimumChannel)
+  };
+}
+
 function rgbColorLuminance(color: RgbColor): number {
   // // Estimate perceived brightness to switch between light/dark Premiere skin variants.
   return (0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue) / 255;
@@ -441,21 +445,25 @@ function applyHostPanelTheme(): void {
     green: 137,
     blue: 255
   };
-  const isLightTheme = rgbColorLuminance(panelBackground) >= 0.55;
-  const isDarkestTheme = rgbColorLuminance(panelBackground) <= 0.18;
+  const normalizedPanelBackground = rgbColorLuminance(panelBackground) <= 0.24
+    ? liftDarkThemeFloor(panelBackground, 54)
+    : panelBackground;
+  const panelLuminance = rgbColorLuminance(normalizedPanelBackground);
+  const isLightTheme = panelLuminance >= 0.55;
+  const isDarkestTheme = panelLuminance <= 0.26;
   const textPrimary = isLightTheme
     ? { red: 36, green: 36, blue: 36 }
     : { red: 236, green: 236, blue: 236 };
-  const textDim = mixRgbColor(textPrimary, panelBackground, isLightTheme ? 0.48 : 0.38);
-  const bgPrimary = offsetRgbColor(panelBackground, isLightTheme ? 10 : isDarkestTheme ? 2 : 4);
-  const bgSurface = offsetRgbColor(panelBackground, isLightTheme ? 15 : 7);
-  const bgSoft = offsetRgbColor(panelBackground, isLightTheme ? 20 : 11);
-  const bgInput = offsetRgbColor(panelBackground, isLightTheme ? 8 : 1);
-  const bgCard = offsetRgbColor(panelBackground, isLightTheme ? 11 : 5);
-  const accent = mixRgbColor(highlightColor, panelBackground, 0.12);
+  const textDim = mixRgbColor(textPrimary, normalizedPanelBackground, isLightTheme ? 0.48 : 0.38);
+  const bgPrimary = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 10 : isDarkestTheme ? 1 : 4);
+  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 15 : 7);
+  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 20 : 11);
+  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 8 : 1);
+  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 11 : 5);
+  const accent = mixRgbColor(highlightColor, normalizedPanelBackground, 0.12);
   const accentSoft = mixRgbColor(highlightColor, textPrimary, isLightTheme ? 0.22 : 0.18);
-  const border = offsetRgbColor(panelBackground, isLightTheme ? -24 : 20);
-  const borderStrong = offsetRgbColor(panelBackground, isLightTheme ? -38 : 32);
+  const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -24 : 20);
+  const borderStrong = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -38 : 32);
   const buttonPrimary = mixRgbColor(accent, bgSurface, 0.28);
   const buttonPrimaryAlt = mixRgbColor(accent, bgPrimary, 0.2);
   const buttonPrimaryText = rgbColorLuminance(buttonPrimary) >= 0.5
@@ -550,7 +558,6 @@ function persistPanelState(): void {
     !elements.tabGenerate ||
     !elements.sourceMode ||
     !elements.srtPath ||
-    !elements.whisperAudioPath ||
     !elements.whisperModel ||
     !elements.whisperSequenceRange ||
     !elements.animationMode ||
@@ -567,7 +574,6 @@ function persistPanelState(): void {
     activeMode,
     sourceMode: getSourceMode(),
     srtPath: elements.srtPath.value || "",
-    whisperAudioPath: elements.whisperAudioPath.value || "",
     whisperModel: elements.whisperModel.value || "base",
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     animationMode: (elements.animationMode.value as AnimationMode) || "line",
@@ -600,10 +606,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.srtPath && typeof snapshot.srtPath === "string") {
     elements.srtPath.value = snapshot.srtPath;
-  }
-
-  if (elements.whisperAudioPath && typeof snapshot.whisperAudioPath === "string") {
-    elements.whisperAudioPath.value = snapshot.whisperAudioPath;
   }
 
   if (elements.whisperModel && snapshot.whisperModel && hasSelectOption(elements.whisperModel, snapshot.whisperModel)) {
@@ -1084,7 +1086,7 @@ function buildAbsoluteMogrtPath(extensionRootPath: string, templateRelativePath:
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
-  const whisperModeActive = mode === "whisper_local" || mode === "whisper_sequence";
+  const whisperModeActive = mode === "whisper_sequence";
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
@@ -1092,10 +1094,6 @@ function toggleSourceFields(): void {
 
   if (elements.whisperField) {
     elements.whisperField.style.display = whisperModeActive ? "grid" : "none";
-  }
-
-  if (elements.whisperAudioPickerRow) {
-    elements.whisperAudioPickerRow.style.display = mode === "whisper_local" ? "flex" : "none";
   }
 
   if (elements.whisperSequenceHint) {
@@ -1118,7 +1116,7 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   }
 
   const whisperOptions = Array.from(
-    elements.sourceMode.querySelectorAll<HTMLOptionElement>('option[value="whisper_local"], option[value="whisper_sequence"]')
+    elements.sourceMode.querySelectorAll<HTMLOptionElement>('option[value="whisper_sequence"]')
   );
   if (!whisperOptions.length) {
     return;
@@ -1133,12 +1131,8 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     for (const whisperOption of whisperOptions) {
       whisperOption.remove();
     }
-    if (elements.sourceMode.value === "whisper_local" || elements.sourceMode.value === "whisper_sequence") {
+    if (elements.sourceMode.value === "whisper_sequence") {
       elements.sourceMode.value = "srt";
-    }
-
-    if (elements.whisperAudioPath) {
-      elements.whisperAudioPath.value = "";
     }
   } catch {
     // // Keep Whisper visible when detection fails unexpectedly to avoid hiding a usable source.
@@ -1452,12 +1446,6 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   }
   if (elements.srtPath) {
     elements.srtPath.disabled = isBusy;
-  }
-  if (elements.whisperBrowseButton) {
-    elements.whisperBrowseButton.disabled = isBusy;
-  }
-  if (elements.whisperAudioPath) {
-    elements.whisperAudioPath.disabled = isBusy;
   }
   if (elements.sourceMode) {
     elements.sourceMode.disabled = isBusy;
@@ -3060,19 +3048,6 @@ async function browseSrtPath(): Promise<void> {
   }
 }
 
-async function browseWhisperAudio(): Promise<void> {
-  // // Pick local media file from host picker and populate Whisper audio path.
-  if (!elements.whisperAudioPath) {
-    return;
-  }
-
-  const path = await pickWhisperAudioPath();
-  if (path) {
-    elements.whisperAudioPath.value = path;
-    persistPanelState();
-  }
-}
-
 function collectBuildOptions(): CaptionBuildOptions {
   // // Collect, normalize, and validate all panel options into a single object.
   if (
@@ -3082,7 +3057,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.animationMode ||
-    !elements.whisperAudioPath ||
     !elements.whisperModel ||
     !elements.whisperSequenceRange
   ) {
@@ -3109,7 +3083,6 @@ function collectBuildOptions(): CaptionBuildOptions {
     extensionRootPath,
     mogrtPath: buildAbsoluteMogrtPath(extensionRootPath, templateRelativePath),
     mogrtTemplateRelativePath: templateRelativePath,
-    whisperAudioPath: elements.whisperAudioPath.value.trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     videoTrackIndex: 0,
@@ -3163,22 +3136,16 @@ async function loadCuesFromSelectedSource(
     return cues;
   }
 
-  let whisperAudioPath = options.whisperAudioPath;
-  let cleanupAudioPath = "";
-  if (options.sourceMode === "whisper_sequence") {
-    setLog(translate("log.whisperSequenceExport"));
-    if (onProgress) {
-      await onProgress(10, translate("progress.exportSequence"), true);
-    }
-    const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
-    whisperAudioPath = exportResult.audioPath;
-    cleanupAudioPath = exportResult.audioPath;
+  setLog(translate("log.whisperSequenceExport"));
+  if (onProgress) {
+    await onProgress(10, translate("progress.exportSequence"), true);
   }
+  const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+  const whisperAudioPath = exportResult.audioPath;
+  const cleanupAudioPath = exportResult.audioPath;
 
   if (!whisperAudioPath) {
-    throw new Error(
-      options.sourceMode === "whisper_sequence" ? translate("error.missingActiveSequenceAudio") : translate("error.missingWhisperAudio")
-    );
+    throw new Error(translate("error.missingActiveSequenceAudio"));
   }
 
   try {
@@ -3308,14 +3275,6 @@ async function initialize(): Promise<void> {
     }
   });
 
-  elements.whisperBrowseButton?.addEventListener("click", async () => {
-    try {
-      await browseWhisperAudio();
-    } catch (error) {
-      setLog(String(error), true);
-    }
-  });
-
   elements.mogrtAspectFilter?.addEventListener("change", () => {
     renderMogrtGallery();
     persistPanelState();
@@ -3352,9 +3311,6 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.srtPath?.addEventListener("change", () => {
-    persistPanelState();
-  });
-  elements.whisperAudioPath?.addEventListener("change", () => {
     persistPanelState();
   });
   elements.whisperModel?.addEventListener("change", () => {

@@ -2206,16 +2206,6 @@ export async function pickSrtPath(): Promise<string> {
   return String(response.data?.path ?? "");
 }
 
-export async function pickWhisperAudioPath(): Promise<string> {
-  // // Open native file picker from host for Whisper transcription input.
-  const response = await evalHostJson<{ path: string }>("subcreator_pick_audio_file()");
-  if (!response.ok) {
-    throw new Error(response.error ?? "Audio picker failed.");
-  }
-
-  return String(response.data?.path ?? "");
-}
-
 export async function exportActiveSequenceAudioForWhisper(
   rangeMode: WhisperSequenceRangeMode = "entire_sequence"
 ): Promise<WhisperSequenceExportResult> {

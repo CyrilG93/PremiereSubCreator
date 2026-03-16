@@ -100,20 +100,6 @@ function subcreator_pick_srt_file() {
   }
 }
 
-function subcreator_pick_audio_file() {
-  // // Open native picker to select local media for Whisper transcription.
-  try {
-    var selected = File.openDialog("Select audio or video file for Whisper transcription");
-    if (!selected) {
-      return subcreator_ok({ path: "" });
-    }
-
-    return subcreator_ok({ path: selected.fsName });
-  } catch (error) {
-    return subcreator_error(error);
-  }
-}
-
 function subcreator_normalize_system_path(value) {
   // // Normalize file-system paths for the current host platform before passing them into export APIs.
   var normalized = String(value || "");
@@ -633,7 +619,7 @@ function subcreator_transcribe_whisper(payloadEncoded) {
     var languageCode = String(payload.languageCode || "");
     var command = subcreator_build_whisper_command(audioFile.fsName, tempFolder.fsName, model, languageCode);
     if (typeof system === "undefined" || !system || typeof system.callSystem !== "function") {
-      return subcreator_error("Host system.callSystem indisponible. Active le mode Node CEP pour Whisper local.");
+      return subcreator_error("Host system.callSystem indisponible. Active le mode Node CEP pour Whisper.");
     }
 
     var commandOutput = system.callSystem(command);

@@ -17,8 +17,8 @@ const baseOptions: CaptionBuildOptions = {
   extensionRootPath: "",
   mogrtPath: "",
   mogrtTemplateRelativePath: "",
-  whisperAudioPath: "",
   whisperModel: "base",
+  whisperSequenceRange: "entire_sequence",
   videoTrackIndex: 0,
   audioTrackIndex: 0
 };

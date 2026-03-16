@@ -49,8 +49,7 @@
             <span data-i18n="field.source">Source des sous-titres</span>
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-              <option value="whisper_local" data-i18n="source.whisperLocal">Whisper local (audio)</option>
-              <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper sequence active</option>
+              <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper</option>
             </select>
           </label>
 
@@ -68,16 +67,7 @@
           </section>
 
           <section class="field field--full" id="whisperField">
-            <span data-i18n="field.whisperAudio">Fichier audio/video pour Whisper</span>
-            <div id="whisperAudioPickerRow" class="inline-row">
-              <input
-                id="whisperAudioPath"
-                type="text"
-                data-i18n-placeholder="placeholder.whisperAudio"
-                placeholder="/Users/.../audio.wav"
-              />
-              <button id="whisperBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
-            </div>
+            <span data-i18n="field.whisper">Whisper</span>
             <div class="inline-row">
               <div id="whisperModelRow" class="inline-row inline-row--triple">
                 <select id="whisperModel">

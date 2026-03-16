@@ -3,9 +3,8 @@
 Sub Creator is a CEP panel extension for Adobe Premiere Pro 2025+ focused on dynamic/design subtitles.
 
 It supports:
-- Three source workflows:
+- Two source workflows:
   - SRT import via native file picker.
-  - Whisper local transcription from an audio/video file (CEP Node runtime first, ExtendScript fallback).
   - Whisper transcription from the active Premiere sequence via temporary WAV export of either the current audible mix or the active `In/Out` range.
 - Caption planning with max letters, max lines, font size, and animation mode metadata.
 - MOGRT gallery with real template previews extracted from each `.mogrt` thumbnail.
@@ -92,10 +91,9 @@ Sub Creator can apply explicit family/style names, and can show dropdown options
 ### Do we need an SRT file?
 SRT works immediately.
 
-Whisper local can generate subtitles on the fly from an audio/video file.
-Whisper active sequence can export the current sequence audible mix to a temporary WAV, then transcribe it automatically.
+Whisper can export the current sequence audible mix to a temporary WAV, then transcribe it automatically.
 If `whisper` is not available in PATH, Sub Creator also tries common fallbacks (`python3 -m whisper`, `python -m whisper`, and user-local Whisper binaries).
-If no local Whisper runtime is detected at panel startup, both Whisper source options are hidden automatically.
+If no local Whisper runtime is detected at panel startup, the Whisper source option is hidden automatically.
 Installers also write a user-local runtime config (`subcreator-runtime.json`) with detected `python` / `whisper` / `ffmpeg` paths so CEP can run reliably even when host PATH is incomplete.
 For temporary sequence export, Sub Creator looks for Adobe's built-in WAV system preset in either Premiere Pro or Adobe Media Encoder, so users do not need to install a custom export preset.
 
@@ -124,7 +122,7 @@ npm run subcreator:package
 
 `npm run subcreator:package` now rebuilds first and refuses to zip a stale `dist` version.
 
-## Whisper local setup
+## Whisper setup
 
 Install Whisper CLI once on your machine:
 

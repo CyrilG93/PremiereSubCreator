@@ -180,6 +180,7 @@ The filename must match the selected model (for example `base` -> `base.pt`).
 Installer behavior:
 - Installs extension files to CEP.
 - Preserves previously added files under installed `templates/mogrt` when reinstalling/updating the extension.
+- Restores preserved MOGRT files without aborting when duplicate files are skipped during reinstall/update.
 - Enables CEP debug mode by default for CSXS.7 -> CSXS.12.
 - If multiple Python versions are installed, selects the highest compatible one (3.13 -> 3.8).
 - Tries to auto-install `openai-whisper` with local Python when Python is available and version is <= 3.13.

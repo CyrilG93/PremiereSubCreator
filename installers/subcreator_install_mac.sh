@@ -64,7 +64,12 @@ subcreator_restore_existing_templates() {
   fi
 
   mkdir -p "${SUBCREATOR_DEST_DIR}/templates/mogrt"
-  cp -Rn "${SUBCREATOR_TEMPLATES_BACKUP_DIR}/." "${SUBCREATOR_DEST_DIR}/templates/mogrt/"
+  # // `cp -Rn` can return non-zero on macOS when files are skipped because they already exist, which should not abort install.
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --ignore-existing "${SUBCREATOR_TEMPLATES_BACKUP_DIR}/" "${SUBCREATOR_DEST_DIR}/templates/mogrt/"
+  else
+    cp -Rn "${SUBCREATOR_TEMPLATES_BACKUP_DIR}/." "${SUBCREATOR_DEST_DIR}/templates/mogrt/" || true
+  fi
   rm -rf "$(dirname "${SUBCREATOR_TEMPLATES_BACKUP_DIR}")"
   SUBCREATOR_TEMPLATES_BACKUP_DIR=""
 }

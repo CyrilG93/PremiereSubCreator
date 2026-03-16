@@ -18,6 +18,8 @@ set "SUBCREATOR_PYTHON_SEEN="
 set "SUBCREATOR_WHISPER_PATH="
 set "SUBCREATOR_FFMPEG_PATH="
 set "SUBCREATOR_PATH_HINTS="
+set "SUBCREATOR_TEMPLATE_BACKUP_ROOT="
+set "SUBCREATOR_TEMPLATE_BACKUP_DIR="
 
 REM // Validate build output is present before installing.
 if not exist "%SUBCREATOR_SOURCE_DIR%" (
@@ -28,8 +30,20 @@ if not exist "%SUBCREATOR_SOURCE_DIR%" (
 
 REM // Ensure destination parent exists and refresh extension files.
 if not exist "%APPDATA%\Adobe\CEP\extensions" mkdir "%APPDATA%\Adobe\CEP\extensions"
+REM // Preserve previously added gallery templates before refreshing the CEP extension folder.
+if exist "%SUBCREATOR_DEST_DIR%\templates\mogrt" (
+  set "SUBCREATOR_TEMPLATE_BACKUP_ROOT=%TEMP%\subcreator-mogrt-backup-%RANDOM%%RANDOM%"
+  set "SUBCREATOR_TEMPLATE_BACKUP_DIR=!SUBCREATOR_TEMPLATE_BACKUP_ROOT!\mogrt"
+  mkdir "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" >nul 2>nul
+  xcopy "%SUBCREATOR_DEST_DIR%\templates\mogrt" "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" /e /i /h /y >nul
+)
 if exist "%SUBCREATOR_DEST_DIR%" rmdir /s /q "%SUBCREATOR_DEST_DIR%"
 xcopy "%SUBCREATOR_SOURCE_DIR%" "%SUBCREATOR_DEST_DIR%" /e /i /h /y >nul
+REM // Merge preserved user-added templates back without overwriting the freshly installed bundle files.
+if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$src = [IO.Path]::GetFullPath($env:SUBCREATOR_TEMPLATE_BACKUP_DIR); $dst = [IO.Path]::GetFullPath($env:SUBCREATOR_DEST_DIR + '\templates\mogrt'); if (Test-Path -LiteralPath $src) { Get-ChildItem -LiteralPath $src -Recurse -File | ForEach-Object { $relative = $_.FullName.Substring($src.Length).TrimStart('\'); $target = Join-Path $dst $relative; if (-not (Test-Path -LiteralPath $target)) { $parent = Split-Path -Parent $target; if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $target -Force } } }" >nul
+  if exist "!SUBCREATOR_TEMPLATE_BACKUP_ROOT!" rmdir /s /q "!SUBCREATOR_TEMPLATE_BACKUP_ROOT!"
+)
 
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode

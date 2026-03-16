@@ -1,5 +1,5 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
-import type { HostApplyPayload } from "../core/types";
+import type { HostApplyPayload, MogrtTemplateItem } from "../core/types";
 
 declare global {
   interface Window {
@@ -45,6 +45,15 @@ export interface SystemFontCatalog {
   families: string[];
   stylesByFamily: Record<string, string[]>;
   fontTokensByFamilyStyle: Record<string, Record<string, string>>;
+}
+
+export interface InstalledMogrtCatalog {
+  available: boolean;
+  source: string;
+  details: string;
+  templatesRoot: string;
+  groups: string[];
+  templates: MogrtTemplateItem[];
 }
 
 export interface SelectedMogrtVisualProperty {
@@ -217,6 +226,252 @@ function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: strin
 function detectWindowsRuntime(): boolean {
   // // Detect Windows from CEP browser runtime for CLI fallback ordering.
   return /win/i.test(String(navigator?.platform || ""));
+}
+
+function normalizeMogrtPathText(value: string): string {
+  // // Normalize MOGRT labels and path fragments into compact UI-safe text.
+  return String(value || "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeMogrtFileSystemPath(value: string): string {
+  // // Normalize file-system paths so runtime catalog matching stays stable on macOS and Windows.
+  return String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .trim();
+}
+
+function buildMogrtRelativePath(rootPath: string, fullPath: string): string {
+  // // Derive extension-relative MOGRT path without relying on optional Node `path.relative` helpers.
+  const normalizedRoot = normalizeMogrtFileSystemPath(rootPath).replace(/\/+$/, "");
+  const normalizedFullPath = normalizeMogrtFileSystemPath(fullPath);
+  const lowerRoot = normalizedRoot.toLowerCase();
+  const lowerFullPath = normalizedFullPath.toLowerCase();
+  if (lowerFullPath.startsWith(`${lowerRoot}/`)) {
+    return normalizedFullPath.slice(normalizedRoot.length + 1);
+  }
+  return normalizedFullPath;
+}
+
+function buildFileUrlFromSystemPath(filePath: string): string {
+  // // Convert absolute system paths into `file://` URLs for panel image/video previews.
+  const normalizedPath = normalizeMogrtFileSystemPath(filePath);
+  if (!normalizedPath) {
+    return "";
+  }
+
+  if (/^[a-zA-Z]:\//.test(normalizedPath)) {
+    return `file:///${encodeURI(normalizedPath)}`;
+  }
+
+  if (normalizedPath.startsWith("/")) {
+    return `file://${encodeURI(normalizedPath)}`;
+  }
+
+  return normalizedPath;
+}
+
+function subcreatorSlugifyMogrtId(input: string): string {
+  // // Build stable runtime ids from relative paths so gallery selection survives rescans.
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+}
+
+function detectRuntimeMogrtPreviewClass(name: string): string {
+  // // Reuse lightweight preview themes for dynamically discovered MOGRT cards.
+  const lower = String(name || "").toLowerCase();
+  if (lower.includes("clean")) {
+    return "clean";
+  }
+  if (lower.includes("comic")) {
+    return "comic";
+  }
+  if (lower.includes("glitch")) {
+    return "glitch";
+  }
+  if (lower.includes("karaoke")) {
+    return "karaoke";
+  }
+  if (lower.includes("typewriter")) {
+    return "typewriter";
+  }
+  if (lower.includes("mr beast")) {
+    return "mrbeast";
+  }
+  if (lower.includes("tiktok")) {
+    return "tiktok";
+  }
+  if (lower.includes("akira")) {
+    return "akira";
+  }
+  if (lower.includes("motion blur")) {
+    return "motionblur";
+  }
+  if (lower.includes("marker")) {
+    return "marker";
+  }
+  if (lower.includes("slide")) {
+    return "slide";
+  }
+  if (lower.includes("slant")) {
+    return "slant";
+  }
+  if (lower.includes("spinning")) {
+    return "spinning";
+  }
+  if (lower.includes("block")) {
+    return "block";
+  }
+  if (lower.includes("emphasis")) {
+    return "emphasis";
+  }
+  if (lower.includes("obviously")) {
+    return "obviously";
+  }
+  if (lower.includes("arch")) {
+    return "arch";
+  }
+  return "default";
+}
+
+function resolveRuntimeMogrtPreviewFiles(
+  modules: CepNodeModules,
+  directoryPath: string,
+  mogrtBaseName: string,
+  directoryEntries: string[]
+): { imageFileUrl: string; videoFileUrl: string } {
+  // // Detect optional sidecar preview files so manually added MOGRTs can show custom gallery thumbnails.
+  const normalizedBaseName = String(mogrtBaseName || "").trim().toLowerCase();
+  const imageExtensions = [".png", ".jpg", ".jpeg", ".webp"];
+  const videoExtensions = [".mp4", ".mov", ".webm"];
+
+  const findEntry = (candidateNames: string[]): string => {
+    for (const candidateName of candidateNames) {
+      const normalizedCandidate = String(candidateName || "").trim().toLowerCase();
+      const matchedEntry = directoryEntries.find((entry) => String(entry || "").trim().toLowerCase() === normalizedCandidate);
+      if (matchedEntry) {
+        return matchedEntry;
+      }
+    }
+    return "";
+  };
+
+  const imageEntry = findEntry(
+    [
+      ...imageExtensions.map((extension) => `${normalizedBaseName}${extension}`),
+      ...imageExtensions.map((extension) => `thumb${extension}`)
+    ].filter(Boolean)
+  );
+  const videoEntry = findEntry(
+    [
+      ...videoExtensions.map((extension) => `${normalizedBaseName}${extension}`),
+      ...videoExtensions.map((extension) => `thumb${extension}`)
+    ].filter(Boolean)
+  );
+
+  return {
+    imageFileUrl: imageEntry ? buildFileUrlFromSystemPath(modules.path.join(directoryPath, imageEntry)) : "",
+    videoFileUrl: videoEntry ? buildFileUrlFromSystemPath(modules.path.join(directoryPath, videoEntry)) : ""
+  };
+}
+
+function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): InstalledMogrtCatalog | null {
+  // // Scan installed `templates/mogrt` folders so the panel sees bundled and manually added templates.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return null;
+  }
+
+  const normalizedExtensionRoot = String(extensionRootPath || "").trim();
+  if (!normalizedExtensionRoot) {
+    return null;
+  }
+
+  const templatesRoot = modules.path.join(normalizedExtensionRoot, "templates", "mogrt");
+  if (!modules.fs.existsSync(templatesRoot)) {
+    modules.fs.mkdirSync(templatesRoot, { recursive: true });
+  }
+
+  const groups: string[] = [];
+  const templates: MogrtTemplateItem[] = [];
+  const visited = new Set<string>();
+  const queue: string[] = [templatesRoot];
+
+  while (queue.length > 0) {
+    const currentDirectory = queue.shift();
+    if (!currentDirectory) {
+      continue;
+    }
+
+    const normalizedDirectory = normalizeMogrtFileSystemPath(currentDirectory);
+    if (!normalizedDirectory || visited.has(normalizedDirectory)) {
+      continue;
+    }
+    visited.add(normalizedDirectory);
+
+    let entries: string[] = [];
+    try {
+      entries = modules.fs.readdirSync(currentDirectory);
+    } catch {
+      continue;
+    }
+
+    for (const entryName of entries) {
+      const fullPath = modules.path.join(currentDirectory, entryName);
+      if (/\.mogrt$/i.test(String(entryName || ""))) {
+        const relativePath = buildMogrtRelativePath(templatesRoot, fullPath);
+        const pathParts = relativePath.split("/").filter(Boolean);
+        const groupName = normalizeMogrtPathText(pathParts.length > 1 ? pathParts[0] : "General") || "General";
+        const fileBaseName = String(entryName || "").replace(/\.[^.]+$/i, "");
+        const previewFiles = resolveRuntimeMogrtPreviewFiles(modules, currentDirectory, fileBaseName, entries);
+
+        pushUniqueString(groups, groupName);
+        templates.push({
+          id: `runtime-${subcreatorSlugifyMogrtId(relativePath || fileBaseName)}`,
+          name: normalizeMogrtPathText(fileBaseName) || fileBaseName,
+          aspect: groupName,
+          relativePath,
+          previewClass: detectRuntimeMogrtPreviewClass(fileBaseName),
+          previewImagePath: previewFiles.imageFileUrl,
+          previewVideoPath: previewFiles.videoFileUrl
+        });
+        continue;
+      }
+
+      try {
+        modules.fs.readdirSync(fullPath);
+        queue.push(fullPath);
+      } catch {
+        // // Ignore non-directory sidecar files while scanning the gallery tree.
+      }
+    }
+  }
+
+  templates.sort((left, right) => {
+    const groupCompare = String(left.aspect || "").localeCompare(String(right.aspect || ""), undefined, {
+      sensitivity: "base"
+    });
+    if (groupCompare !== 0) {
+      return groupCompare;
+    }
+    return String(left.name || "").localeCompare(String(right.name || ""), undefined, { sensitivity: "base" });
+  });
+  groups.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+
+  return {
+    available: true,
+    source: "cep-node-installed-templates",
+    details: `templates=${templates.length} groups=${groups.length}`,
+    templatesRoot,
+    groups,
+    templates
+  };
 }
 
 function pushUniqueString(target: string[], value: string): void {
@@ -1459,6 +1714,68 @@ export async function readSystemFontCatalog(): Promise<SystemFontCatalog> {
       {}
     )
   };
+}
+
+export async function readInstalledMogrtCatalog(extensionRootPath: string): Promise<InstalledMogrtCatalog> {
+  // // Read installed gallery templates from extension disk so user-added folders/files appear without rebuild.
+  const detected = readInstalledMogrtCatalogViaCepNode(extensionRootPath);
+  if (!detected) {
+    return {
+      available: false,
+      source: "unavailable",
+      details: "CEP Node runtime unavailable",
+      templatesRoot: "",
+      groups: [],
+      templates: []
+    };
+  }
+
+  return {
+    available: detected.available,
+    source: detected.source,
+    details: detected.details,
+    templatesRoot: String(detected.templatesRoot || ""),
+    groups: detected.groups.slice(),
+    templates: detected.templates.map((template) => ({
+      ...template
+    }))
+  };
+}
+
+export async function openInstalledMogrtFolder(extensionRootPath: string): Promise<string> {
+  // // Open installed `templates/mogrt` folder in Finder/Explorer so users can drop new templates manually.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    throw new Error("CEP Node runtime unavailable. Unable to open MOGRT folder.");
+  }
+
+  const normalizedExtensionRoot = String(extensionRootPath || "").trim();
+  if (!normalizedExtensionRoot) {
+    throw new Error("Extension root path unavailable. Unable to open MOGRT folder.");
+  }
+
+  const templatesRoot = modules.path.join(normalizedExtensionRoot, "templates", "mogrt");
+  modules.fs.mkdirSync(templatesRoot, { recursive: true });
+
+  const commandCandidates = detectWindowsRuntime()
+    ? [{ command: "explorer", args: [templatesRoot] }]
+    : [
+        { command: "/usr/bin/open", args: [templatesRoot] },
+        { command: "open", args: [templatesRoot] }
+      ];
+
+  for (const candidate of commandCandidates) {
+    const result = modules.childProcess.spawnSync(candidate.command, candidate.args, {
+      encoding: "utf8",
+      timeout: 15000,
+      env: modules.process.env
+    });
+    if (!result.error && (result.status === 0 || result.status === null)) {
+      return templatesRoot;
+    }
+  }
+
+  throw new Error(`Unable to open installed MOGRT folder: ${templatesRoot}`);
 }
 
 export async function applyVisualPropertiesToSelectedMogrts(

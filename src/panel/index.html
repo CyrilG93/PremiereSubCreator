@@ -119,15 +119,17 @@
           <section class="field field--full" id="mogrtGalleryField">
             <div class="field__header">
               <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
-              <label class="field__header-control">
-                <span class="sr-only" data-i18n="field.mogrtFormat">Format galerie</span>
-                <select id="mogrtAspectFilter">
-                  <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
-                  <option value="Landscape">Landscape (16:9)</option>
-                  <option value="Portrait">Portrait (9:16)</option>
-                  <option value="Square">Square (1:1)</option>
-                </select>
-              </label>
+              <div class="field__header-actions">
+                <label class="field__header-control">
+                  <span class="sr-only" data-i18n="field.mogrtFormat">Format galerie</span>
+                  <select id="mogrtAspectFilter">
+                    <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
+                  </select>
+                </label>
+                <button id="mogrtFolderButton" type="button" class="button button--secondary" data-i18n="action.openMogrtFolder">
+                  Ouvrir dossier MOGRT
+                </button>
+              </div>
             </div>
             <div id="mogrtGallery" class="mogrt-gallery" role="listbox" aria-label="MOGRT gallery"></div>
             <p id="mogrtSelectedLabel" class="hint"></p>

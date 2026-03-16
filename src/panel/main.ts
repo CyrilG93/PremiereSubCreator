@@ -6,15 +6,17 @@ import {
   applyCaptionPlan,
   applyVisualPropertiesToSelectedMogrts,
   getSelectedMogrtCount,
-  readSystemFontCatalog,
   getWhisperRuntimeStatus,
+  openInstalledMogrtFolder,
   pickSrtPath,
   pickWhisperAudioPath,
+  readInstalledMogrtCatalog,
   readSelectedMogrtVisualProperties,
+  readSystemFontCatalog,
   readTextFileFromHost,
   transcribeWithWhisper
 } from "./cepBridge";
-import type { SystemFontCatalog } from "./cepBridge";
+import type { InstalledMogrtCatalog, SystemFontCatalog } from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
 
@@ -93,6 +95,7 @@ const elements = {
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
   fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
+  mogrtFolderButton: document.querySelector<HTMLButtonElement>("#mogrtFolderButton"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
@@ -110,6 +113,7 @@ const elements = {
 let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
 let selectedMogrt: MogrtTemplateItem | null = null;
+let pendingMogrtAspectFilter = "";
 const FALLBACK_PANEL_META: PanelMeta = {
   version: "0.0.0",
   repository: "CyrilG93/PremiereSubCreator",
@@ -401,8 +405,12 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     elements.fontSize.value = String(snapshot.fontSize);
   }
 
-  if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter && hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
-    elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
+  if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter) {
+    if (hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
+      elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
+    } else {
+      pendingMogrtAspectFilter = snapshot.mogrtAspectFilter;
+    }
   }
 
   if (typeof snapshot.visualLiveUpdate === "boolean") {
@@ -450,8 +458,16 @@ function panelAssetPath(relativeOrAbsolute: string): string {
     return "";
   }
 
-  if (/^(https?:)?\/\//i.test(relativeOrAbsolute) || relativeOrAbsolute.startsWith("./")) {
+  if (/^(https?:|file:)?\/\//i.test(relativeOrAbsolute) || relativeOrAbsolute.startsWith("./")) {
     return relativeOrAbsolute;
+  }
+
+  const normalizedPath = String(relativeOrAbsolute || "").replace(/\\/g, "/");
+  if (/^[a-zA-Z]:\//.test(normalizedPath)) {
+    return `file:///${encodeURI(normalizedPath)}`;
+  }
+  if (normalizedPath.startsWith("/")) {
+    return `file://${encodeURI(normalizedPath)}`;
   }
 
   return `./${relativeOrAbsolute.replace(/^\/+/, "")}`;
@@ -651,6 +667,7 @@ async function loadLocale(languageCode: string): Promise<void> {
     setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
   }
   refreshLiveUpdateButtonState();
+  refreshMogrtAspectFilterOptions();
 
   refreshUpdateBanner();
 }
@@ -2162,18 +2179,157 @@ async function runQueuedLiveVisualApply(): Promise<void> {
   }
 }
 
+function normalizeMogrtRelativePathKey(value: string): string {
+  // // Build a stable relative-path key so static build catalog and installed scan can be merged safely.
+  return String(value || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .toLowerCase();
+}
+
+async function readBundledMogrtCatalog(): Promise<MogrtCatalog | null> {
+  // // Read build-time catalog so bundled preview assets remain available for shipped templates.
+  try {
+    const response = await fetch("./assets/mogrt-catalog.json", { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as MogrtCatalog;
+  } catch {
+    return null;
+  }
+}
+
+function mergeInstalledMogrtTemplates(
+  bundledTemplates: MogrtTemplateItem[],
+  installedCatalog: InstalledMogrtCatalog | null
+): MogrtTemplateItem[] {
+  // // Merge build-time previews with runtime-installed templates so manual additions appear without rebuild.
+  const bundledByPath = new Map<string, MogrtTemplateItem>();
+  for (const template of bundledTemplates) {
+    bundledByPath.set(normalizeMogrtRelativePathKey(template.relativePath), template);
+  }
+
+  if (!installedCatalog || !installedCatalog.available || installedCatalog.templates.length < 1) {
+    return bundledTemplates.slice();
+  }
+
+  const mergedTemplates: MogrtTemplateItem[] = installedCatalog.templates.map((template) => {
+    const bundledMatch = bundledByPath.get(normalizeMogrtRelativePathKey(template.relativePath));
+    return {
+      id: bundledMatch?.id || template.id,
+      name: template.name,
+      aspect: template.aspect,
+      relativePath: template.relativePath,
+      previewClass: template.previewClass || bundledMatch?.previewClass || "default",
+      previewImagePath: template.previewImagePath || bundledMatch?.previewImagePath || "",
+      previewVideoPath: template.previewVideoPath || bundledMatch?.previewVideoPath || ""
+    };
+  });
+
+  const mergedPathKeys = new Set(mergedTemplates.map((template) => normalizeMogrtRelativePathKey(template.relativePath)));
+  for (const bundledTemplate of bundledTemplates) {
+    const bundledKey = normalizeMogrtRelativePathKey(bundledTemplate.relativePath);
+    if (!mergedPathKeys.has(bundledKey)) {
+      mergedTemplates.push({ ...bundledTemplate });
+    }
+  }
+
+  mergedTemplates.sort((left, right) => {
+    const groupCompare = String(left.aspect || "").localeCompare(String(right.aspect || ""), undefined, {
+      sensitivity: "base"
+    });
+    if (groupCompare !== 0) {
+      return groupCompare;
+    }
+    return String(left.name || "").localeCompare(String(right.name || ""), undefined, { sensitivity: "base" });
+  });
+
+  return mergedTemplates;
+}
+
+function refreshMogrtAspectFilterOptions(): void {
+  // // Rebuild gallery filter choices from real installed top-level folders instead of hardcoded aspect presets.
+  if (!elements.mogrtAspectFilter) {
+    return;
+  }
+
+  const previousValue = pendingMogrtAspectFilter || elements.mogrtAspectFilter.value || "all";
+  const folders = Array.from(
+    new Set(
+      availableMogrts
+        .map((template) => String(template.aspect || "").trim())
+        .filter((templateAspect) => templateAspect.length > 0)
+    )
+  ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+
+  elements.mogrtAspectFilter.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = translate("gallery.allFormats");
+  elements.mogrtAspectFilter.appendChild(allOption);
+
+  for (const folder of folders) {
+    const option = document.createElement("option");
+    option.value = folder;
+    option.textContent = folder;
+    elements.mogrtAspectFilter.appendChild(option);
+  }
+
+  if (hasSelectOption(elements.mogrtAspectFilter, previousValue)) {
+    elements.mogrtAspectFilter.value = previousValue;
+    pendingMogrtAspectFilter = "";
+  } else {
+    elements.mogrtAspectFilter.value = "all";
+    if (folders.length > 0 || previousValue === "all") {
+      pendingMogrtAspectFilter = "";
+    }
+  }
+}
+
 async function loadMogrtCatalog(): Promise<void> {
-  // // Load generated MOGRT catalog emitted by the build script.
-  const response = await fetch("./assets/mogrt-catalog.json");
-  if (!response.ok) {
+  // // Load bundled catalog, then overlay runtime-installed templates so user-added MOGRTs show in the gallery.
+  const bundledCatalog = await readBundledMogrtCatalog();
+  const bundledTemplates = Array.isArray(bundledCatalog?.templates) ? bundledCatalog?.templates : [];
+  const extensionRootPath = resolveExtensionRootPath();
+  const installedCatalog = await readInstalledMogrtCatalog(extensionRootPath);
+
+  availableMogrts = mergeInstalledMogrtTemplates(bundledTemplates, installedCatalog);
+  refreshMogrtAspectFilterOptions();
+
+  if (!availableMogrts.length && !bundledCatalog && !installedCatalog.available) {
     throw new Error(translate("error.mogrtCatalogMissing"));
   }
 
-  const catalog = (await response.json()) as MogrtCatalog;
-  availableMogrts = Array.isArray(catalog.templates) ? catalog.templates : [];
-
   if (!selectedMogrt && availableMogrts.length > 0) {
     selectedMogrt = availableMogrts[0];
+  }
+}
+
+async function reloadMogrtCatalogPreservingSelection(): Promise<void> {
+  // // Refresh gallery content after manual filesystem edits while keeping current filter/selection when possible.
+  const previousSelectionId = selectedMogrt?.id || pendingSelectedMogrtId;
+  const previousSelectionPath = selectedMogrt?.relativePath || "";
+  pendingMogrtAspectFilter = elements.mogrtAspectFilter?.value || pendingMogrtAspectFilter;
+
+  await loadMogrtCatalog();
+
+  if (previousSelectionPath) {
+    const restoredByPath = availableMogrts.find(
+      (template) => normalizeMogrtRelativePathKey(template.relativePath) === normalizeMogrtRelativePathKey(previousSelectionPath)
+    );
+    if (restoredByPath) {
+      selectedMogrt = restoredByPath;
+    }
+  }
+
+  if ((!selectedMogrt || !availableMogrts.some((template) => template.id === selectedMogrt?.id)) && previousSelectionId) {
+    const restoredById = availableMogrts.find((template) => template.id === previousSelectionId);
+    if (restoredById) {
+      selectedMogrt = restoredById;
+    }
   }
 }
 
@@ -2429,7 +2585,7 @@ async function initialize(): Promise<void> {
   setActiveMode(activeMode);
   toggleSourceFields();
 
-  await loadMogrtCatalog();
+  await reloadMogrtCatalogPreservingSelection();
   if (pendingSelectedMogrtId) {
     const restoredTemplate = availableMogrts.find((template) => template.id === pendingSelectedMogrtId);
     if (restoredTemplate) {
@@ -2484,6 +2640,17 @@ async function initialize(): Promise<void> {
     renderMogrtGallery();
     persistPanelState();
   });
+  elements.mogrtFolderButton?.addEventListener("click", async () => {
+    try {
+      const extensionRootPath = resolveExtensionRootPath();
+      await openInstalledMogrtFolder(extensionRootPath);
+      await reloadMogrtCatalogPreservingSelection();
+      renderMogrtGallery();
+      persistPanelState();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
 
   elements.animationMode?.addEventListener("change", () => {
     persistPanelState();
@@ -2511,6 +2678,16 @@ async function initialize(): Promise<void> {
     if (visualLiveUpdateEnabled) {
       scheduleLiveVisualApply();
     }
+  });
+  window.addEventListener("focus", () => {
+    void reloadMogrtCatalogPreservingSelection()
+      .then(() => {
+        renderMogrtGallery();
+        persistPanelState();
+      })
+      .catch(() => {
+        // // Ignore passive gallery refresh failures so panel editing is never blocked by filesystem issues.
+      });
   });
 
   elements.generateButton?.addEventListener("click", async () => {

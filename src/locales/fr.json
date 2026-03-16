@@ -39,6 +39,7 @@
   "action.liveUpdateOff": "Live update OFF",
   "action.liveUpdateOn": "Live update ON",
   "action.applyMogrtProps": "Appliquer modifications",
+  "action.openMogrtFolder": "Ouvrir dossier MOGRT",
   "action.browse": "Parcourir",
   "update.downloadNotice": "Nouvelle version disponible (v{latest}, installee v{current}). Cliquer pour telecharger.",
   "log.ready": "Sub Creator pret.",

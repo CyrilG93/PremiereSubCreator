@@ -15,6 +15,7 @@ SUBCREATOR_PYTHON_SEEN=""
 SUBCREATOR_WHISPER_PATH=""
 SUBCREATOR_FFMPEG_PATH=""
 SUBCREATOR_PATH_HINTS=""
+SUBCREATOR_TEMPLATES_BACKUP_DIR=""
 
 subcreator_enable_cep_debug_mode() {
   # // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
@@ -42,6 +43,30 @@ subcreator_append_path_to_profile() {
 
   printf "\n# // Added by Sub Creator installer for Whisper CLI\n%s\n" "${export_line}" >>"${profile_path}"
   return 0
+}
+
+subcreator_backup_existing_templates() {
+  # // Preserve previously added MOGRT files before replacing the installed CEP extension payload.
+  if [ ! -d "${SUBCREATOR_DEST_DIR}/templates/mogrt" ]; then
+    return 0
+  fi
+
+  local backup_root=""
+  backup_root="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-mogrt.XXXXXX")"
+  cp -R "${SUBCREATOR_DEST_DIR}/templates/mogrt" "${backup_root}/mogrt"
+  SUBCREATOR_TEMPLATES_BACKUP_DIR="${backup_root}/mogrt"
+}
+
+subcreator_restore_existing_templates() {
+  # // Merge preserved user-added MOGRT files back without overwriting the freshly installed bundle files.
+  if [ -z "${SUBCREATOR_TEMPLATES_BACKUP_DIR}" ] || [ ! -d "${SUBCREATOR_TEMPLATES_BACKUP_DIR}" ]; then
+    return 0
+  fi
+
+  mkdir -p "${SUBCREATOR_DEST_DIR}/templates/mogrt"
+  cp -Rn "${SUBCREATOR_TEMPLATES_BACKUP_DIR}/." "${SUBCREATOR_DEST_DIR}/templates/mogrt/"
+  rm -rf "$(dirname "${SUBCREATOR_TEMPLATES_BACKUP_DIR}")"
+  SUBCREATOR_TEMPLATES_BACKUP_DIR=""
 }
 
 subcreator_json_escape() {
@@ -295,8 +320,10 @@ fi
 
 # // Create CEP extensions folder and copy payload atomically.
 mkdir -p "$(dirname "${SUBCREATOR_DEST_DIR}")"
+subcreator_backup_existing_templates
 rm -rf "${SUBCREATOR_DEST_DIR}"
 cp -R "${SUBCREATOR_SOURCE_DIR}" "${SUBCREATOR_DEST_DIR}"
+subcreator_restore_existing_templates
 
 echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
 subcreator_enable_cep_debug_mode

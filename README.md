@@ -26,7 +26,7 @@ It supports:
 - Font-family apply now retries multiple token variants (`family-style`, `family`, common style aliases) and validates readback to reduce fallback-to-wrong-font behavior on some MOGRTs.
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
-- On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path when needed, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
+- On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) via an absolute system path and an enlarged CEP buffer, instead of filename guesses, which improves matching for collection fonts like `Al Bayan`, `Avenir`, and `Futura`.
 - Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
 - Font token apply now retries canonical variants (`Family-Style`, compact internal ids, and cached aliases) and keeps text style dropdowns visible even when host readback is incomplete after a failed font change.
 - When only `Font Family` changes, the visual editor now prefers explicit neutral styles (`Regular`, `Plain`, `Roman`, `Book`, `Medium`) before falling back to the previous preset style or a bare family token, which reduces silent fallback to unrelated fonts.

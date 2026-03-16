@@ -85,7 +85,13 @@ interface CepNodeModules {
     spawnSync: (
       command: string,
       args: string[],
-      options: { encoding: string; shell?: boolean; timeout?: number; env?: Record<string, string | undefined> }
+      options: {
+        encoding: string;
+        shell?: boolean;
+        timeout?: number;
+        maxBuffer?: number;
+        env?: Record<string, string | undefined>;
+      }
     ) => { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } };
   };
   fs: {
@@ -386,6 +392,7 @@ function mergeFontTokenEntry(
 
 function detectMacSystemFontCatalogViaSystemProfiler(modules: CepNodeModules): SystemFontCatalog | null {
   // // Read authoritative macOS font metadata so family/style values match the system text engine.
+  const maxProfilerBuffer = 128 * 1024 * 1024;
   const commands = ["/usr/sbin/system_profiler", "system_profiler"];
   let result:
     | { status: number | null; stdout?: string; stderr?: string; error?: { message?: string; code?: string } }
@@ -394,6 +401,7 @@ function detectMacSystemFontCatalogViaSystemProfiler(modules: CepNodeModules): S
     result = modules.childProcess.spawnSync(command, ["SPFontsDataType", "-json"], {
       encoding: "utf8",
       timeout: 60000,
+      maxBuffer: maxProfilerBuffer,
       env: modules.process.env
     });
     if (!result.error && result.status === 0 && result.stdout) {

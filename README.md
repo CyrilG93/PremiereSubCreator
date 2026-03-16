@@ -24,9 +24,9 @@ It supports:
 - Visual editor reads style fields from text-document payloads when available (`Font Family`, `Font Style`, `Font Size`, faux style toggles) without exposing editable caption text.
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
 - Long font dropdowns are constrained to available panel height to avoid clipped lists near the bottom of the UI.
-- Gallery filter options now come from real installed MOGRT folder names instead of hardcoded aspect presets, and the panel includes a button to open the installed MOGRT folder directly.
+- Gallery filter options now come from real installed MOGRT folder names instead of hardcoded aspect presets, and the panel includes buttons to open the installed MOGRT folder and refresh the gallery without restarting Premiere.
 - Gallery refreshes installed MOGRTs when the panel regains focus, so manually copied templates appear without reinstalling the extension.
-- Manually added MOGRTs can also provide sidecar preview files (`<name>.png/.jpg/.webp/.mp4` or `thumb.*`) inside the same folder.
+- Manually added MOGRTs reuse embedded `.mogrt` thumbnails at runtime when present, and can also provide sidecar preview files (`<name>.png/.jpg/.webp/.mp4` or `thumb.*`) inside the same folder.
 - Font-family apply now retries multiple token variants (`family-style`, `family`, common style aliases) and validates readback to reduce fallback-to-wrong-font behavior on some MOGRTs.
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
@@ -69,7 +69,7 @@ Top-level folders under `templates/mogrt` become the gallery filter values as-is
 
 If a `.mogrt` contains `thumb.png` or `thumb.mp4`, Sub Creator extracts it during build and uses it as the gallery preview.
 
-For manually added installed templates, the panel can also use sidecar preview files placed next to the `.mogrt` (`<same-name>.png/.jpg/.webp/.mp4` or `thumb.*`).
+For manually added installed templates, the panel first tries to extract embedded thumbnail assets from the `.mogrt` itself, then falls back to sidecar preview files placed next to the `.mogrt` (`<same-name>.png/.jpg/.webp/.mp4` or `thumb.*`).
 
 Without MOGRT, the panel still works but inserts markers as a safe fallback.
 

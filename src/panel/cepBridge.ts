@@ -1,5 +1,6 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
 import type { HostApplyPayload, MogrtTemplateItem } from "../core/types";
+import { unzipSync } from "fflate";
 
 declare global {
   interface Window {
@@ -107,7 +108,8 @@ interface CepNodeModules {
     existsSync: (path: string) => boolean;
     mkdirSync: (path: string, options: { recursive: boolean }) => void;
     readdirSync: (path: string) => string[];
-    readFileSync: (path: string, encoding: string) => string;
+    readFileSync: (path: string, encoding?: string) => string | Uint8Array;
+    writeFileSync: (path: string, data: Uint8Array) => void;
   };
   os: {
     tmpdir: () => string;
@@ -340,8 +342,102 @@ function detectRuntimeMogrtPreviewClass(name: string): string {
   return "default";
 }
 
+function pickRuntimeArchiveEntry(entryNames: string[], ruleMatchers: RegExp[]): string {
+  // // Resolve preferred embedded thumbnail assets while preserving original archive entry casing.
+  const normalizedEntries = entryNames.map((entryName) => ({
+    raw: String(entryName || ""),
+    normalized: String(entryName || "").replace(/\\/g, "/").toLowerCase()
+  }));
+
+  for (const rule of ruleMatchers) {
+    const matchedEntry = normalizedEntries.find((entry) => rule.test(entry.normalized));
+    if (matchedEntry) {
+      return matchedEntry.raw;
+    }
+  }
+
+  return "";
+}
+
+function normalizeRuntimeArchiveExt(entryName: string, fallbackExt: string): string {
+  // // Keep extracted preview filenames stable even when archive assets use variant extensions.
+  const matchedExt = String(entryName || "").toLowerCase().match(/\.[^.]+$/);
+  const ext = matchedExt ? matchedExt[0] : fallbackExt;
+  if (ext === ".jpeg") {
+    return ".jpg";
+  }
+  return ext || fallbackExt;
+}
+
+function extractRuntimeMogrtPreviewFiles(
+  modules: CepNodeModules,
+  mogrtPath: string,
+  relativePath: string
+): { imageFileUrl: string; videoFileUrl: string } {
+  // // Extract embedded `thumb.*` preview assets from a `.mogrt` archive for manually added gallery items.
+  let archiveMap: Record<string, Uint8Array> = {};
+
+  try {
+    const archiveBytes = modules.fs.readFileSync(mogrtPath);
+    const archiveBuffer =
+      typeof archiveBytes === "string"
+        ? new TextEncoder().encode(archiveBytes)
+        : archiveBytes instanceof Uint8Array
+          ? archiveBytes
+          : new Uint8Array();
+    if (archiveBuffer.length < 1) {
+      return { imageFileUrl: "", videoFileUrl: "" };
+    }
+    archiveMap = unzipSync(new Uint8Array(archiveBuffer));
+  } catch {
+    return { imageFileUrl: "", videoFileUrl: "" };
+  }
+
+  const entryNames = Object.keys(archiveMap);
+  if (entryNames.length < 1) {
+    return { imageFileUrl: "", videoFileUrl: "" };
+  }
+
+  const imageEntry = pickRuntimeArchiveEntry(entryNames, [/\/thumb\.png$/i, /thumb\.png$/i, /thumb\.(jpg|jpeg|webp)$/i, /\.(png|jpg|jpeg|webp)$/i]);
+  const videoEntry = pickRuntimeArchiveEntry(entryNames, [/\/thumb\.mp4$/i, /thumb\.mp4$/i, /\.mp4$/i, /\.mov$/i, /\.webm$/i]);
+  if (!imageEntry && !videoEntry) {
+    return { imageFileUrl: "", videoFileUrl: "" };
+  }
+
+  const previewRoot = modules.path.join(modules.os.tmpdir(), "subcreator-mogrt-previews");
+  const previewStem = subcreatorSlugifyMogrtId(relativePath || modules.path.basename(mogrtPath));
+  modules.fs.mkdirSync(previewRoot, { recursive: true });
+
+  let imageFileUrl = "";
+  let videoFileUrl = "";
+
+  if (imageEntry && archiveMap[imageEntry]) {
+    const imageFilePath = modules.path.join(previewRoot, `${previewStem}${normalizeRuntimeArchiveExt(imageEntry, ".png")}`);
+    try {
+      modules.fs.writeFileSync(imageFilePath, archiveMap[imageEntry]);
+      imageFileUrl = buildFileUrlFromSystemPath(imageFilePath);
+    } catch {
+      imageFileUrl = "";
+    }
+  }
+
+  if (videoEntry && archiveMap[videoEntry]) {
+    const videoFilePath = modules.path.join(previewRoot, `${previewStem}${normalizeRuntimeArchiveExt(videoEntry, ".mp4")}`);
+    try {
+      modules.fs.writeFileSync(videoFilePath, archiveMap[videoEntry]);
+      videoFileUrl = buildFileUrlFromSystemPath(videoFilePath);
+    } catch {
+      videoFileUrl = "";
+    }
+  }
+
+  return { imageFileUrl, videoFileUrl };
+}
+
 function resolveRuntimeMogrtPreviewFiles(
   modules: CepNodeModules,
+  mogrtPath: string,
+  relativePath: string,
   directoryPath: string,
   mogrtBaseName: string,
   directoryEntries: string[]
@@ -375,10 +471,15 @@ function resolveRuntimeMogrtPreviewFiles(
     ].filter(Boolean)
   );
 
-  return {
+  const sidecarPreviewFiles = {
     imageFileUrl: imageEntry ? buildFileUrlFromSystemPath(modules.path.join(directoryPath, imageEntry)) : "",
     videoFileUrl: videoEntry ? buildFileUrlFromSystemPath(modules.path.join(directoryPath, videoEntry)) : ""
   };
+  if (sidecarPreviewFiles.imageFileUrl || sidecarPreviewFiles.videoFileUrl) {
+    return sidecarPreviewFiles;
+  }
+
+  return extractRuntimeMogrtPreviewFiles(modules, mogrtPath, relativePath);
 }
 
 function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): InstalledMogrtCatalog | null {
@@ -429,7 +530,7 @@ function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): Install
         const pathParts = relativePath.split("/").filter(Boolean);
         const groupName = normalizeMogrtPathText(pathParts.length > 1 ? pathParts[0] : "General") || "General";
         const fileBaseName = String(entryName || "").replace(/\.[^.]+$/i, "");
-        const previewFiles = resolveRuntimeMogrtPreviewFiles(modules, currentDirectory, fileBaseName, entries);
+        const previewFiles = resolveRuntimeMogrtPreviewFiles(modules, fullPath, relativePath, currentDirectory, fileBaseName, entries);
 
         pushUniqueString(groups, groupName);
         templates.push({

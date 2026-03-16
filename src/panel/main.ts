@@ -96,6 +96,7 @@ const elements = {
   fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
   mogrtFolderButton: document.querySelector<HTMLButtonElement>("#mogrtFolderButton"),
+  mogrtRefreshButton: document.querySelector<HTMLButtonElement>("#mogrtRefreshButton"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
@@ -2644,6 +2645,15 @@ async function initialize(): Promise<void> {
     try {
       const extensionRootPath = resolveExtensionRootPath();
       await openInstalledMogrtFolder(extensionRootPath);
+      await reloadMogrtCatalogPreservingSelection();
+      renderMogrtGallery();
+      persistPanelState();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+  elements.mogrtRefreshButton?.addEventListener("click", async () => {
+    try {
       await reloadMogrtCatalogPreservingSelection();
       renderMogrtGallery();
       persistPanelState();

@@ -128,6 +128,7 @@ let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
 const visualOriginalValuesByPath = new Map<string, string>();
 const visualOpenGroups = new Set<string>();
+const visualTextStyleTokenMapByBasePath = new Map<string, Record<string, string>>();
 let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
@@ -138,8 +139,69 @@ let systemFontCatalog: SystemFontCatalog = {
   source: "unavailable",
   details: "",
   families: [],
-  stylesByFamily: {}
+  stylesByFamily: {},
+  fontTokensByFamilyStyle: {}
 };
+
+function parseTextStyleVirtualPath(path: string): { basePath: string; styleKey: string } | null {
+  // // Decode synthetic text-style editor paths like `4::textstyle.fontStyle`.
+  const marker = "::textstyle.";
+  const markerIndex = String(path || "").indexOf(marker);
+  if (markerIndex <= 0) {
+    return null;
+  }
+  const basePath = String(path || "").slice(0, markerIndex).trim();
+  const styleKey = String(path || "").slice(markerIndex + marker.length).trim();
+  if (!basePath || !styleKey) {
+    return null;
+  }
+  return { basePath, styleKey };
+}
+
+function normalizeFontLookupKey(value: string): string {
+  // // Normalize font display values for case/spacing-insensitive lookups.
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCompactFontLookupKey(value: string): string {
+  // // Normalize font values for alias matches like `Al Bayan` vs `AlBayan`.
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function listFontFamilyLookupKeys(value: string): string[] {
+  // // Build all lookup keys used for family alias matching in style/token maps.
+  const keys = [normalizeFontLookupKey(value), normalizeCompactFontLookupKey(value)].filter(Boolean);
+  return Array.from(new Set(keys));
+}
+
+function listFontStyleLookupKeys(value: string): string[] {
+  // // Build style lookup aliases so `Plain` and `Regular` resolve to the same token bucket.
+  const normalized = normalizeFontLookupKey(value);
+  const compact = normalizeCompactFontLookupKey(value);
+  const keys = [normalized, compact].filter(Boolean);
+  if (normalized === "regular") {
+    keys.push("plain", "roman");
+  }
+  if (normalized === "plain" || normalized === "roman") {
+    keys.push("regular");
+  }
+  return Array.from(new Set(keys.filter(Boolean)));
+}
+
+function normalizeFontStyleDisplayKey(value: string): string {
+  // // Collapse display-only style aliases to one select matching key.
+  const normalized = normalizeFontLookupKey(value);
+  if (normalized === "plain" || normalized === "roman") {
+    return "regular";
+  }
+  return normalized;
+}
 
 function assertDomBindings(): void {
   // // Guard against missing panel DOM ids during development/build changes.
@@ -611,7 +673,8 @@ async function loadSystemFontCatalogFallback(): Promise<void> {
         source: catalog?.source || "unavailable",
         details: catalog?.details || "",
         families: [],
-        stylesByFamily: {}
+        stylesByFamily: {},
+        fontTokensByFamilyStyle: {}
       };
       return;
     }
@@ -627,6 +690,21 @@ async function loadSystemFontCatalogFallback(): Promise<void> {
               accumulator[String(family)] = Array.isArray(styles) ? styles.slice() : [];
               return accumulator;
             }, {})
+          : {},
+      fontTokensByFamilyStyle:
+        catalog.fontTokensByFamilyStyle && typeof catalog.fontTokensByFamilyStyle === "object"
+          ? Object.entries(catalog.fontTokensByFamilyStyle).reduce<Record<string, Record<string, string>>>(
+              (accumulator, [family, tokenMap]) => {
+                accumulator[String(family)] = tokenMap && typeof tokenMap === "object"
+                  ? Object.entries(tokenMap).reduce<Record<string, string>>((styleAccumulator, [style, token]) => {
+                      styleAccumulator[String(style)] = String(token || "");
+                      return styleAccumulator;
+                    }, {})
+                  : {};
+                return accumulator;
+              },
+              {}
+            )
           : {}
     };
   } catch {
@@ -635,7 +713,8 @@ async function loadSystemFontCatalogFallback(): Promise<void> {
       source: "error",
       details: "",
       families: [],
-      stylesByFamily: {}
+      stylesByFamily: {},
+      fontTokensByFamilyStyle: {}
     };
   }
 }
@@ -859,6 +938,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   elements.visualPropertyList.innerHTML = "";
   loadedVisualProperties = properties.slice();
   visualOriginalValuesByPath.clear();
+  visualTextStyleTokenMapByBasePath.clear();
 
   if (!properties.length) {
     return;
@@ -867,22 +947,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   const textStyleFamilySelectByBasePath = new Map<string, HTMLSelectElement>();
   const textStyleStyleSelectByBasePath = new Map<string, HTMLSelectElement>();
   const textStyleStylesByFamilyByBasePath = new Map<string, Record<string, string[]>>();
-  const textStyleFlagCheckboxesByBasePath = new Map<string, { allCaps?: HTMLInputElement; smallCaps?: HTMLInputElement }>();
-
-  const parseTextStyleVirtualPath = (path: string): { basePath: string; styleKey: string } | null => {
-    // // Decode virtual text-style control paths emitted by host (`4::textstyle.fontStyle`).
-    const marker = "::textstyle.";
-    const markerIndex = String(path || "").indexOf(marker);
-    if (markerIndex <= 0) {
-      return null;
-    }
-    const basePath = String(path || "").slice(0, markerIndex).trim();
-    const styleKey = String(path || "").slice(markerIndex + marker.length).trim();
-    if (!basePath || !styleKey) {
-      return null;
-    }
-    return { basePath, styleKey };
-  };
+  const textStyleFlagCheckboxesByBasePath = new Map<
+    string,
+    { bold?: HTMLInputElement; italic?: HTMLInputElement; allCaps?: HTMLInputElement; smallCaps?: HTMLInputElement }
+  >();
 
   const normalizeStyleMap = (value: unknown): Record<string, string[]> => {
     // // Normalize host style-map payload into lowercase-keyed arrays for quick lookups.
@@ -906,7 +974,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         }
       }
       if (uniqueStyles.length > 0) {
-        normalized[family.toLowerCase()] = uniqueStyles;
+        for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
+          normalized[familyLookupKey] = uniqueStyles.slice();
+        }
       }
     }
     return normalized;
@@ -948,14 +1018,68 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return merged;
   };
 
+  const normalizeTokenMap = (value: unknown): Record<string, string> => {
+    // // Normalize family/style -> exact font token map for panel-side apply payloads.
+    const normalized: Record<string, string> = {};
+    if (!value || typeof value !== "object") {
+      return normalized;
+    }
+    for (const [rawFamily, rawStyleMap] of Object.entries(value as Record<string, unknown>)) {
+      const family = String(rawFamily || "").trim();
+      if (!family || !rawStyleMap || typeof rawStyleMap !== "object") {
+        continue;
+      }
+      for (const [rawStyle, rawToken] of Object.entries(rawStyleMap as Record<string, unknown>)) {
+        const style = String(rawStyle || "").trim();
+        const token = String(rawToken || "").trim();
+        if (!style || !token) {
+          continue;
+        }
+        for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
+          for (const styleLookupKey of listFontStyleLookupKeys(style)) {
+            normalized[`${familyLookupKey}::${styleLookupKey}`] = token;
+          }
+        }
+      }
+    }
+    return normalized;
+  };
+
+  const mergeTokenMaps = (...maps: Array<Record<string, string>>): Record<string, string> => {
+    // // Merge exact font-token lookup tables without overwriting earlier matches.
+    const merged: Record<string, string> = {};
+    for (const map of maps) {
+      if (!map || typeof map !== "object") {
+        continue;
+      }
+      for (const [lookupKey, token] of Object.entries(map)) {
+        const normalizedLookupKey = String(lookupKey || "").trim();
+        const normalizedToken = String(token || "").trim();
+        if (!normalizedLookupKey || !normalizedToken || merged[normalizedLookupKey]) {
+          continue;
+        }
+        merged[normalizedLookupKey] = normalizedToken;
+      }
+    }
+    return merged;
+  };
+
   const normalizedSystemStyleMap = systemFontCatalog.available
     ? normalizeStyleMap(systemFontCatalog.stylesByFamily)
+    : {};
+  const normalizedSystemTokenMap = systemFontCatalog.available
+    ? normalizeTokenMap(systemFontCatalog.fontTokensByFamilyStyle)
     : {};
   const systemFamilies = systemFontCatalog.available && Array.isArray(systemFontCatalog.families)
     ? systemFontCatalog.families
     : [];
 
-  const replaceSelectOptions = (select: HTMLSelectElement, options: string[], preferredValue: string): void => {
+  const replaceSelectOptions = (
+    select: HTMLSelectElement,
+    options: string[],
+    preferredValue: string,
+    dedupeKeyBuilder?: (value: string) => string
+  ): void => {
     // // Replace select items while preserving currently selected value when possible.
     const deduped: string[] = [];
     for (const optionText of options) {
@@ -963,7 +1087,8 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       if (!normalized) {
         continue;
       }
-      if (!deduped.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+      const normalizedKey = dedupeKeyBuilder ? dedupeKeyBuilder(normalized) : normalized.toLowerCase();
+      if (!deduped.some((item) => (dedupeKeyBuilder ? dedupeKeyBuilder(item) : item.toLowerCase()) === normalizedKey)) {
         deduped.push(normalized);
       }
     }
@@ -982,8 +1107,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     if (!targetValue) {
       return;
     }
+    const targetValueKey = dedupeKeyBuilder ? dedupeKeyBuilder(targetValue) : targetValue.toLowerCase();
     for (const option of Array.from(select.options)) {
-      if (String(option.value).toLowerCase() === targetValue.toLowerCase()) {
+      const optionValueKey = dedupeKeyBuilder ? dedupeKeyBuilder(String(option.value || "")) : String(option.value).toLowerCase();
+      if (optionValueKey === targetValueKey) {
         select.value = option.value;
         return;
       }
@@ -1002,26 +1129,51 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       return;
     }
 
-    const selectedFamily = String(familySelect.value || "").trim().toLowerCase();
-    if (!selectedFamily) {
+    const selectedFamilyKeys = listFontFamilyLookupKeys(familySelect.value);
+    if (selectedFamilyKeys.length < 1) {
       return;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(styleMap, selectedFamily)) {
-      return;
+    let mappedOptions: string[] = [];
+    for (const selectedFamilyKey of selectedFamilyKeys) {
+      if (Object.prototype.hasOwnProperty.call(styleMap, selectedFamilyKey) && Array.isArray(styleMap[selectedFamilyKey])) {
+        mappedOptions = styleMap[selectedFamilyKey];
+        break;
+      }
     }
-
-    const mappedOptions = Array.isArray(styleMap[selectedFamily]) ? styleMap[selectedFamily] : [];
     const currentStyle = String(styleSelect.value || "").trim();
     if (mappedOptions.length > 0) {
-      replaceSelectOptions(styleSelect, mappedOptions, currentStyle);
+      replaceSelectOptions(styleSelect, mappedOptions, currentStyle, normalizeFontStyleDisplayKey);
       return;
     }
     if (currentStyle) {
-      replaceSelectOptions(styleSelect, [currentStyle], currentStyle);
+      replaceSelectOptions(styleSelect, [currentStyle], currentStyle, normalizeFontStyleDisplayKey);
       return;
     }
-    replaceSelectOptions(styleSelect, ["Regular"], "Regular");
+    replaceSelectOptions(styleSelect, ["Regular"], "Regular", normalizeFontStyleDisplayKey);
+  };
+
+  const syncPrimaryFauxStyleFlags = (basePath: string): void => {
+    // // Keep faux bold/italic flags aligned with the selected named style after family/style changes.
+    const styleSelect = textStyleStyleSelectByBasePath.get(basePath);
+    const flags = textStyleFlagCheckboxesByBasePath.get(basePath);
+    if (!styleSelect || !flags) {
+      return;
+    }
+
+    const normalizedStyle = String(styleSelect.value || "").trim().toLowerCase();
+    if (!normalizedStyle) {
+      return;
+    }
+
+    const boldLike = /\b(bold|semibold|demibold|extrabold|ultrabold|black|heavy)\b/i.test(normalizedStyle);
+    const italicLike = /\b(italic|oblique)\b/i.test(normalizedStyle);
+    if (flags.bold) {
+      flags.bold.checked = boldLike;
+    }
+    if (flags.italic) {
+      flags.italic.checked = italicLike;
+    }
   };
 
   const bindLiveUpdateEvent = (
@@ -1212,30 +1364,42 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         bindLiveUpdateEvent(checkbox, "change");
 
         const textStylePath = parseTextStyleVirtualPath(property.path);
-        if (textStylePath && (textStylePath.styleKey === "fontFsAllCaps" || textStylePath.styleKey === "fontFsSmallCaps")) {
-          // // Mirror Premiere mutual exclusivity between All Caps and Small Caps in editor state.
+        if (
+          textStylePath &&
+          (textStylePath.styleKey === "fontFsBold" ||
+            textStylePath.styleKey === "fontFsItalic" ||
+            textStylePath.styleKey === "fontFsAllCaps" ||
+            textStylePath.styleKey === "fontFsSmallCaps")
+        ) {
+          // // Track text-style faux-style toggles so family/style changes can keep them coherent.
           const existing = textStyleFlagCheckboxesByBasePath.get(textStylePath.basePath) || {};
-          if (textStylePath.styleKey === "fontFsAllCaps") {
+          if (textStylePath.styleKey === "fontFsBold") {
+            existing.bold = checkbox;
+          } else if (textStylePath.styleKey === "fontFsItalic") {
+            existing.italic = checkbox;
+          } else if (textStylePath.styleKey === "fontFsAllCaps") {
             existing.allCaps = checkbox;
           } else {
             existing.smallCaps = checkbox;
           }
           textStyleFlagCheckboxesByBasePath.set(textStylePath.basePath, existing);
-          checkbox.addEventListener("change", () => {
-            if (!checkbox.checked) {
-              return;
-            }
-            const pair = textStyleFlagCheckboxesByBasePath.get(textStylePath.basePath);
-            if (!pair) {
-              return;
-            }
-            if (textStylePath.styleKey === "fontFsAllCaps" && pair.smallCaps) {
-              pair.smallCaps.checked = false;
-            }
-            if (textStylePath.styleKey === "fontFsSmallCaps" && pair.allCaps) {
-              pair.allCaps.checked = false;
-            }
-          });
+          if (textStylePath.styleKey === "fontFsAllCaps" || textStylePath.styleKey === "fontFsSmallCaps") {
+            checkbox.addEventListener("change", () => {
+              if (!checkbox.checked) {
+                return;
+              }
+              const pair = textStyleFlagCheckboxesByBasePath.get(textStylePath.basePath);
+              if (!pair) {
+                return;
+              }
+              if (textStylePath.styleKey === "fontFsAllCaps" && pair.smallCaps) {
+                pair.smallCaps.checked = false;
+              }
+              if (textStylePath.styleKey === "fontFsSmallCaps" && pair.allCaps) {
+                pair.allCaps.checked = false;
+              }
+            });
+          }
         }
 
         row.classList.add("visual-property-item--checkbox");
@@ -1481,11 +1645,30 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           if (Object.keys(combinedMap).length > 0) {
             textStyleStylesByFamilyByBasePath.set(textStylePath.basePath, combinedMap);
           }
+          const existingTokenMap = visualTextStyleTokenMapByBasePath.get(textStylePath.basePath) || {};
+          const combinedTokenMap = mergeTokenMaps(existingTokenMap, normalizedSystemTokenMap);
+          if (Object.keys(combinedTokenMap).length > 0) {
+            visualTextStyleTokenMapByBasePath.set(textStylePath.basePath, combinedTokenMap);
+          }
         }
         if (textStylePath?.styleKey === "fontFamily") {
           const currentFamilyValue = String(select.value || currentValue || "").trim();
           const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
-          replaceSelectOptions(select, [...selectFamilies, ...systemFamilies], currentFamilyValue);
+          const dedupedFamilies: string[] = [];
+          const seenFamilyKeys = new Set<string>();
+          for (const familyName of [...systemFamilies, ...selectFamilies]) {
+            const normalizedFamily = String(familyName || "").trim();
+            if (!normalizedFamily) {
+              continue;
+            }
+            const dedupeKey = normalizeCompactFontLookupKey(normalizedFamily) || normalizeFontLookupKey(normalizedFamily);
+            if (!dedupeKey || seenFamilyKeys.has(dedupeKey)) {
+              continue;
+            }
+            seenFamilyKeys.add(dedupeKey);
+            dedupedFamilies.push(normalizedFamily);
+          }
+          replaceSelectOptions(select, dedupedFamilies, currentFamilyValue, normalizeCompactFontLookupKey);
           select.addEventListener("mousedown", (event) => {
             tryOpenConstrainedSelect(select, event);
           });
@@ -1500,6 +1683,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
           select.addEventListener("change", () => {
             refreshStyleSelectForFamily(textStylePath.basePath);
+            syncPrimaryFauxStyleFlags(textStylePath.basePath);
             scheduleLiveVisualApply();
           });
         } else if (textStylePath?.styleKey === "fontStyle") {
@@ -1508,14 +1692,25 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           if (relatedMap && Object.keys(relatedMap).length > 0) {
             const selectStyles = Array.from(select.options).map((option) => String(option.value || ""));
             const relatedFamilySelect = textStyleFamilySelectByBasePath.get(textStylePath.basePath);
-            const selectedFamilyKey = String(relatedFamilySelect?.value || "").trim().toLowerCase();
-            const mappedStyles = selectedFamilyKey && Array.isArray(relatedMap[selectedFamilyKey]) ? relatedMap[selectedFamilyKey] : [];
+            const selectedFamilyKeys = listFontFamilyLookupKeys(String(relatedFamilySelect?.value || ""));
+            let mappedStyles: string[] = [];
+            for (const selectedFamilyKey of selectedFamilyKeys) {
+              if (Array.isArray(relatedMap[selectedFamilyKey])) {
+                mappedStyles = relatedMap[selectedFamilyKey];
+                break;
+              }
+            }
             if (mappedStyles.length > 0) {
-              replaceSelectOptions(select, mappedStyles, String(select.value || currentValue || ""));
-            } else if (selectedFamilyKey) {
-              replaceSelectOptions(select, selectStyles, String(select.value || currentValue || ""));
+              replaceSelectOptions(select, mappedStyles, String(select.value || currentValue || ""), normalizeFontStyleDisplayKey);
+            } else if (selectedFamilyKeys.length > 0) {
+              replaceSelectOptions(select, selectStyles, String(select.value || currentValue || ""), normalizeFontStyleDisplayKey);
             } else {
-              replaceSelectOptions(select, [...selectStyles, ...Object.values(relatedMap).flat()], String(select.value || currentValue || ""));
+              replaceSelectOptions(
+                select,
+                [...selectStyles, ...Object.values(relatedMap).flat()],
+                String(select.value || currentValue || ""),
+                normalizeFontStyleDisplayKey
+              );
             }
           }
           select.addEventListener("mousedown", (event) => {
@@ -1528,6 +1723,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
               tryOpenConstrainedSelect(select, event);
             }
+          });
+          select.addEventListener("change", () => {
+            syncPrimaryFauxStyleFlags(textStylePath.basePath);
           });
           bindLiveUpdateEvent(select, "change");
         } else {
@@ -1569,8 +1767,54 @@ type VisualPropertyChange = {
   valueType: HostVisualProperty["valueType"];
   controlKind: HostVisualProperty["controlKind"];
   vectorScale?: number[];
+  fontToken?: string;
   value: string | number | boolean;
 };
+
+function findRenderedVisualControl(path: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null {
+  // // Resolve another rendered visual control by exact virtual path for text-style lookups.
+  if (!elements.visualPropertyList) {
+    return null;
+  }
+
+  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+    '[data-visual-role="value"]'
+  );
+  for (const control of controls) {
+    if (String(control.dataset.visualPath || "") === path) {
+      return control;
+    }
+  }
+  return null;
+}
+
+function resolveVisualTextStyleToken(basePath: string): string {
+  // // Resolve the exact system font token for the currently selected family/style pair when known.
+  const tokenMap = visualTextStyleTokenMapByBasePath.get(basePath);
+  if (!tokenMap) {
+    return "";
+  }
+
+  const familyControl = findRenderedVisualControl(`${basePath}::textstyle.fontFamily`);
+  const styleControl = findRenderedVisualControl(`${basePath}::textstyle.fontStyle`);
+  const familyValue = String(familyControl instanceof HTMLSelectElement || familyControl instanceof HTMLInputElement ? familyControl.value : "")
+    .trim();
+  const styleValue = String(styleControl instanceof HTMLSelectElement || styleControl instanceof HTMLInputElement ? styleControl.value : "")
+    .trim();
+  if (!familyValue || !styleValue) {
+    return "";
+  }
+
+  for (const familyLookupKey of listFontFamilyLookupKeys(familyValue)) {
+    for (const styleLookupKey of listFontStyleLookupKeys(styleValue)) {
+      const token = tokenMap[`${familyLookupKey}::${styleLookupKey}`];
+      if (token) {
+        return token;
+      }
+    }
+  }
+  return "";
+}
 
 function collectVisualPropertyChanges(): VisualPropertyChange[] {
   // // Build payload from rendered editor controls for host-side property updates.
@@ -1612,11 +1856,18 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
       value = control.value;
     }
 
+    const textStylePath = parseTextStyleVirtualPath(path);
+    const fontToken =
+      textStylePath && (textStylePath.styleKey === "fontFamily" || textStylePath.styleKey === "fontStyle")
+        ? resolveVisualTextStyleToken(textStylePath.basePath)
+        : "";
+
     changes.push({
       path,
       valueType,
       controlKind,
       vectorScale,
+      fontToken: fontToken || undefined,
       value
     });
   });

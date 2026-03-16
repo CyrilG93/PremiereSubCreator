@@ -26,8 +26,11 @@ It supports:
 - Font-family apply now retries multiple token variants (`family-style`, `family`, common style aliases) and validates readback to reduce fallback-to-wrong-font behavior on some MOGRTs.
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
+- On macOS, OS font fallback now uses `system_profiler` metadata (`family`, `style`, exact internal token) instead of filename guesses, which improves matching for collection fonts like `Al Bayan` and `Futura`.
+- Font family/style matching now normalizes aliases such as `Al Bayan` / `AlBayan` and `Plain` / `Regular`, so cached dropdown values still resolve to the correct system font token.
 - When CEP Node is available, the visual editor augments font dropdowns with local OS-installed font families/styles (macOS/Windows font directories) as a fallback when MOGRT options are limited.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
+- Changing `Font Family` / `Font Style` now re-syncs faux `Bold` / `Italic` checkboxes so system font changes do not keep stale style flags from the original template.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
 - Visual editor includes optional `Live update` mode (disabled by default, persisted) to push edits while tweaking controls.
 - Manual apply on multi-selection now runs with a visible progress bar (`done/total/remaining`) so long updates are trackable, and the bar stays hidden outside active multi-clip updates.

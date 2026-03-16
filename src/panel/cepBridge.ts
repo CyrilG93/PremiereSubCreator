@@ -44,6 +44,7 @@ export interface SystemFontCatalog {
   details: string;
   families: string[];
   stylesByFamily: Record<string, string[]>;
+  fontTokensByFamilyStyle: Record<string, Record<string, string>>;
 }
 
 export interface SelectedMogrtVisualProperty {
@@ -320,7 +321,7 @@ function splitFontFamilyAndStyle(rawName: string): { family: string; style: stri
 function mergeStyleMapEntry(target: Record<string, string[]>, family: string, style: string): void {
   // // Store one style under one family with case-insensitive dedupe.
   const normalizedFamily = normalizeFontText(family);
-  const normalizedStyle = normalizeFontText(style) || "Regular";
+  const normalizedStyle = normalizeFontSystemDisplayStyle(style);
   if (!normalizedFamily) {
     return;
   }
@@ -331,6 +332,127 @@ function mergeStyleMapEntry(target: Record<string, string[]>, family: string, st
     target[existingKey] = [];
   }
   pushUniqueString(target[existingKey], normalizedStyle);
+}
+
+function normalizeFontSystemDisplayStyle(style: string): string {
+  // // Collapse system-only labels like `Plain` into panel-friendly style names.
+  const normalizedStyle = normalizeFontText(style) || "Regular";
+  const normalizedKey = normalizedStyle.toLowerCase();
+  if (normalizedKey === "plain" || normalizedKey === "roman") {
+    return "Regular";
+  }
+  return normalizedStyle;
+}
+
+function listFontSystemStyleAliases(style: string): string[] {
+  // // Register equivalent style aliases so token lookup survives host/system naming differences.
+  const displayStyle = normalizeFontSystemDisplayStyle(style);
+  const aliases = [displayStyle];
+  if (displayStyle.toLowerCase() === "regular") {
+    aliases.push("Plain", "Roman");
+  }
+  return Array.from(new Set(aliases.map((entry) => normalizeFontText(entry)).filter(Boolean)));
+}
+
+function mergeFontTokenEntry(
+  target: Record<string, Record<string, string>>,
+  family: string,
+  style: string,
+  token: string
+): void {
+  // // Store one exact host font token for one display family/style pair.
+  const normalizedFamily = normalizeFontText(family);
+  const normalizedToken = normalizeFontText(token);
+  const normalizedStyleAliases = listFontSystemStyleAliases(style);
+  if (!normalizedFamily || normalizedStyleAliases.length < 1 || !normalizedToken) {
+    return;
+  }
+
+  const familyLookupKey = normalizedFamily.toLowerCase();
+  const existingFamily = Object.keys(target).find((entry) => entry.toLowerCase() === familyLookupKey) || normalizedFamily;
+  if (!target[existingFamily] || typeof target[existingFamily] !== "object") {
+    target[existingFamily] = {};
+  }
+
+  for (const normalizedStyle of normalizedStyleAliases) {
+    const styleLookupKey = normalizedStyle.toLowerCase();
+    const existingStyle =
+      Object.keys(target[existingFamily]).find((entry) => entry.toLowerCase() === styleLookupKey) || normalizedStyle;
+    if (!target[existingFamily][existingStyle]) {
+      target[existingFamily][existingStyle] = normalizedToken;
+    }
+  }
+}
+
+function detectMacSystemFontCatalogViaSystemProfiler(modules: CepNodeModules): SystemFontCatalog | null {
+  // // Read authoritative macOS font metadata so family/style values match the system text engine.
+  const result = modules.childProcess.spawnSync("system_profiler", ["SPFontsDataType", "-json"], {
+    encoding: "utf8",
+    timeout: 60000,
+    env: modules.process.env
+  });
+  if (result.error || result.status !== 0 || !result.stdout) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(result.stdout || ""));
+  } catch {
+    return null;
+  }
+
+  const payload = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  const fontEntries = payload && Array.isArray(payload.SPFontsDataType) ? payload.SPFontsDataType : [];
+  const stylesByFamily: Record<string, string[]> = {};
+  const fontTokensByFamilyStyle: Record<string, Record<string, string>> = {};
+  let typefaceCount = 0;
+
+  for (const fontEntry of fontEntries) {
+    const fontRecord = fontEntry && typeof fontEntry === "object" ? (fontEntry as Record<string, unknown>) : null;
+    if (!fontRecord || String(fontRecord.enabled || "yes").toLowerCase() === "no") {
+      continue;
+    }
+
+    const typefaces = Array.isArray(fontRecord.typefaces) ? fontRecord.typefaces : [];
+    for (const typefaceEntry of typefaces) {
+      const typeface = typefaceEntry && typeof typefaceEntry === "object" ? (typefaceEntry as Record<string, unknown>) : null;
+      if (!typeface || String(typeface.enabled || "yes").toLowerCase() === "no") {
+        continue;
+      }
+
+      const family = normalizeFontText(String(typeface.family || ""));
+      const style = normalizeFontText(String(typeface.style || "")) || "Regular";
+      const token = normalizeFontText(String(typeface._name || ""));
+      if (!family || family.startsWith(".")) {
+        continue;
+      }
+
+      mergeStyleMapEntry(stylesByFamily, family, style);
+      mergeFontTokenEntry(fontTokensByFamilyStyle, family, style, token);
+      typefaceCount += 1;
+    }
+  }
+
+  const families = Object.keys(stylesByFamily).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  if (families.length < 1) {
+    return null;
+  }
+
+  for (const family of families) {
+    stylesByFamily[family] = stylesByFamily[family]
+      .slice()
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }
+
+  return {
+    available: true,
+    source: "mac-system-profiler",
+    details: `families=${families.length} typefaces=${typefaceCount}`,
+    families,
+    stylesByFamily,
+    fontTokensByFamilyStyle
+  };
 }
 
 function isFontFileName(entryName: string): boolean {
@@ -371,8 +493,17 @@ function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
     return null;
   }
 
+  if (!detectWindowsRuntime()) {
+    const macCatalog = detectMacSystemFontCatalogViaSystemProfiler(modules);
+    if (macCatalog && macCatalog.available) {
+      subcreatorSystemFontCatalogCache = macCatalog;
+      return subcreatorSystemFontCatalogCache;
+    }
+  }
+
   const directories = listSystemFontDirectories(modules);
   const stylesByFamily: Record<string, string[]> = {};
+  const fontTokensByFamilyStyle: Record<string, Record<string, string>> = {};
   const visited = new Set<string>();
   const queue: Array<{ path: string; depth: number }> = [];
   const maxDepth = 2;
@@ -416,6 +547,7 @@ function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
         const parsed = splitFontFamilyAndStyle(baseName);
         if (parsed.family) {
           mergeStyleMapEntry(stylesByFamily, parsed.family, parsed.style || "Regular");
+          mergeFontTokenEntry(fontTokensByFamilyStyle, parsed.family, parsed.style || "Regular", baseName);
           fileCount += 1;
         }
         continue;
@@ -447,7 +579,8 @@ function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
     source: detectWindowsRuntime() ? "windows-font-dirs" : "mac-font-dirs",
     details: `families=${families.length} scannedFiles=${fileCount} maxFiles=${maxFiles}`,
     families,
-    stylesByFamily
+    stylesByFamily,
+    fontTokensByFamilyStyle
   };
 
   return subcreatorSystemFontCatalogCache;
@@ -1283,7 +1416,20 @@ export async function readSystemFontCatalog(): Promise<SystemFontCatalog> {
     stylesByFamily: Object.keys(detected.stylesByFamily).reduce<Record<string, string[]>>((accumulator, family) => {
       accumulator[family] = detected.stylesByFamily[family].slice();
       return accumulator;
-    }, {})
+    }, {}),
+    fontTokensByFamilyStyle: Object.keys(detected.fontTokensByFamilyStyle || {}).reduce<Record<string, Record<string, string>>>(
+      (accumulator, family) => {
+        accumulator[family] = Object.entries(detected.fontTokensByFamilyStyle[family] || {}).reduce<Record<string, string>>(
+          (styleAccumulator, [style, token]) => {
+            styleAccumulator[style] = String(token || "");
+            return styleAccumulator;
+          },
+          {}
+        );
+        return accumulator;
+      },
+      {}
+    )
   };
 }
 
@@ -1293,6 +1439,7 @@ export async function applyVisualPropertiesToSelectedMogrts(
     valueType: SelectedMogrtVisualProperty["valueType"];
     controlKind: SelectedMogrtVisualProperty["controlKind"];
     vectorScale?: number[];
+    fontToken?: string;
     value: string | number | boolean;
   }>,
   options?: {

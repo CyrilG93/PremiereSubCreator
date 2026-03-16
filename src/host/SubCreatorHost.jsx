@@ -2975,12 +2975,18 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       } else if (styleKey === "fontFamily" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var currentToken = subcreator_visual_extract_first_string(value);
         var currentParts = subcreator_visual_split_font_token(currentToken);
+        var tokenOverrideProvided =
+          applyOptions &&
+          Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenOverride") &&
+          typeof applyOptions.fontTokenOverride === "string";
         var styleOverrideProvided =
           applyOptions &&
           Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenStyleOverride") &&
           typeof applyOptions.fontTokenStyleOverride === "string";
         var styleForToken = styleOverrideProvided ? applyOptions.fontTokenStyleOverride : currentParts.style;
-        var rebuiltToken = subcreator_visual_join_font_token(styleValue, styleForToken, currentToken);
+        var rebuiltToken = tokenOverrideProvided
+          ? applyOptions.fontTokenOverride
+          : subcreator_visual_join_font_token(styleValue, styleForToken, currentToken);
         if (typeof value === "string") {
           node[key] = rebuiltToken;
         } else if (value && typeof value.length === "number" && value.length > 0) {
@@ -2992,12 +2998,18 @@ function subcreator_visual_apply_text_style_to_payload(payload, styleKey, styleV
       } else if (styleKey === "fontStyle" && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var existingToken = subcreator_visual_extract_first_string(value);
         var existingParts = subcreator_visual_split_font_token(existingToken);
+        var tokenOverrideForStyleProvided =
+          applyOptions &&
+          Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenOverride") &&
+          typeof applyOptions.fontTokenOverride === "string";
         var familyOverrideProvided =
           applyOptions &&
           Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenFamilyOverride") &&
           typeof applyOptions.fontTokenFamilyOverride === "string";
         var familyForToken = familyOverrideProvided ? applyOptions.fontTokenFamilyOverride : existingParts.family;
-        var rebuiltStyleToken = subcreator_visual_join_font_token(familyForToken, styleValue, existingToken);
+        var rebuiltStyleToken = tokenOverrideForStyleProvided
+          ? applyOptions.fontTokenOverride
+          : subcreator_visual_join_font_token(familyForToken, styleValue, existingToken);
         if (typeof value === "string") {
           node[key] = rebuiltStyleToken;
         } else if (value && typeof value.length === "number" && value.length > 0) {
@@ -3060,6 +3072,11 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
 
   var patched = raw;
   var styleString = JSON.stringify(String(styleValue));
+  var tokenOverrideProvided =
+    applyOptions &&
+    Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenOverride") &&
+    typeof applyOptions.fontTokenOverride === "string";
+  var tokenOverrideValue = tokenOverrideProvided ? applyOptions.fontTokenOverride : "";
   var styleOverrideProvided =
     applyOptions &&
     Object.prototype.hasOwnProperty.call(applyOptions, "fontTokenStyleOverride") &&
@@ -3110,7 +3127,9 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
         patched = patched.replace(fontTokenRegex, function (matchValue, tokenValue) {
           var tokenParts = subcreator_visual_split_font_token(String(tokenValue || ""));
           var rebuiltToken = "";
-          if (styleKey === "fontFamily") {
+          if (tokenOverrideProvided) {
+            rebuiltToken = tokenOverrideValue;
+          } else if (styleKey === "fontFamily") {
             var styleForToken = styleOverrideProvided ? styleOverrideValue : tokenParts.style;
             rebuiltToken = subcreator_visual_join_font_token(String(styleValue), styleForToken, tokenValue);
           } else if (styleKey === "fontStyle") {
@@ -3150,7 +3169,7 @@ function subcreator_try_patch_text_style_json_string(rawValue, styleKey, styleVa
   return patched;
 }
 
-function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleValue) {
+function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleValue, extraOptions) {
   // // Apply editable style-only text controls without mutating subtitle content.
   if (!property || typeof property.setValue !== "function") {
     return false;
@@ -3217,6 +3236,9 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
         }
         if (typeof customOptions.fontTokenFamilyOverride === "string") {
           applyOptions.fontTokenFamilyOverride = customOptions.fontTokenFamilyOverride;
+        }
+        if (typeof customOptions.fontTokenOverride === "string") {
+          applyOptions.fontTokenOverride = customOptions.fontTokenOverride;
         }
       }
     }
@@ -3360,7 +3382,12 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
 
     for (var overrideIndex = 0; overrideIndex < styleOverrides.length; overrideIndex += 1) {
       var styleOverride = styleOverrides[overrideIndex];
-      if (!applyOnce({ fontTokenStyleOverride: styleOverride })) {
+      if (
+        !applyOnce({
+          fontTokenStyleOverride: styleOverride,
+          fontTokenOverride: extraOptions && typeof extraOptions.fontToken === "string" ? extraOptions.fontToken : ""
+        })
+      ) {
         continue;
       }
       var readbackMatch = readbackMatchesExpectedFamily(requestedFamily);
@@ -3408,7 +3435,8 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
       if (
         !applyOnce({
           styleValueOverride: candidateStyle,
-          fontTokenFamilyOverride: expectedFamily
+          fontTokenFamilyOverride: expectedFamily,
+          fontTokenOverride: extraOptions && typeof extraOptions.fontToken === "string" ? extraOptions.fontToken : ""
         })
       ) {
         continue;
@@ -3433,7 +3461,9 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
     return false;
   }
 
-  return applyOnce(null);
+  return applyOnce({
+    fontTokenOverride: extraOptions && typeof extraOptions.fontToken === "string" ? extraOptions.fontToken : ""
+  });
 }
 
 function subcreator_normalize_visual_payload_value(valueType, rawValue) {
@@ -4278,6 +4308,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         var virtualTextStyleTarget = subcreator_visual_parse_text_style_virtual_path(path);
         var resolvedPath = virtualTextStyleTarget ? virtualTextStyleTarget.basePath : path;
         var value = change.value;
+        var fontToken = subcreator_trim_string(String(change.fontToken || ""));
         var vectorScale = null;
         if (change.vectorScale && Object.prototype.toString.call(change.vectorScale) === "[object Array]") {
           vectorScale = change.vectorScale;
@@ -4315,13 +4346,16 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               " in=" +
               String(value) +
               (virtualTextStyleTarget ? " virtualStyle=" + virtualTextStyleTarget.styleKey : "") +
+              (fontToken ? " fontToken=" + fontToken : "") +
               (vectorScale ? " scale=" + String(vectorScale) : "")
           );
         }
 
         if (virtualTextStyleTarget) {
           try {
-            applied = subcreator_try_set_mogrt_text_style_property(property, virtualTextStyleTarget.styleKey, value);
+            applied = subcreator_try_set_mogrt_text_style_property(property, virtualTextStyleTarget.styleKey, value, {
+              fontToken: fontToken
+            });
           } catch (textStyleError) {}
         } else if (controlKind === "text") {
           try {

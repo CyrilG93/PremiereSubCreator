@@ -25,8 +25,9 @@ It supports:
 - Font controls are rendered as dropdowns when style options are discoverable in MOGRT payloads, and `Font Style` options are filtered by selected `Font Family` when family/style mapping is available.
 - Long font dropdowns are constrained to available panel height to avoid clipped lists near the bottom of the UI.
 - Gallery filter options now come from real installed MOGRT folder names instead of hardcoded aspect presets, and the panel includes buttons to open the installed MOGRT folder and refresh the gallery without restarting Premiere.
-- Gallery refreshes installed MOGRTs when the panel regains focus, so manually copied templates appear without reinstalling the extension.
+- Gallery refresh now reuses a filesystem signature cache so focus changes can skip full installed-template rescans when nothing changed.
 - Manually added MOGRTs reuse embedded `.mogrt` thumbnails at runtime when present, and can also provide sidecar preview files (`<name>.png/.jpg/.webp/.mp4` or `thumb.*`) inside the same folder.
+- Embedded runtime previews now reuse cached extracted thumbnail files until the source `.mogrt` changes, which reduces repeated archive extraction cost.
 - Font-family apply now retries multiple token variants (`family-style`, `family`, common style aliases) and validates readback to reduce fallback-to-wrong-font behavior on some MOGRTs.
 - Font-style apply now preserves the chosen family token and retries compatible style aliases when Premiere falls back to another family.
 - Font-style dropdowns are now stricter for the currently selected family to reduce invalid family/style combinations.
@@ -38,6 +39,7 @@ It supports:
 - When `Font Family` changes, the visual editor now resets `Font Style` toward neutral family defaults (`Regular`, `Book`, `Roman`, `Plain`, `Medium`, `Semibold`) instead of silently reusing the previous family style, which reduces wrong-token fallbacks such as inherited `Bold`.
 - The visual editor now keeps a `Font Style` control available whenever a `Font Family` control exists, using host data first and local system styles as fallback so family changes also write an explicit style.
 - When CEP Node is available, the visual editor augments font dropdowns with local OS-installed font families/styles (macOS/Windows font directories) as a fallback when MOGRT options are limited.
+- Visual property reads now load the OS font catalog only when the current selection actually exposes font family/style controls.
 - Faux style toggles enforce Premiere-like exclusivity for `All Caps` and `Small Caps`.
 - Faux `Bold` / `Italic` checkboxes remain independent from `Font Style`, because Premiere exposes them as separate text-style parameters and mixing both can produce wrong font tokens.
 - Visual editor apply sends current style controls so the same setup can be pushed to newly selected MOGRT clips.
@@ -50,6 +52,8 @@ It supports:
 - Size vectors now include 1920/1080 compatibility scaling so common subtitle templates display `100%`-style values in editor.
 - Known menu-like controls (for example alignment/paragraph/based-on) are rendered as dropdowns when detected.
 - Visual editor includes richer host debug payloads in the panel log for troubleshooting.
+- The log panel can now be collapsed and switched between compact/full payload views without losing the raw debug entry.
+- Selecting a MOGRT in the gallery no longer rebuilds all cards, and video previews only play on hover/focus instead of autoplaying everywhere.
 - Color controls are detected with stricter rules to avoid rendering numeric sliders/dropdowns as color pickers.
 - Packed numeric color payloads are decoded/encoded using Premiere BRG channel order for consistent read/apply in visual editor.
 - Color arrays returned as `[A,R,G,B]` by Premiere are now interpreted and applied correctly in visual editor.
@@ -106,7 +110,10 @@ Installers also write a user-local runtime config (`subcreator-runtime.json`) wi
 npm install
 npm run subcreator:verify
 npm run subcreator:install:dev
+npm run subcreator:package
 ```
+
+`npm run subcreator:package` now rebuilds first and refuses to zip a stale `dist` version.
 
 ## Whisper local setup
 
@@ -209,6 +216,7 @@ Track behavior in panel:
 - Track selection avoids signature-based ambiguity and always targets the highest empty video track after creation.
 - Audio track index is handled internally for Premiere `importMGT` compatibility.
 - Update banner checks `https://api.github.com/repos/CyrilG93/PremiereSubCreator/releases/latest` and displays only when a newer version exists.
+- Update-banner clicks are opened through the CEP browser API instead of relying on native HTML link behavior inside Premiere.
 
 Caption planning behavior:
 - Long cues are split by contiguous word groups (not arbitrary character cuts).

@@ -7,6 +7,11 @@ declare global {
     __adobe_cep__?: {
       evalScript: (script: string, callback: (result: string) => void) => void;
     };
+    cep?: {
+      util?: {
+        openURLInDefaultBrowser?: (url: string) => void;
+      };
+    };
     require?: (moduleName: string) => unknown;
     cep_node?: {
       require?: (moduleName: string) => unknown;
@@ -109,6 +114,12 @@ interface CepNodeModules {
     mkdirSync: (path: string, options: { recursive: boolean }) => void;
     readdirSync: (path: string) => string[];
     readFileSync: (path: string, encoding?: string) => string | Uint8Array;
+    statSync: (path: string) => {
+      size?: number;
+      mtimeMs?: number;
+      isDirectory?: () => boolean;
+      isFile?: () => boolean;
+    };
     writeFileSync: (path: string, data: Uint8Array) => void;
   };
   os: {
@@ -149,6 +160,13 @@ interface SubcreatorRuntimeConfig {
 
 let subcreatorRuntimeConfigCache: SubcreatorRuntimeConfig | null | undefined;
 let subcreatorSystemFontCatalogCache: SystemFontCatalog | null | undefined;
+let subcreatorInstalledMogrtCatalogCache:
+  | {
+      templatesRoot: string;
+      signature: string;
+      catalog: InstalledMogrtCatalog;
+    }
+  | undefined;
 
 function escapeForJsx(input: string): string {
   // // Escape special characters before embedding text into evalScript call strings.
@@ -369,12 +387,79 @@ function normalizeRuntimeArchiveExt(entryName: string, fallbackExt: string): str
   return ext || fallbackExt;
 }
 
+function readRuntimeFileStat(
+  modules: CepNodeModules,
+  filePath: string
+): { size: number; mtimeMs: number; isDirectory: boolean; isFile: boolean } | null {
+  // // Normalize Node stat payloads so cache checks stay simple across CEP runtimes.
+  try {
+    const stat = modules.fs.statSync(filePath);
+    return {
+      size: Number(stat.size || 0),
+      mtimeMs: Number(stat.mtimeMs || 0),
+      isDirectory: typeof stat.isDirectory === "function" ? stat.isDirectory() : false,
+      isFile: typeof stat.isFile === "function" ? stat.isFile() : false
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isRuntimePreviewSidecarFile(entryName: string): boolean {
+  // // Restrict gallery cache signatures to preview sidecars that can affect rendered thumbnails.
+  return /\.(png|jpg|jpeg|webp|mp4|mov|webm)$/i.test(String(entryName || ""));
+}
+
+function resolveCachedRuntimePreviewFileUrl(
+  modules: CepNodeModules,
+  previewRoot: string,
+  previewStem: string,
+  mogrtStat: { size: number; mtimeMs: number; isDirectory: boolean; isFile: boolean } | null,
+  extensions: string[]
+): string {
+  // // Reuse already extracted preview files while the source `.mogrt` timestamp stays unchanged.
+  for (const extension of extensions) {
+    const candidatePath = modules.path.join(previewRoot, `${previewStem}${extension}`);
+    const candidateStat = readRuntimeFileStat(modules, candidatePath);
+    if (!candidateStat || !candidateStat.isFile || candidateStat.size < 1) {
+      continue;
+    }
+    if (mogrtStat && candidateStat.mtimeMs + 1 < mogrtStat.mtimeMs) {
+      continue;
+    }
+    return buildFileUrlFromSystemPath(candidatePath);
+  }
+  return "";
+}
+
 function extractRuntimeMogrtPreviewFiles(
   modules: CepNodeModules,
   mogrtPath: string,
   relativePath: string
 ): { imageFileUrl: string; videoFileUrl: string } {
   // // Extract embedded `thumb.*` preview assets from a `.mogrt` archive for manually added gallery items.
+  const previewRoot = modules.path.join(modules.os.tmpdir(), "subcreator-mogrt-previews");
+  const previewStem = subcreatorSlugifyMogrtId(relativePath || modules.path.basename(mogrtPath));
+  modules.fs.mkdirSync(previewRoot, { recursive: true });
+
+  const mogrtStat = readRuntimeFileStat(modules, mogrtPath);
+  const cachedImageFileUrl = resolveCachedRuntimePreviewFileUrl(modules, previewRoot, previewStem, mogrtStat, [
+    ".png",
+    ".jpg",
+    ".webp"
+  ]);
+  const cachedVideoFileUrl = resolveCachedRuntimePreviewFileUrl(modules, previewRoot, previewStem, mogrtStat, [
+    ".mp4",
+    ".mov",
+    ".webm"
+  ]);
+  if (cachedImageFileUrl || cachedVideoFileUrl) {
+    return {
+      imageFileUrl: cachedImageFileUrl,
+      videoFileUrl: cachedVideoFileUrl
+    };
+  }
+
   let archiveMap: Record<string, Uint8Array> = {};
 
   try {
@@ -403,10 +488,6 @@ function extractRuntimeMogrtPreviewFiles(
   if (!imageEntry && !videoEntry) {
     return { imageFileUrl: "", videoFileUrl: "" };
   }
-
-  const previewRoot = modules.path.join(modules.os.tmpdir(), "subcreator-mogrt-previews");
-  const previewStem = subcreatorSlugifyMogrtId(relativePath || modules.path.basename(mogrtPath));
-  modules.fs.mkdirSync(previewRoot, { recursive: true });
 
   let imageFileUrl = "";
   let videoFileUrl = "";
@@ -482,6 +563,55 @@ function resolveRuntimeMogrtPreviewFiles(
   return extractRuntimeMogrtPreviewFiles(modules, mogrtPath, relativePath);
 }
 
+function buildInstalledMogrtCatalogSignature(modules: CepNodeModules, templatesRoot: string): string {
+  // // Build a cheap filesystem signature so passive gallery refreshes can skip full rescan/extraction when unchanged.
+  const visited = new Set<string>();
+  const queue: string[] = [templatesRoot];
+  const rows: string[] = [];
+
+  while (queue.length > 0) {
+    const currentDirectory = queue.shift();
+    if (!currentDirectory) {
+      continue;
+    }
+
+    const normalizedDirectory = normalizeMogrtFileSystemPath(currentDirectory);
+    if (!normalizedDirectory || visited.has(normalizedDirectory)) {
+      continue;
+    }
+    visited.add(normalizedDirectory);
+
+    let entries: string[] = [];
+    try {
+      entries = modules.fs.readdirSync(currentDirectory).slice().sort((left, right) => left.localeCompare(right));
+    } catch {
+      continue;
+    }
+
+    for (const entryName of entries) {
+      const fullPath = modules.path.join(currentDirectory, entryName);
+      const entryStat = readRuntimeFileStat(modules, fullPath);
+      if (!entryStat) {
+        continue;
+      }
+
+      if (entryStat.isDirectory) {
+        queue.push(fullPath);
+        continue;
+      }
+
+      if (!/\.mogrt$/i.test(String(entryName || "")) && !isRuntimePreviewSidecarFile(entryName)) {
+        continue;
+      }
+
+      const relativePath = buildMogrtRelativePath(templatesRoot, fullPath);
+      rows.push(`${relativePath}|${entryStat.size}|${Math.floor(entryStat.mtimeMs)}`);
+    }
+  }
+
+  return rows.join("\n");
+}
+
 function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): InstalledMogrtCatalog | null {
   // // Scan installed `templates/mogrt` folders so the panel sees bundled and manually added templates.
   const modules = resolveCepNodeModules();
@@ -497,6 +627,15 @@ function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): Install
   const templatesRoot = modules.path.join(normalizedExtensionRoot, "templates", "mogrt");
   if (!modules.fs.existsSync(templatesRoot)) {
     modules.fs.mkdirSync(templatesRoot, { recursive: true });
+  }
+
+  const signature = buildInstalledMogrtCatalogSignature(modules, templatesRoot);
+  if (
+    subcreatorInstalledMogrtCatalogCache &&
+    subcreatorInstalledMogrtCatalogCache.templatesRoot === templatesRoot &&
+    subcreatorInstalledMogrtCatalogCache.signature === signature
+  ) {
+    return subcreatorInstalledMogrtCatalogCache.catalog;
   }
 
   const groups: string[] = [];
@@ -565,14 +704,21 @@ function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): Install
   });
   groups.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
 
-  return {
+  const signatureItemCount = signature ? signature.split("\n").filter(Boolean).length : 0;
+  const catalog = {
     available: true,
     source: "cep-node-installed-templates",
-    details: `templates=${templates.length} groups=${groups.length}`,
+    details: `templates=${templates.length} groups=${groups.length} signatureItems=${signatureItemCount}`,
     templatesRoot,
     groups,
     templates
   };
+  subcreatorInstalledMogrtCatalogCache = {
+    templatesRoot,
+    signature,
+    catalog
+  };
+  return catalog;
 }
 
 function pushUniqueString(target: string[], value: string): void {
@@ -1877,6 +2023,52 @@ export async function openInstalledMogrtFolder(extensionRootPath: string): Promi
   }
 
   throw new Error(`Unable to open installed MOGRT folder: ${templatesRoot}`);
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  // // Open release/download links through CEP first because regular HTML anchors are unreliable inside Premiere panels.
+  const normalizedUrl = String(url || "").trim();
+  if (!normalizedUrl) {
+    throw new Error("External URL unavailable.");
+  }
+
+  const cepOpenUrl = window.cep?.util?.openURLInDefaultBrowser;
+  if (typeof cepOpenUrl === "function") {
+    cepOpenUrl(normalizedUrl);
+    return;
+  }
+
+  const modules = resolveCepNodeModules();
+  if (modules) {
+    const commandCandidates = detectWindowsRuntime()
+      ? [
+          { command: "cmd", args: ["/c", "start", "", normalizedUrl] },
+          { command: "explorer", args: [normalizedUrl] }
+        ]
+      : [
+          { command: "/usr/bin/open", args: [normalizedUrl] },
+          { command: "open", args: [normalizedUrl] },
+          { command: "xdg-open", args: [normalizedUrl] }
+        ];
+
+    for (const candidate of commandCandidates) {
+      const result = modules.childProcess.spawnSync(candidate.command, candidate.args, {
+        encoding: "utf8",
+        timeout: 15000,
+        env: modules.process.env
+      });
+      if (!result.error && (result.status === 0 || result.status === null)) {
+        return;
+      }
+    }
+  }
+
+  const openedWindow = typeof window.open === "function" ? window.open(normalizedUrl, "_blank", "noopener") : null;
+  if (openedWindow) {
+    return;
+  }
+
+  window.location.href = normalizedUrl;
 }
 
 export async function applyVisualPropertiesToSelectedMogrts(

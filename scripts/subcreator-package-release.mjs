@@ -8,6 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilg93.subcreator");
+const distMetaPath = path.join(distExtensionDir, "assets", "subcreator-meta.json");
+const distManifestPath = path.join(distExtensionDir, "CSXS", "manifest.xml");
 const releasesDir = path.join(projectRoot, "Releases");
 const stagingRoot = path.join(projectRoot, ".subcreator-release-staging");
 
@@ -79,6 +81,21 @@ async function subcreatorPackageRelease() {
   const packageJsonRaw = await readFile(path.join(projectRoot, "package.json"), "utf8");
   const packageJson = JSON.parse(packageJsonRaw);
   const version = packageJson.version;
+
+  // // Refuse to package if `dist` still carries another version than the current project metadata.
+  const distMetaRaw = await readFile(distMetaPath, "utf8");
+  const distMeta = JSON.parse(distMetaRaw);
+  const distMetaVersion = String(distMeta.version || "").trim();
+  if (distMetaVersion !== version) {
+    throw new Error(`dist metadata version mismatch: package.json=${version} dist=${distMetaVersion || "<empty>"}`);
+  }
+
+  const distManifestRaw = await readFile(distManifestPath, "utf8");
+  const distManifestMatch = distManifestRaw.match(/ExtensionBundleVersion="([^"]+)"/);
+  const distManifestVersion = String(distManifestMatch?.[1] || "").trim();
+  if (distManifestVersion !== version) {
+    throw new Error(`dist manifest version mismatch: package.json=${version} dist=${distManifestVersion || "<empty>"}`);
+  }
 
   const bundleName = `SubCreator-v${version}`;
   const stagingBundleDir = path.join(stagingRoot, bundleName);

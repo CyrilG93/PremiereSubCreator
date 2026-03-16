@@ -181,7 +181,20 @@
           </section>
         </section>
       </section>
-      <pre id="logOutput" class="log" aria-live="polite"></pre>
+      <section id="logPanel" class="log-panel">
+        <div class="log-panel__header">
+          <span data-i18n="field.logs">Logs</span>
+          <div class="log-panel__actions">
+            <button id="logVerbosityButton" type="button" class="button button--secondary" data-i18n="action.compactLogs">
+              Logs compacts
+            </button>
+            <button id="logToggleButton" type="button" class="button button--secondary" data-i18n="action.hideLogs">
+              Masquer logs
+            </button>
+          </div>
+        </div>
+        <pre id="logOutput" class="log" aria-live="polite"></pre>
+      </section>
     </main>
 
     <script type="module" src="./js/main.js"></script>

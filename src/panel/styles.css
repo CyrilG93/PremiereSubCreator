@@ -80,9 +80,11 @@ body {
   border-radius: var(--radius);
   background: linear-gradient(180deg, rgba(62, 207, 142, 0.2), #0f1726);
   padding: 8px 10px;
+  cursor: pointer;
 }
 
 .update-link {
+  display: block;
   color: #dbffe8;
   font-size: 0.76rem;
   text-decoration: none;
@@ -656,6 +658,39 @@ input[type="checkbox"] {
   color: var(--danger);
 }
 
+.log-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.log-panel__header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.log-panel__header > span {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+
+.log-panel__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.log-panel__actions .button {
+  width: auto;
+  min-width: 140px;
+}
+
+.log-panel.is-collapsed {
+  gap: 0;
+}
+
 @media (max-width: 560px) {
   .panel__header-row {
     grid-template-columns: 1fr;
@@ -691,6 +726,19 @@ input[type="checkbox"] {
   }
 
   .field__header-actions .button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .log-panel__header {
+    grid-template-columns: 1fr;
+  }
+
+  .log-panel__actions {
+    justify-content: stretch;
+  }
+
+  .log-panel__actions .button {
     width: 100%;
     min-width: 0;
   }

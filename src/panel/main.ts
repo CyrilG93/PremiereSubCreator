@@ -7,6 +7,7 @@ import {
   applyVisualPropertiesToSelectedMogrts,
   getSelectedMogrtCount,
   getWhisperRuntimeStatus,
+  openExternalUrl,
   openInstalledMogrtFolder,
   pickSrtPath,
   pickWhisperAudioPath,
@@ -71,6 +72,8 @@ interface PanelStateSnapshot {
   mogrtAspectFilter: string;
   selectedMogrtId: string;
   visualLiveUpdate: boolean;
+  logExpanded: boolean;
+  verboseLogs: boolean;
 }
 
 const elements = {
@@ -108,8 +111,18 @@ const elements = {
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
+  logPanel: document.querySelector<HTMLElement>("#logPanel"),
+  logToggleButton: document.querySelector<HTMLButtonElement>("#logToggleButton"),
+  logVerbosityButton: document.querySelector<HTMLButtonElement>("#logVerbosityButton"),
   logOutput: document.querySelector<HTMLPreElement>("#logOutput")
 };
+
+interface PanelLogState {
+  plainText: string;
+  structuredTitle: string;
+  structuredPayload: unknown;
+  isError: boolean;
+}
 
 let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
@@ -131,6 +144,7 @@ const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
 let pendingSelectedMogrtId = "";
 let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
+let loadedVisualPropertySignature = "";
 const visualOriginalValuesByPath = new Map<string, string>();
 const visualOpenGroups = new Set<string>();
 const visualTextStyleTokenMapByBasePath = new Map<string, Record<string, string>>();
@@ -140,6 +154,11 @@ let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
 let visualLiveUpdateEnabled = false;
 let systemFontCatalogLoadPromise: Promise<void> | null = null;
+let logPanelExpanded = true;
+let verboseLogsEnabled = false;
+let currentLogState: PanelLogState | null = null;
+let passiveMogrtRefreshTimer: number | null = null;
+let lastPassiveMogrtCatalogRefreshAt = 0;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -359,7 +378,9 @@ function persistPanelState(): void {
     fontSize: Number(elements.fontSize.value),
     mogrtAspectFilter: elements.mogrtAspectFilter.value || "all",
     selectedMogrtId: selectedMogrt?.id || "",
-    visualLiveUpdate: visualLiveUpdateEnabled
+    visualLiveUpdate: visualLiveUpdateEnabled,
+    logExpanded: logPanelExpanded,
+    verboseLogs: verboseLogsEnabled
   };
 
   try {
@@ -419,6 +440,14 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     setVisualLiveUpdateEnabled(snapshot.visualLiveUpdate, true);
   }
 
+  if (typeof snapshot.logExpanded === "boolean") {
+    setLogPanelExpanded(snapshot.logExpanded, true);
+  }
+
+  if (typeof snapshot.verboseLogs === "boolean") {
+    setVerboseLogsEnabled(snapshot.verboseLogs, true);
+  }
+
   if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
     pendingSelectedMogrtId = snapshot.selectedMogrtId;
   }
@@ -451,6 +480,131 @@ function setVisualLiveUpdateEnabled(enabled: boolean, skipPersist = false): void
 
   if (!skipPersist) {
     persistPanelState();
+  }
+}
+
+function buildCompactLogValue(value: unknown, depth = 0, fieldName = ""): unknown {
+  // // Reduce oversized structured log payloads so the panel stays readable during day-to-day use.
+  if (value === null || typeof value === "undefined") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.length > 1200 ? `${value.slice(0, 1200)}…` : value;
+  }
+
+  if (typeof value !== "object") {
+    return value;
+  }
+
+  if (depth >= 4) {
+    return Array.isArray(value) ? [`… ${value.length} item(s)`] : "[Object]";
+  }
+
+  if (Array.isArray(value)) {
+    const limit = fieldName === "properties" ? 4 : fieldName === "debug" ? 8 : 6;
+    const compactItems = value.slice(0, limit).map((entry) => buildCompactLogValue(entry, depth + 1, fieldName));
+    if (value.length > limit) {
+      compactItems.push(`… ${value.length - limit} more item(s)`);
+    }
+    return compactItems;
+  }
+
+  const compactObject: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "debug" && Array.isArray(entryValue) && entryValue.length > 8) {
+      compactObject[key] = buildCompactLogValue(entryValue, depth + 1, key);
+      continue;
+    }
+    if (key === "properties" && Array.isArray(entryValue) && entryValue.length > 4) {
+      compactObject[key] = buildCompactLogValue(entryValue, depth + 1, key);
+      compactObject.propertiesCount = entryValue.length;
+      continue;
+    }
+    compactObject[key] = buildCompactLogValue(entryValue, depth + 1, key);
+  }
+  return compactObject;
+}
+
+function renderCurrentLog(): void {
+  // // Re-render the current log entry whenever locale, verbosity, or visibility changes.
+  if (!elements.logOutput) {
+    return;
+  }
+
+  if (!currentLogState) {
+    elements.logOutput.textContent = "";
+    elements.logOutput.classList.remove("log--error");
+    return;
+  }
+
+  let outputText = currentLogState.plainText;
+  if (currentLogState.structuredTitle) {
+    const payloadToRender = verboseLogsEnabled
+      ? currentLogState.structuredPayload
+      : buildCompactLogValue(currentLogState.structuredPayload);
+    outputText = `${currentLogState.structuredTitle}\n${JSON.stringify(payloadToRender, null, 2)}`;
+  }
+
+  elements.logOutput.textContent = outputText;
+  elements.logOutput.classList.toggle("log--error", currentLogState.isError);
+}
+
+function refreshLogControlsState(): void {
+  // // Keep log-panel buttons synchronized with expanded/verbosity state and current locale.
+  if (elements.logPanel) {
+    elements.logPanel.classList.toggle("is-collapsed", !logPanelExpanded);
+  }
+  if (elements.logOutput) {
+    elements.logOutput.hidden = !logPanelExpanded;
+  }
+  if (elements.logToggleButton) {
+    elements.logToggleButton.setAttribute("aria-pressed", logPanelExpanded ? "true" : "false");
+    elements.logToggleButton.textContent = translate(logPanelExpanded ? "action.hideLogs" : "action.showLogs");
+  }
+  if (elements.logVerbosityButton) {
+    elements.logVerbosityButton.setAttribute("aria-pressed", verboseLogsEnabled ? "true" : "false");
+    elements.logVerbosityButton.textContent = translate(verboseLogsEnabled ? "action.fullLogs" : "action.compactLogs");
+  }
+}
+
+function setLogPanelExpanded(expanded: boolean, skipPersist = false): void {
+  // // Allow the user to collapse logs entirely when they do not need runtime traces on screen.
+  logPanelExpanded = expanded === true;
+  refreshLogControlsState();
+  if (!skipPersist) {
+    persistPanelState();
+  }
+}
+
+function setVerboseLogsEnabled(enabled: boolean, skipPersist = false): void {
+  // // Let the panel switch between compact logs and full debug payloads without losing the raw data.
+  verboseLogsEnabled = enabled === true;
+  refreshLogControlsState();
+  renderCurrentLog();
+  if (!skipPersist) {
+    persistPanelState();
+  }
+}
+
+function setStructuredLog(title: string, payload: unknown, isError = false): void {
+  // // Store one structured log payload so verbosity changes can re-render without recomputing host calls.
+  currentLogState = {
+    plainText: "",
+    structuredTitle: title,
+    structuredPayload: payload,
+    isError
+  };
+  renderCurrentLog();
+}
+
+function setStructuredLogFromRaw(title: string, rawPayload: string, isError = false): void {
+  // // Parse JSON-ish host output when possible so the compact/full log toggle can work on the same entry.
+  const payloadText = String(rawPayload || "").trim();
+  try {
+    setStructuredLog(title, JSON.parse(payloadText), isError);
+  } catch {
+    setLog(`${title}\n${payloadText}`, isError);
   }
 }
 
@@ -555,14 +709,24 @@ function refreshUpdateBanner(): void {
   });
 }
 
-function setLog(message: string, isError = false): void {
-  // // Provide a single visible place for runtime status and error traces.
-  if (!elements.logOutput) {
+async function openUpdateDownload(): Promise<void> {
+  // // Route update-banner clicks through CEP browser opening so release downloads work inside Premiere panels.
+  if (!updateState.visible || !updateState.downloadUrl) {
     return;
   }
 
-  elements.logOutput.textContent = message;
-  elements.logOutput.classList.toggle("log--error", isError);
+  await openExternalUrl(updateState.downloadUrl);
+}
+
+function setLog(message: string, isError = false): void {
+  // // Provide a single visible place for runtime status and error traces.
+  currentLogState = {
+    plainText: message,
+    structuredTitle: "",
+    structuredPayload: null,
+    isError
+  };
+  renderCurrentLog();
 }
 
 async function loadPanelMeta(): Promise<void> {
@@ -669,6 +833,8 @@ async function loadLocale(languageCode: string): Promise<void> {
     setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
   }
   refreshLiveUpdateButtonState();
+  refreshLogControlsState();
+  renderCurrentLog();
   refreshMogrtAspectFilterOptions();
 
   refreshUpdateBanner();
@@ -986,6 +1152,45 @@ function captureOpenVisualGroupsFromDom(): void {
       visualOpenGroups.delete(groupName);
     }
   });
+}
+
+function buildVisualPropertySignature(properties: HostVisualProperty[]): string {
+  // // Track which host-property set is currently rendered so deferred refreshes never overwrite a newer selection.
+  return properties
+    .map((property) => `${property.path}|${property.controlKind}|${property.valueType}`)
+    .sort()
+    .join("\n");
+}
+
+function hasPendingVisualEditorEdits(): boolean {
+  // // Avoid background rerenders once the user has started editing rendered visual controls.
+  if (!elements.visualPropertyList) {
+    return false;
+  }
+
+  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+    '[data-visual-role="value"]'
+  );
+  for (const control of controls) {
+    const path = String(control.dataset.visualPath || "").trim();
+    if (!path || !visualOriginalValuesByPath.has(path)) {
+      continue;
+    }
+
+    const valueType = String(control.dataset.visualType || "string") as HostVisualProperty["valueType"];
+    const controlKind = String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"];
+    const currentValue =
+      control instanceof HTMLInputElement && control.type === "checkbox"
+        ? control.checked
+        : control.value;
+    const currentCanonical = canonicalizeVisualValue(controlKind, valueType, currentValue);
+    const originalCanonical = String(visualOriginalValuesByPath.get(path) || "");
+    if (currentCanonical !== originalCanonical) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function updateVisualSelectionSummary(message: string): void {
@@ -2042,13 +2247,43 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
   return changes;
 }
 
+function selectionHasFontControls(properties: HostVisualProperty[]): boolean {
+  // // Load OS font metadata only for selections that actually expose font family/style controls.
+  return properties.some((property) => {
+    const textStylePath = parseTextStyleVirtualPath(property.path);
+    if (!textStylePath) {
+      return false;
+    }
+    return textStylePath.styleKey === "fontFamily" || textStylePath.styleKey === "fontStyle";
+  });
+}
+
 async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
-  await ensureSystemFontCatalogLoaded();
   const result = await readSelectedMogrtVisualProperties();
+  const propertySignature = buildVisualPropertySignature(result.properties);
+  loadedVisualPropertySignature = propertySignature;
   renderVisualPropertyEditor(result.properties);
+  if (selectionHasFontControls(result.properties)) {
+    void ensureSystemFontCatalogLoaded()
+      .then(() => {
+        if (activeMode !== "visual" || loadedVisualProperties.length < 1) {
+          return;
+        }
+        if (loadedVisualPropertySignature !== propertySignature) {
+          return;
+        }
+        if (hasPendingVisualEditorEdits()) {
+          return;
+        }
+        renderVisualPropertyEditor(result.properties);
+      })
+      .catch(() => {
+        // // Ignore deferred font-catalog failures so visual property reading never breaks on startup or slow systems.
+      });
+  }
   if (emitHostLog) {
-    setLog(`${translate("log.hostResult")}\n${JSON.stringify(result, null, 2)}`);
+    setStructuredLog(translate("log.hostResult"), result);
   }
   if (result.properties.length > 0) {
     updateVisualSelectionSummary(
@@ -2114,19 +2349,13 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
         setVisualApplyProgressState(true, clipIndex + 1, selectedCount);
       }
 
-      setLog(
-        `${translate("log.visualApplyDone")}\n${JSON.stringify(
-          {
-            selectedCount,
-            processedClipCount: selectedCount,
-            updatedCount,
-            failedCount,
-            debug: debugLines
-          },
-          null,
-          2
-        )}`
-      );
+      setStructuredLog(translate("log.visualApplyDone"), {
+        selectedCount,
+        processedClipCount: selectedCount,
+        updatedCount,
+        failedCount,
+        debug: debugLines
+      });
       setVisualApplyProgressState(false);
       await loadVisualPropertiesFromSelection();
       return;
@@ -2134,7 +2363,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
 
     const response = await applyVisualPropertiesToSelectedMogrts(changes);
     if (!useLiveUpdate) {
-      setLog(`${translate("log.visualApplyDone")}\n${JSON.stringify(response, null, 2)}`);
+      setStructuredLog(translate("log.visualApplyDone"), response);
       await loadVisualPropertiesFromSelection();
     }
   } finally {
@@ -2352,6 +2581,31 @@ async function reloadMogrtCatalogPreservingSelection(): Promise<void> {
   }
 }
 
+function schedulePassiveMogrtCatalogRefresh(): void {
+  // // Throttle passive filesystem refreshes so focus changes do not repeatedly rescan the gallery tree.
+  if (passiveMogrtRefreshTimer !== null) {
+    window.clearTimeout(passiveMogrtRefreshTimer);
+  }
+
+  passiveMogrtRefreshTimer = window.setTimeout(() => {
+    passiveMogrtRefreshTimer = null;
+    const now = Date.now();
+    if (now - lastPassiveMogrtCatalogRefreshAt < 1500) {
+      return;
+    }
+    lastPassiveMogrtCatalogRefreshAt = now;
+
+    void reloadMogrtCatalogPreservingSelection()
+      .then(() => {
+        renderMogrtGallery();
+        persistPanelState();
+      })
+      .catch(() => {
+        // // Ignore passive refresh failures so gallery browsing never blocks the panel.
+      });
+  }, 250);
+}
+
 function updateSelectedMogrtLabel(): void {
   // // Keep current template selection visible to user before generation.
   if (!elements.mogrtSelectedLabel) {
@@ -2366,15 +2620,29 @@ function updateSelectedMogrtLabel(): void {
   elements.mogrtSelectedLabel.textContent = `${translate("gallery.selectedPrefix")} ${selectedMogrt.name} (${selectedMogrt.aspect})`;
 }
 
+function updateMogrtGallerySelectionState(): void {
+  // // Update only card active states so selecting a template does not rebuild the whole gallery DOM.
+  if (!elements.mogrtGallery) {
+    return;
+  }
+
+  const selectedTemplateId = selectedMogrt?.id || "";
+  elements.mogrtGallery.querySelectorAll<HTMLElement>(".mogrt-card").forEach((card) => {
+    const isActive = String(card.dataset.templateId || "") === selectedTemplateId;
+    card.classList.toggle("is-active", isActive);
+  });
+  updateSelectedMogrtLabel();
+}
+
 function selectMogrt(templateId: string): void {
-  // // Save selected template and rerender cards to reflect active state.
+  // // Save selected template without recreating gallery cards on every click.
   const found = availableMogrts.find((template) => template.id === templateId);
   if (!found) {
     return;
   }
 
   selectedMogrt = found;
-  renderMogrtGallery();
+  updateMogrtGallerySelectionState();
   persistPanelState();
 }
 
@@ -2431,10 +2699,29 @@ function renderMogrtGallery(): void {
       previewVideo.src = panelAssetPath(template.previewVideoPath);
       previewVideo.muted = true;
       previewVideo.loop = true;
-      previewVideo.autoplay = true;
+      previewVideo.autoplay = false;
       previewVideo.playsInline = true;
-      previewVideo.preload = "metadata";
+      previewVideo.preload = "none";
       previewVideo.setAttribute("aria-hidden", "true");
+      const playPreview = () => {
+        // // Play preview videos only on interaction to avoid burning CPU/GPU on large galleries.
+        void previewVideo.play().catch(() => {
+          // // Ignore autoplay/playback failures because previews are non-blocking UI sugar.
+        });
+      };
+      const stopPreview = () => {
+        // // Pause and reset preview videos when cards are not being inspected anymore.
+        previewVideo.pause();
+        try {
+          previewVideo.currentTime = 0;
+        } catch {
+          // // Ignore seek reset errors from partially loaded previews.
+        }
+      };
+      card.addEventListener("mouseenter", playPreview);
+      card.addEventListener("focus", playPreview);
+      card.addEventListener("mouseleave", stopPreview);
+      card.addEventListener("blur", stopPreview);
       preview.appendChild(previewVideo);
     } else {
       preview.textContent = translate("gallery.previewText");
@@ -2576,7 +2863,7 @@ async function generate(): Promise<void> {
   };
 
   const hostResultRaw = await applyCaptionPlan(payload);
-  setLog(`${translate("log.hostResult")}\n${hostResultRaw}`);
+  setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
 }
 
 async function initialize(): Promise<void> {
@@ -2620,9 +2907,6 @@ async function initialize(): Promise<void> {
   elements.tabVisual?.addEventListener("click", () => {
     setActiveMode("visual");
     persistPanelState();
-    void ensureSystemFontCatalogLoaded().catch(() => {
-      // // Ignore background font-catalog warmup failures until the user explicitly reads visual properties.
-    });
   });
 
   elements.sourceMode?.addEventListener("change", () => {
@@ -2654,8 +2938,6 @@ async function initialize(): Promise<void> {
     try {
       const extensionRootPath = resolveExtensionRootPath();
       await openInstalledMogrtFolder(extensionRootPath);
-      await reloadMogrtCatalogPreservingSelection();
-      renderMogrtGallery();
       persistPanelState();
     } catch (error) {
       setLog(String(error), true);
@@ -2698,15 +2980,30 @@ async function initialize(): Promise<void> {
       scheduleLiveVisualApply();
     }
   });
+  elements.logToggleButton?.addEventListener("click", () => {
+    setLogPanelExpanded(!logPanelExpanded);
+  });
+  elements.logVerbosityButton?.addEventListener("click", () => {
+    setVerboseLogsEnabled(!verboseLogsEnabled);
+  });
+  elements.updateBanner?.addEventListener("click", (event) => {
+    const targetNode = event.target as HTMLElement | null;
+    if (targetNode?.closest("#updateLink")) {
+      return;
+    }
+    event.preventDefault();
+    void openUpdateDownload().catch((error) => {
+      setLog(String(error), true);
+    });
+  });
+  elements.updateLink?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void openUpdateDownload().catch((error) => {
+      setLog(String(error), true);
+    });
+  });
   window.addEventListener("focus", () => {
-    void reloadMogrtCatalogPreservingSelection()
-      .then(() => {
-        renderMogrtGallery();
-        persistPanelState();
-      })
-      .catch(() => {
-        // // Ignore passive gallery refresh failures so panel editing is never blocked by filesystem issues.
-      });
+    schedulePassiveMogrtCatalogRefresh();
   });
 
   elements.generateButton?.addEventListener("click", async () => {

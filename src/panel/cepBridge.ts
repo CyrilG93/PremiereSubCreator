@@ -124,6 +124,10 @@ export interface SelectedMogrtTextItemList {
   selectedCount: number;
   sameTrack: boolean;
   videoTrackIndex?: number;
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
   signature: string;
   items: SelectedMogrtTextItem[];
 }
@@ -147,6 +151,12 @@ export interface ApplySelectedMogrtTextResult {
   selectedCount: number;
   rebuiltCount: number;
   failedCount: number;
+  sourceTrackIndex?: number;
+  rebuildTrackIndex?: number;
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
   debug?: string[];
 }
 
@@ -2440,6 +2450,10 @@ function normalizeSelectedMogrtTextItemList(data: unknown): SelectedMogrtTextIte
     selectedCount: Number(payload.selectedCount || items.length),
     sameTrack: payload.sameTrack !== false,
     videoTrackIndex: Number.isFinite(Number(payload.videoTrackIndex)) ? Number(payload.videoTrackIndex) : undefined,
+    projectDocumentId: typeof payload.projectDocumentId === "string" ? payload.projectDocumentId : undefined,
+    projectPath: typeof payload.projectPath === "string" ? payload.projectPath : undefined,
+    sequenceID: typeof payload.sequenceID === "string" ? payload.sequenceID : undefined,
+    sequenceName: typeof payload.sequenceName === "string" ? payload.sequenceName : undefined,
     signature: String(payload.signature || ""),
     items
   };
@@ -2675,6 +2689,16 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
     selectedCount: Number(response.data?.selectedCount || 0),
     rebuiltCount: Number(response.data?.rebuiltCount || 0),
     failedCount: Number(response.data?.failedCount || 0),
+    sourceTrackIndex: Number.isFinite(Number(response.data?.sourceTrackIndex))
+      ? Number(response.data?.sourceTrackIndex)
+      : undefined,
+    rebuildTrackIndex: Number.isFinite(Number(response.data?.rebuildTrackIndex))
+      ? Number(response.data?.rebuildTrackIndex)
+      : undefined,
+    projectDocumentId: typeof response.data?.projectDocumentId === "string" ? response.data.projectDocumentId : undefined,
+    projectPath: typeof response.data?.projectPath === "string" ? response.data.projectPath : undefined,
+    sequenceID: typeof response.data?.sequenceID === "string" ? response.data.sequenceID : undefined,
+    sequenceName: typeof response.data?.sequenceName === "string" ? response.data.sequenceName : undefined,
     debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined
   };
 }

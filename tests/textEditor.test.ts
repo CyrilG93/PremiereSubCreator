@@ -35,6 +35,38 @@ describe("textEditor helpers", () => {
     expect(moved[1].text).toBe("alle puis rentre");
   });
 
+  it("preserves timed words when moving one word across subtitle blocks", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one two",
+        timedWords: [
+          { text: "one", startSeconds: 0, endSeconds: 0.4 },
+          { text: "two", startSeconds: 0.4, endSeconds: 1 }
+        ]
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "three four",
+        timedWords: [
+          { text: "three", startSeconds: 1, endSeconds: 1.5 },
+          { text: "four", startSeconds: 1.5, endSeconds: 2 }
+        ]
+      }
+    ]);
+
+    const moved = moveTextEditorWord(blocks, 0, 1, 1, 0);
+    expect(moved[0].timedWords?.map((word) => word.text)).toEqual(["one"]);
+    expect(moved[1].timedWords?.map((word) => word.text)).toEqual(["two", "three", "four"]);
+    expect(moved[1].timedWords?.[0]?.startSeconds).toBe(0.4);
+  });
+
   it("splits one subtitle block at the selected word boundary", () => {
     const blocks = buildTextEditorBlocks([
       {
@@ -50,6 +82,28 @@ describe("textEditor helpers", () => {
     expect(split).toHaveLength(2);
     expect(split[0].text).toBe("bonjour tout");
     expect(split[1].text).toBe("le monde");
+  });
+
+  it("preserves timed words when splitting one subtitle block", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 2,
+        text: "bonjour tout le monde",
+        timedWords: [
+          { text: "bonjour", startSeconds: 0, endSeconds: 0.4 },
+          { text: "tout", startSeconds: 0.4, endSeconds: 0.8 },
+          { text: "le", startSeconds: 0.8, endSeconds: 1.2 },
+          { text: "monde", startSeconds: 1.2, endSeconds: 2 }
+        ]
+      }
+    ]);
+
+    const split = splitTextEditorBlock(blocks, 0, 2);
+    expect(split[0].timedWords?.map((word) => word.text)).toEqual(["bonjour", "tout"]);
+    expect(split[1].timedWords?.map((word) => word.text)).toEqual(["le", "monde"]);
   });
 
   it("merges one subtitle block with the previous block", () => {
@@ -76,6 +130,33 @@ describe("textEditor helpers", () => {
     expect(merged[0].sourceSelectionIndex).toBe(0);
   });
 
+  it("preserves timed words when merging subtitle blocks", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "salut",
+        timedWords: [{ text: "salut", startSeconds: 0, endSeconds: 1 }]
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "les amis",
+        timedWords: [
+          { text: "les", startSeconds: 1, endSeconds: 1.5 },
+          { text: "amis", startSeconds: 1.5, endSeconds: 2 }
+        ]
+      }
+    ]);
+
+    const merged = mergeTextEditorBlocks(blocks, 1, "previous");
+    expect(merged[0].timedWords?.map((word) => word.text)).toEqual(["salut", "les", "amis"]);
+  });
+
   it("retimes longer edited blocks with more duration", () => {
     const blocks = buildTextEditorBlocks([
       {
@@ -100,6 +181,43 @@ describe("textEditor helpers", () => {
     expect(secondDuration).toBeGreaterThan(firstDuration);
     expect(retimed[0].startSeconds).toBe(0);
     expect(retimed[1].endSeconds).toBe(4);
+  });
+
+  it("reuses timed words instead of weighted timing when precise metadata is available", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1.1,
+        text: "go now",
+        timedWords: [
+          { text: "go", startSeconds: 0, endSeconds: 0.2 },
+          { text: "now", startSeconds: 0.2, endSeconds: 1.1 }
+        ]
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1.1,
+        endSeconds: 3,
+        text: "international subtitle",
+        timedWords: [
+          { text: "international", startSeconds: 1.1, endSeconds: 2.6 },
+          { text: "subtitle", startSeconds: 2.6, endSeconds: 3 }
+        ]
+      }
+    ]);
+
+    const retimed = retimeTextEditorBlocks(blocks, {
+      startSeconds: 0,
+      endSeconds: 3
+    });
+
+    expect(retimed[0].startSeconds).toBe(0);
+    expect(retimed[0].endSeconds).toBe(1.1);
+    expect(retimed[1].startSeconds).toBe(1.1);
+    expect(retimed[1].endSeconds).toBe(3);
   });
 
   it("keeps the original selected span when a merge removes the last block", () => {

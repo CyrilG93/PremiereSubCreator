@@ -46,6 +46,12 @@ import type {
   TextEditorApplyPayload,
   WhisperProgressUpdate
 } from "./cepBridge";
+import {
+  persistGeneratedCaptionMetadata,
+  persistTextEditorCaptionMetadata,
+  resolveCaptionMetadataForSelection,
+  type CaptionMetadataIdentity
+} from "./captionMetadataStore";
 
 type LocaleMap = Record<string, string>;
 
@@ -107,6 +113,15 @@ interface PanelStateSnapshot {
 interface TextEditorBlockState extends TextEditorBlock {
   editorId: string;
   selectedWordIndex: number;
+}
+
+interface ApplyCaptionPlanHostResult {
+  insertedMogrt?: number;
+  videoTrackUsed?: number;
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
 }
 
 interface RgbColor {
@@ -230,6 +245,7 @@ let textEditorVideoTrackIndex = -1;
 let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
+let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -1619,7 +1635,8 @@ function buildTextEditorBlocksFromState(blocks: TextEditorBlockState[]): TextEdi
     startSeconds: block.startSeconds,
     endSeconds: block.endSeconds,
     text: block.text,
-    words: block.words.slice()
+    words: block.words.slice(),
+    timedWords: block.timedWords ? block.timedWords.map((word) => ({ ...word })) : undefined
   }));
 }
 
@@ -1631,6 +1648,27 @@ function getTextEditorSelectionTimingRange(): TextEditorTimingRange | undefined 
   return {
     startSeconds: textEditorSelectionStartSeconds,
     endSeconds: textEditorSelectionEndSeconds
+  };
+}
+
+function resolveCaptionMetadataIdentityFromHostPayload(payload: {
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
+}): CaptionMetadataIdentity | null {
+  // // Normalize host identity payloads before using them as metadata-store keys.
+  const projectDocumentId = String(payload.projectDocumentId || "").trim();
+  const sequenceID = String(payload.sequenceID || "").trim();
+  if (!projectDocumentId || !sequenceID) {
+    return null;
+  }
+
+  return {
+    projectDocumentId,
+    projectPath: String(payload.projectPath || "").trim(),
+    sequenceID,
+    sequenceName: String(payload.sequenceName || "").trim()
   };
 }
 
@@ -1677,10 +1715,15 @@ function updateTextEditorBlockInput(blockIndex: number, nextText: string): void 
       .split(/\s+/)
       .map((value) => value.trim())
       .filter(Boolean);
+    const preserveTimedWords =
+      Array.isArray(block.timedWords) &&
+      block.timedWords.length === words.length &&
+      block.timedWords.every((word, wordIndex) => String(word.text || "").trim() === String(words[wordIndex] || "").trim());
     return {
       ...block,
       text: String(nextText || ""),
       words,
+      timedWords: preserveTimedWords ? block.timedWords?.map((word) => ({ ...word })) : undefined,
       selectedWordIndex:
         block.selectedWordIndex >= 0 && block.selectedWordIndex < words.length ? block.selectedWordIndex : -1
     };
@@ -1689,18 +1732,7 @@ function updateTextEditorBlockInput(blockIndex: number, nextText: string): void 
 
 function commitTextEditorBlockInput(blockIndex: number, nextText: string): void {
   // // Normalize one edited subtitle row after blur/change and refresh its chip list/timing display.
-  const updatedBlocks = updateTextEditorBlockText(
-    textEditorBlocks.map((block) => ({
-      sourceSelectionIndex: block.sourceSelectionIndex,
-      clipName: block.clipName,
-      startSeconds: block.startSeconds,
-      endSeconds: block.endSeconds,
-      text: block.text,
-      words: block.words.slice()
-    })),
-    blockIndex,
-    nextText
-  );
+  const updatedBlocks = updateTextEditorBlockText(buildTextEditorBlocksFromState(textEditorBlocks), blockIndex, nextText);
   textEditorBlocks = mapTextEditorBlocksToState(updatedBlocks);
   renderTextEditor();
 }
@@ -1736,14 +1768,7 @@ function moveTextEditorWordByDrop(targetBlockIndex: number, targetWordIndex?: nu
       return;
     }
     const updatedBlocks = moveTextEditorWord(
-      textEditorBlocks.map((block) => ({
-        sourceSelectionIndex: block.sourceSelectionIndex,
-        clipName: block.clipName,
-        startSeconds: block.startSeconds,
-        endSeconds: block.endSeconds,
-        text: block.text,
-        words: block.words.slice()
-      })),
+      buildTextEditorBlocksFromState(textEditorBlocks),
       payload.sourceBlockIndex,
       payload.sourceWordIndex,
       targetBlockIndex,
@@ -1887,14 +1912,7 @@ function renderTextEditor(): void {
     mergePreviousButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
-          textEditorBlocks.map((item) => ({
-            sourceSelectionIndex: item.sourceSelectionIndex,
-            clipName: item.clipName,
-            startSeconds: item.startSeconds,
-            endSeconds: item.endSeconds,
-            text: item.text,
-            words: item.words.slice()
-          })),
+          buildTextEditorBlocksFromState(textEditorBlocks),
           blockIndex,
           "previous"
         )
@@ -1913,14 +1931,7 @@ function renderTextEditor(): void {
       }
       applyTextEditorBlocks(
         splitTextEditorBlock(
-          textEditorBlocks.map((item) => ({
-            sourceSelectionIndex: item.sourceSelectionIndex,
-            clipName: item.clipName,
-            startSeconds: item.startSeconds,
-            endSeconds: item.endSeconds,
-            text: item.text,
-            words: item.words.slice()
-          })),
+          buildTextEditorBlocksFromState(textEditorBlocks),
           blockIndex,
           block.selectedWordIndex
         )
@@ -1942,14 +1953,7 @@ function renderTextEditor(): void {
     mergeNextButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
-          textEditorBlocks.map((item) => ({
-            sourceSelectionIndex: item.sourceSelectionIndex,
-            clipName: item.clipName,
-            startSeconds: item.startSeconds,
-            endSeconds: item.endSeconds,
-            text: item.text,
-            words: item.words.slice()
-          })),
+          buildTextEditorBlocksFromState(textEditorBlocks),
           blockIndex,
           "next"
         )
@@ -1965,10 +1969,12 @@ function renderTextEditor(): void {
 async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
   const result = await readSelectedMogrtTextItems();
+  textEditorSelectionMetadataIdentity = resolveCaptionMetadataIdentityFromHostPayload(result);
   textEditorSelectionSignature = result.signature;
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
-  textEditorOriginalBlocks = result.items.map((item) => ({
+  const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, result.items);
+  textEditorOriginalBlocks = result.items.map((item, itemIndex) => ({
     sourceSelectionIndex: Number(item.selectionIndex || 0),
     clipName: String(item.clipName || "").trim(),
     startSeconds: Number(item.startSeconds || 0),
@@ -1977,7 +1983,8 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
     words: String(item.text || "")
       .split(/\s+/)
       .map((value) => value.trim())
-      .filter(Boolean)
+      .filter(Boolean),
+    timedWords: Array.isArray(metadataWordsByItem[itemIndex]) ? metadataWordsByItem[itemIndex] || undefined : undefined
   }));
   textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
   textEditorSelectionStartSeconds =
@@ -2023,7 +2030,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
 }
 
 async function applyTextEditorChanges(): Promise<void> {
-  // // Rebuild selected subtitle MOGRTs from edited Text tab blocks using heuristic V1 timing redistribution.
+  // // Rebuild selected subtitle MOGRTs from edited Text tab blocks while preserving precise timing metadata when available.
   if (textApplyInProgress) {
     return;
   }
@@ -2060,6 +2067,15 @@ async function applyTextEditorChanges(): Promise<void> {
   try {
     const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
     setStructuredLog(translate("log.textApplyDone"), result);
+    if (Number(result.failedCount || 0) === 0 && Number(result.rebuiltCount || 0) === applyPlan.blocks.length) {
+      persistTextEditorCaptionMetadata(
+        resolveCaptionMetadataIdentityFromHostPayload(result) || textEditorSelectionMetadataIdentity,
+        Number.isFinite(Number(result.sourceTrackIndex)) ? Number(result.sourceTrackIndex) : textEditorVideoTrackIndex,
+        Number.isFinite(Number(result.rebuildTrackIndex)) ? Number(result.rebuildTrackIndex) : textEditorVideoTrackIndex,
+        applyPlan.timingRange,
+        applyPlan.blocks
+      );
+    }
     await loadTextItemsFromSelection();
   } finally {
     textApplyInProgress = false;
@@ -3750,6 +3766,22 @@ async function generate(): Promise<void> {
     await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
     const hostResultRaw = await applyCaptionPlan(payload);
     setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+    try {
+      const hostResult = JSON.parse(String(hostResultRaw || "")) as ApplyCaptionPlanHostResult;
+      if (
+        Number(hostResult.insertedMogrt || 0) === plannedCues.length &&
+        Number.isFinite(Number(hostResult.videoTrackUsed)) &&
+        plannedCues.length > 0
+      ) {
+        persistGeneratedCaptionMetadata(
+          resolveCaptionMetadataIdentityFromHostPayload(hostResult),
+          Number(hostResult.videoTrackUsed),
+          plannedCues
+        );
+      }
+    } catch {
+      // // Ignore host-result metadata persistence when the host payload is not parseable.
+    }
   } finally {
     generateInProgress = false;
     setGenerateButtonsBusy(false);

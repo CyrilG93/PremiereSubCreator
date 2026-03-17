@@ -59,6 +59,46 @@ function subcreator_trim_string(value) {
   return String(value || "").replace(/^\s+|\s+$/g, "");
 }
 
+function subcreator_get_sequence_identity(sequence) {
+  // // Capture stable project and sequence identifiers so panel-side timing metadata can be keyed safely.
+  var project = app && app.project ? app.project : null;
+  var projectDocumentId = "";
+  var projectPath = "";
+  var sequenceID = "";
+  var sequenceName = "";
+
+  try {
+    projectDocumentId = subcreator_trim_string(project && project.documentID ? String(project.documentID) : "");
+  } catch (error) {
+    projectDocumentId = "";
+  }
+
+  try {
+    projectPath = subcreator_trim_string(project && project.path ? String(project.path) : "");
+  } catch (error) {
+    projectPath = "";
+  }
+
+  try {
+    sequenceID = subcreator_trim_string(sequence && sequence.sequenceID ? String(sequence.sequenceID) : "");
+  } catch (error) {
+    sequenceID = "";
+  }
+
+  try {
+    sequenceName = subcreator_trim_string(sequence && sequence.name ? String(sequence.name) : "");
+  } catch (error) {
+    sequenceName = "";
+  }
+
+  return {
+    projectDocumentId: projectDocumentId,
+    projectPath: projectPath,
+    sequenceID: sequenceID,
+    sequenceName: sequenceName
+  };
+}
+
 function subcreator_read_text_file(encodedPath) {
   // // Read a text file from disk and return content to the panel.
   try {
@@ -4847,10 +4887,15 @@ function subcreator_list_selected_mogrt_text_items() {
     }
 
     var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
     var mogrtItems = subcreator_sort_track_items_by_time(subcreator_collect_selected_mogrt_items(sequence));
     if (!mogrtItems.length) {
       return subcreator_ok({
         selectedCount: 0,
+        projectDocumentId: sequenceIdentity.projectDocumentId,
+        projectPath: sequenceIdentity.projectPath,
+        sequenceID: sequenceIdentity.sequenceID,
+        sequenceName: sequenceIdentity.sequenceName,
         signature: "",
         items: []
       });
@@ -4881,6 +4926,10 @@ function subcreator_list_selected_mogrt_text_items() {
       selectedCount: mogrtItems.length,
       sameTrack: sameTrack,
       videoTrackIndex: firstTrackIndex,
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName,
       signature: subcreator_build_selected_mogrt_text_signature(sequence, mogrtItems),
       items: items
     });
@@ -4897,6 +4946,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     }
 
     var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
     var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
     var payload = JSON.parse(decodedPayload || "{}");
     var editedItems = payload && payload.items && typeof payload.items.length === "number" ? payload.items : [];
@@ -4921,6 +4971,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     if (targetTrackIndex < 0) {
       return subcreator_error("Unable to resolve selected MOGRT track.");
     }
+    var sourceTrackIndex = targetTrackIndex;
 
     for (var selectedIndex = 0; selectedIndex < currentSelection.length; selectedIndex += 1) {
       if (subcreator_find_track_item_video_track_index(sequence, currentSelection[selectedIndex]) !== targetTrackIndex) {
@@ -5130,6 +5181,12 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       selectedCount: currentSelection.length,
       rebuiltCount: rebuiltCount,
       failedCount: failedCount,
+      sourceTrackIndex: sourceTrackIndex,
+      rebuildTrackIndex: targetTrackIndex,
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName,
       debug: debugLines
     });
   } catch (error) {
@@ -7283,6 +7340,7 @@ function subcreator_apply_captions(payloadEncoded) {
     }
 
     var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
     var options = payload.options || {};
     var cues = payload.cues || [];
 
@@ -7369,7 +7427,11 @@ function subcreator_apply_captions(payloadEncoded) {
       videoTracksBefore: videoTrackInfo.beforeTracks,
       videoTracksAfter: videoTrackInfo.afterTracks,
       videoTrackUsed: videoTrackIndex,
-      audioTrackUsed: audioTrackIndex
+      audioTrackUsed: audioTrackIndex,
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName
     });
   } catch (error) {
     return JSON.stringify({ ok: false, error: error.toString() });

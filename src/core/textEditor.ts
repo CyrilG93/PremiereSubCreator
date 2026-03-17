@@ -1,4 +1,5 @@
 // // Provide pure text-editing helpers for the Text tab subtitle workflow.
+import type { CaptionWord } from "./types";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
 // // Describe one editable subtitle block shown in the Text tab.
@@ -9,6 +10,7 @@ export interface TextEditorBlock {
   endSeconds: number;
   text: string;
   words: string[];
+  timedWords?: CaptionWord[];
 }
 
 export interface TextEditorTimingRange {
@@ -36,13 +38,15 @@ function normalizeTextEditorWords(text: string): string[] {
 function syncTextEditorBlock(block: TextEditorBlock): TextEditorBlock {
   // // Keep `text` and `words` synchronized after one editing operation.
   const words = Array.isArray(block.words) && block.words.length > 0 ? block.words.slice() : normalizeTextEditorWords(block.text);
+  const timedWords = areTimedWordsCompatible(words, block.timedWords) ? cloneTimedWords(block.timedWords || []) : undefined;
   return {
     sourceSelectionIndex: Number.isFinite(Number(block.sourceSelectionIndex)) ? Number(block.sourceSelectionIndex) : 0,
     clipName: String(block.clipName || "").trim(),
     startSeconds: Number(block.startSeconds || 0),
     endSeconds: Number(block.endSeconds || 0),
     text: words.join(" "),
-    words
+    words,
+    timedWords
   };
 }
 
@@ -59,6 +63,43 @@ function areTextEditorBlocksEquivalent(left: TextEditorBlock, right: TextEditorB
 function cloneTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlock[] {
   // // Clone editable blocks so UI reducers can stay immutable and predictable.
   return blocks.map((block) => syncTextEditorBlock(block));
+}
+
+function normalizeTimedWordText(word: CaptionWord | undefined): string {
+  // // Normalize one timed-word token so editor text and metadata can be compared safely.
+  return String(word?.text || "").trim();
+}
+
+function cloneTimedWords(words: CaptionWord[]): CaptionWord[] {
+  // // Clone word timing entries to preserve immutability across editor operations.
+  return words.map((word) => ({
+    text: String(word.text || "").trim(),
+    startSeconds: Number(word.startSeconds || 0),
+    endSeconds: Number(word.endSeconds || 0)
+  }));
+}
+
+function areTimedWordsCompatible(words: string[], timedWords?: CaptionWord[]): boolean {
+  // // Keep precise timings only when they still map one-to-one to the visible editor words.
+  if (!Array.isArray(timedWords)) {
+    return false;
+  }
+  if (timedWords.length !== words.length) {
+    return false;
+  }
+
+  for (let index = 0; index < words.length; index += 1) {
+    if (normalizeTimedWordText(timedWords[index]) !== String(words[index] || "").trim()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function buildPreservedTimedWordsOrNull(block: TextEditorBlock): CaptionWord[] | null {
+  // // Reuse precise timings when one block still has a valid timed-word payload.
+  return areTimedWordsCompatible(block.words, block.timedWords) ? cloneTimedWords(block.timedWords || []) : null;
 }
 
 function filterNonEmptyTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlock[] {
@@ -91,10 +132,12 @@ export function updateTextEditorBlockText(blocks: TextEditorBlock[], blockIndex:
     if (index !== blockIndex) {
       return block;
     }
+    const nextWords = normalizeTextEditorWords(nextText);
     return syncTextEditorBlock({
       ...block,
       text: String(nextText || ""),
-      words: normalizeTextEditorWords(nextText)
+      words: nextWords,
+      timedWords: areTimedWordsCompatible(nextWords, block.timedWords) ? block.timedWords : undefined
     });
   });
 }
@@ -123,7 +166,14 @@ export function moveTextEditorWord(
     return nextBlocks;
   }
 
+  const sourceTimedWords = buildPreservedTimedWordsOrNull(sourceBlock);
+  const targetTimedWords = buildPreservedTimedWordsOrNull(targetBlock);
+  const movedTimedWord = sourceTimedWords ? sourceTimedWords[sourceWordIndex] : null;
+
   sourceBlock.words.splice(sourceWordIndex, 1);
+  if (sourceTimedWords && movedTimedWord) {
+    sourceTimedWords.splice(sourceWordIndex, 1);
+  }
 
   if (sourceBlockIndex === targetBlockIndex) {
     const adjustedTargetIndex = clampInsertIndex(
@@ -131,11 +181,25 @@ export function moveTextEditorWord(
       typeof targetWordIndex === "number" && targetWordIndex > sourceWordIndex ? targetWordIndex - 1 : targetWordIndex
     );
     targetBlock.words.splice(adjustedTargetIndex, 0, movedWord);
+    if (sourceTimedWords && movedTimedWord) {
+      sourceTimedWords.splice(adjustedTargetIndex, 0, movedTimedWord);
+      targetBlock.timedWords = sourceTimedWords;
+    } else {
+      targetBlock.timedWords = undefined;
+    }
     return nextBlocks.map((block) => syncTextEditorBlock(block));
   }
 
   const insertionIndex = clampInsertIndex(targetBlock.words.length, targetWordIndex);
   targetBlock.words.splice(insertionIndex, 0, movedWord);
+  if (sourceTimedWords && targetTimedWords && movedTimedWord) {
+    sourceBlock.timedWords = sourceTimedWords;
+    targetTimedWords.splice(insertionIndex, 0, movedTimedWord);
+    targetBlock.timedWords = targetTimedWords;
+  } else {
+    sourceBlock.timedWords = undefined;
+    targetBlock.timedWords = undefined;
+  }
   return filterNonEmptyTextEditorBlocks(nextBlocks);
 }
 
@@ -152,18 +216,23 @@ export function splitTextEditorBlock(blocks: TextEditorBlock[], blockIndex: numb
 
   const leftWords = block.words.slice(0, splitWordIndex);
   const rightWords = block.words.slice(splitWordIndex);
+  const timedWords = buildPreservedTimedWordsOrNull(block);
+  const leftTimedWords = timedWords ? timedWords.slice(0, splitWordIndex) : undefined;
+  const rightTimedWords = timedWords ? timedWords.slice(splitWordIndex) : undefined;
   nextBlocks.splice(
     blockIndex,
     1,
     syncTextEditorBlock({
       ...block,
       text: leftWords.join(" "),
-      words: leftWords
+      words: leftWords,
+      timedWords: leftTimedWords
     }),
     syncTextEditorBlock({
       ...block,
       text: rightWords.join(" "),
-      words: rightWords
+      words: rightWords,
+      timedWords: rightTimedWords
     })
   );
   return nextBlocks;
@@ -182,7 +251,10 @@ export function mergeTextEditorBlocks(
     }
     const currentBlock = nextBlocks[blockIndex];
     const previousBlock = nextBlocks[blockIndex - 1];
+    const previousTimedWords = buildPreservedTimedWordsOrNull(previousBlock);
+    const currentTimedWords = buildPreservedTimedWordsOrNull(currentBlock);
     previousBlock.words = previousBlock.words.concat(currentBlock.words);
+    previousBlock.timedWords = previousTimedWords && currentTimedWords ? previousTimedWords.concat(currentTimedWords) : undefined;
     nextBlocks.splice(blockIndex, 1);
     return nextBlocks.map((block) => syncTextEditorBlock(block));
   }
@@ -192,7 +264,10 @@ export function mergeTextEditorBlocks(
   }
   const block = nextBlocks[blockIndex];
   const nextBlock = nextBlocks[blockIndex + 1];
+  const blockTimedWords = buildPreservedTimedWordsOrNull(block);
+  const nextTimedWords = buildPreservedTimedWordsOrNull(nextBlock);
   block.words = block.words.concat(nextBlock.words);
+  block.timedWords = blockTimedWords && nextTimedWords ? blockTimedWords.concat(nextTimedWords) : undefined;
   nextBlocks.splice(blockIndex + 1, 1);
   return nextBlocks.map((item) => syncTextEditorBlock(item));
 }
@@ -250,6 +325,25 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: 
   }
   const { startSeconds, endSeconds } = resolvedTimingRange;
 
+  const canReuseTimedWords = normalizedBlocks.every((block) => areTimedWordsCompatible(block.words, block.timedWords));
+  if (canReuseTimedWords) {
+    return normalizedBlocks.map((block, blockIndex) => {
+      const timedWords = cloneTimedWords(block.timedWords || []);
+      if (timedWords.length < 1) {
+        return block;
+      }
+
+      return {
+        ...block,
+        startSeconds: blockIndex === 0 ? startSeconds : timedWords[0].startSeconds,
+        endSeconds: blockIndex === normalizedBlocks.length - 1 ? endSeconds : timedWords[timedWords.length - 1].endSeconds,
+        text: block.words.join(" "),
+        words: block.words.slice(),
+        timedWords
+      };
+    });
+  }
+
   const allWords = normalizedBlocks.flatMap((block) => block.words);
   if (allWords.length < 1) {
     return normalizedBlocks;
@@ -270,7 +364,8 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: 
       startSeconds: blockWords[0].startSeconds,
       endSeconds: blockIndex === normalizedBlocks.length - 1 ? endSeconds : blockWords[blockWords.length - 1].endSeconds,
       text: block.words.join(" "),
-      words: block.words.slice()
+      words: block.words.slice(),
+      timedWords: blockWords
     };
   });
 }

@@ -1768,6 +1768,40 @@ function bindTextEditorDropTarget(node: HTMLElement, targetBlockIndex: number, t
   });
 }
 
+function setTextEditorActionPreview(targetBlockIndexes: number[]): void {
+  // // Highlight the subtitle blocks affected by one merge/split action so users can preview the operation safely.
+  if (!elements.textEditorList) {
+    return;
+  }
+
+  const highlightedIndexes = new Set(targetBlockIndexes);
+  const cards = elements.textEditorList.querySelectorAll<HTMLElement>(".text-block");
+  cards.forEach((card) => {
+    const blockIndex = Number(card.dataset.textBlockIndex || "-1");
+    card.classList.toggle("is-action-target", highlightedIndexes.has(blockIndex));
+  });
+}
+
+function bindTextEditorActionPreview(button: HTMLButtonElement, targetBlockIndexes: number[]): void {
+  // // Mirror action hover/focus states onto the affected subtitle cards for clearer merge/split intent.
+  if (button.disabled) {
+    return;
+  }
+
+  button.addEventListener("mouseenter", () => {
+    setTextEditorActionPreview(targetBlockIndexes);
+  });
+  button.addEventListener("mouseleave", () => {
+    setTextEditorActionPreview([]);
+  });
+  button.addEventListener("focus", () => {
+    setTextEditorActionPreview(targetBlockIndexes);
+  });
+  button.addEventListener("blur", () => {
+    setTextEditorActionPreview([]);
+  });
+}
+
 function renderTextEditor(): void {
   // // Render subtitle blocks, editable text, and draggable word chips for the Text tab.
   if (!elements.textEditorList) {
@@ -1783,6 +1817,7 @@ function renderTextEditor(): void {
   textEditorBlocks.forEach((block, blockIndex) => {
     const card = document.createElement("article");
     card.className = "text-block";
+    card.dataset.textBlockIndex = String(blockIndex);
 
     const textarea = document.createElement("textarea");
     textarea.className = "text-block__textarea";
@@ -1848,6 +1883,7 @@ function renderTextEditor(): void {
       mergePreviousButton.setAttribute("aria-hidden", "true");
       mergePreviousButton.tabIndex = -1;
     }
+    bindTextEditorActionPreview(mergePreviousButton, [blockIndex - 1, blockIndex]);
     mergePreviousButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
@@ -1870,6 +1906,7 @@ function renderTextEditor(): void {
     splitButton.className = "button button--secondary";
     splitButton.textContent = translate("action.splitSelectedWord");
     splitButton.disabled = block.selectedWordIndex <= 0 || block.selectedWordIndex >= block.words.length;
+    bindTextEditorActionPreview(splitButton, [blockIndex]);
     splitButton.addEventListener("click", () => {
       if (block.selectedWordIndex <= 0) {
         return;
@@ -1901,6 +1938,7 @@ function renderTextEditor(): void {
       mergeNextButton.setAttribute("aria-hidden", "true");
       mergeNextButton.tabIndex = -1;
     }
+    bindTextEditorActionPreview(mergeNextButton, [blockIndex, blockIndex + 1]);
     mergeNextButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(

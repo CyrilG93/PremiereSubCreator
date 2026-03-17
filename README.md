@@ -243,6 +243,9 @@ Current `V1` workflow:
    - `Merge next`
 6. Click `Apply text changes`.
 
+UI note:
+- hovering `Split` or `Merge` previews the subtitle block(s) affected by that action
+
 Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes

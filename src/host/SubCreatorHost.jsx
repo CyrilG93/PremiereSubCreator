@@ -4941,7 +4941,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     for (var snapshotIndex = 0; snapshotIndex < currentSelection.length; snapshotIndex += 1) {
       sourceSnapshots.push({
         projectItem: currentSelection[snapshotIndex] ? currentSelection[snapshotIndex].projectItem || null : null,
-        visualChanges: subcreator_build_visual_clone_changes_from_track_item(currentSelection[snapshotIndex])
+        visualChanges: subcreator_build_visual_clone_changes_from_track_item(currentSelection[snapshotIndex]),
+        textChanges: subcreator_build_text_clone_changes_from_track_item(currentSelection[snapshotIndex])
       });
     }
 
@@ -4953,6 +4954,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var failedCount = 0;
     var clonedStyleUpdates = 0;
     var clonedStyleFailures = 0;
+    var clonedTextUpdates = 0;
+    var clonedTextFailures = 0;
     var durationAdjusted = 0;
     var selectedTrackItems = [];
 
@@ -5021,8 +5024,25 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         clonedStyleFailures += cloneStats.failedCount;
       }
 
-      var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null);
-      if (!textStats || textStats.textUpdates < 1) {
+      var textUpdateCount = 0;
+      if (sourceSnapshot.textChanges && sourceSnapshot.textChanges.length > 0) {
+        var textCloneStats = subcreator_apply_text_clone_changes_to_track_item(
+          insertedTrackItem,
+          sourceSnapshot.textChanges,
+          textValue,
+          debugLines
+        );
+        clonedTextUpdates += textCloneStats.updatedCount;
+        clonedTextFailures += textCloneStats.failedCount;
+        textUpdateCount = textCloneStats.updatedCount;
+      }
+
+      if (textUpdateCount < 1) {
+        var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null);
+        textUpdateCount = textStats && textStats.textUpdates ? textStats.textUpdates : 0;
+      }
+
+      if (textUpdateCount < 1) {
         debugLines.push("text_apply text_update_missing index=" + String(editedIndex));
       }
 
@@ -5043,6 +5063,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);
     debugLines.push("text_apply cloned_style_updates=" + String(clonedStyleUpdates));
     debugLines.push("text_apply cloned_style_failures=" + String(clonedStyleFailures));
+    debugLines.push("text_apply cloned_text_updates=" + String(clonedTextUpdates));
+    debugLines.push("text_apply cloned_text_failures=" + String(clonedTextFailures));
     debugLines.push("text_apply duration_adjusted=" + String(durationAdjusted));
     debugLines.push("text_apply ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
 
@@ -6127,18 +6149,10 @@ function subcreator_try_patch_text_json_string(rawValue, textValue) {
   return patched;
 }
 
-function subcreator_try_set_mogrt_text_property(property, textValue) {
-  // // Apply text to a property, supporting strings, JSON strings, and object payloads.
+function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawValue, textValue) {
+  // // Apply text using a provided source payload so text-document styles can be preserved during clip rebuilds.
   var displayName = property.displayName || "";
-  var rawValue = "";
-
-  if (typeof property.getValue === "function") {
-    try {
-      rawValue = property.getValue();
-    } catch (getError) {
-      rawValue = "";
-    }
-  }
+  var rawValue = sourceRawValue;
 
   if (!subcreator_should_try_text_property(displayName, rawValue)) {
     return false;
@@ -6187,6 +6201,128 @@ function subcreator_try_set_mogrt_text_property(property, textValue) {
   } catch (setError) {}
 
   return false;
+}
+
+function subcreator_try_set_mogrt_text_property(property, textValue) {
+  // // Apply text to a property, supporting strings, JSON strings, and object payloads.
+  var rawValue = "";
+
+  if (typeof property.getValue === "function") {
+    try {
+      rawValue = property.getValue();
+    } catch (getError) {
+      rawValue = "";
+    }
+  }
+
+  return subcreator_try_apply_mogrt_text_property_raw_value(property, rawValue, textValue);
+}
+
+function subcreator_collect_mogrt_text_payload_snapshots_recursive(propertyCollection, pathPrefix, outList) {
+  // // Capture text-bearing raw payloads so rebuilt MOGRT clips can reuse the original text style document state.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
+    return;
+  }
+
+  for (var index = 0; index < propertyCollection.numItems; index += 1) {
+    var property = propertyCollection[index];
+    if (!property) {
+      continue;
+    }
+
+    var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
+    var rawValue = undefined;
+    var hasValue = false;
+
+    if (typeof property.getValue === "function") {
+      try {
+        rawValue = property.getValue();
+        hasValue = true;
+      } catch (readError) {
+        hasValue = false;
+      }
+    }
+
+    if (hasValue && subcreator_should_try_text_property(property.displayName || "", rawValue)) {
+      outList.push({
+        path: currentPath,
+        rawValue: rawValue
+      });
+    }
+
+    if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+      subcreator_collect_mogrt_text_payload_snapshots_recursive(property.properties, currentPath, outList);
+    }
+  }
+}
+
+function subcreator_build_text_clone_changes_from_track_item(trackItem) {
+  // // Snapshot original text-document payloads from one subtitle clip so font/style survives text rebuilds.
+  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
+  if (!component || !component.properties) {
+    return [];
+  }
+
+  var snapshots = [];
+  subcreator_collect_mogrt_text_payload_snapshots_recursive(component.properties, "", snapshots);
+  return snapshots;
+}
+
+function subcreator_apply_text_clone_changes_to_track_item(trackItem, changes, textValue, debugLines) {
+  // // Reapply captured text-document payloads with new text content to preserve style on rebuilt MOGRT clips.
+  if (!trackItem || !changes || typeof changes.length !== "number") {
+    return {
+      updatedCount: 0,
+      failedCount: 0
+    };
+  }
+
+  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
+  if (!component || !component.properties) {
+    return {
+      updatedCount: 0,
+      failedCount: changes.length
+    };
+  }
+
+  var updatedCount = 0;
+  var failedCount = 0;
+
+  for (var changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
+    var change = changes[changeIndex] || {};
+    var path = subcreator_trim_string(String(change.path || ""));
+    if (!path) {
+      failedCount += 1;
+      continue;
+    }
+
+    var property = subcreator_find_property_by_path(component.properties, path);
+    if (!property || typeof property.setValue !== "function") {
+      failedCount += 1;
+      continue;
+    }
+
+    var applied = false;
+    try {
+      applied = subcreator_try_apply_mogrt_text_property_raw_value(property, change.rawValue, textValue);
+    } catch (textCloneError) {
+      applied = false;
+    }
+
+    if (applied) {
+      updatedCount += 1;
+    } else {
+      if (debugLines && typeof debugLines.push === "function") {
+        debugLines.push("text tab text clone failed path=" + path);
+      }
+      failedCount += 1;
+    }
+  }
+
+  return {
+    updatedCount: updatedCount,
+    failedCount: failedCount
+  };
 }
 
 function subcreator_try_set_animation_mode_property(property, animationMode) {

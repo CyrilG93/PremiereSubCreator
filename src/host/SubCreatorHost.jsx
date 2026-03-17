@@ -4960,24 +4960,37 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var selectedTrackItems = [];
 
     debugLines.push("text_apply selected=" + String(currentSelection.length) + " edited=" + String(editedItems.length));
-    debugLines.push("text_apply track=" + String(targetTrackIndex));
+    debugLines.push("text_apply source_track=" + String(targetTrackIndex));
 
     var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
     if (overlapConflict) {
-      debugLines.push(
-        "text_apply overlap_abort clip=" +
-          String(overlapConflict.clipName || "") +
-          " range=" +
-          String(Math.round(Number(overlapConflict.startSeconds || 0) * 1000)) +
-          "-" +
-          String(Math.round(Number(overlapConflict.endSeconds || 0) * 1000))
-      );
-      return subcreator_error(
-        "Text editor apply would overlap non-selected clip '" +
-          String(overlapConflict.clipName || "Clip") +
-          "' on the same track. Adjust the selection or timings before applying."
-      );
+      var fallbackTrackIndex = subcreator_find_empty_video_track_above(sequence, targetTrackIndex);
+      if (fallbackTrackIndex >= 0) {
+        targetTrackIndex = fallbackTrackIndex;
+        track = sequence.videoTracks[targetTrackIndex];
+        debugLines.push(
+          "text_apply fallback_track=" +
+            String(targetTrackIndex) +
+            " reason=overlap clip=" +
+            String(overlapConflict.clipName || "")
+        );
+      } else {
+        debugLines.push(
+          "text_apply overlap_abort clip=" +
+            String(overlapConflict.clipName || "") +
+            " range=" +
+            String(Math.round(Number(overlapConflict.startSeconds || 0) * 1000)) +
+            "-" +
+            String(Math.round(Number(overlapConflict.endSeconds || 0) * 1000))
+        );
+        return subcreator_error(
+          "Text editor apply would overlap non-selected clip '" +
+            String(overlapConflict.clipName || "Clip") +
+            "' on the same track, and no empty video track exists above for safe rebuild."
+        );
+      }
     }
+    debugLines.push("text_apply rebuild_track=" + String(targetTrackIndex));
 
     for (var removeIndex = currentSelection.length - 1; removeIndex >= 0; removeIndex -= 1) {
       if (!subcreator_remove_track_item_without_ripple(currentSelection[removeIndex])) {
@@ -6915,6 +6928,23 @@ function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems)
   }
 
   return null;
+}
+
+function subcreator_find_empty_video_track_above(sequence, baseTrackIndex) {
+  // // Find the first already-existing empty video track above the edited subtitles for safe rebuild fallback.
+  if (!sequence || !sequence.videoTracks || isNaN(Number(baseTrackIndex))) {
+    return -1;
+  }
+
+  for (var trackIndex = Number(baseTrackIndex) + 1; trackIndex < sequence.videoTracks.numTracks; trackIndex += 1) {
+    var candidateTrack = sequence.videoTracks[trackIndex];
+    var candidateItems = subcreator_collection_to_array(candidateTrack ? candidateTrack.clips : null);
+    if (candidateItems.length < 1) {
+      return trackIndex;
+    }
+  }
+
+  return -1;
 }
 
 function subcreator_find_inserted_track_item(track, beforeItems, startSeconds, projectItem) {

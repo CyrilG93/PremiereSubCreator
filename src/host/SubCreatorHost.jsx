@@ -756,6 +756,75 @@ function subcreator_collect_selected_mogrt_items(sequence) {
   return mogrtItems;
 }
 
+function subcreator_sort_track_items_by_time(items) {
+  // // Keep subtitle text operations deterministic by sorting selected MOGRT clips in timeline order.
+  var sortedItems = (items || []).slice(0);
+  sortedItems.sort(function (left, right) {
+    var leftStart = subcreator_to_seconds(left && (left.start || left.inPoint || left.startTime));
+    var rightStart = subcreator_to_seconds(right && (right.start || right.inPoint || right.startTime));
+    if (leftStart < rightStart) {
+      return -1;
+    }
+    if (leftStart > rightStart) {
+      return 1;
+    }
+
+    var leftEnd = subcreator_to_seconds(left && (left.end || left.outPoint || left.endTime));
+    var rightEnd = subcreator_to_seconds(right && (right.end || right.outPoint || right.endTime));
+    if (leftEnd < rightEnd) {
+      return -1;
+    }
+    if (leftEnd > rightEnd) {
+      return 1;
+    }
+    return 0;
+  });
+  return sortedItems;
+}
+
+function subcreator_find_track_item_video_track_index(sequence, trackItem) {
+  // // Resolve the owning video track index so rebuilt text clips can stay on the same track.
+  if (!sequence || !sequence.videoTracks || typeof sequence.videoTracks.numTracks !== "number" || !trackItem) {
+    return -1;
+  }
+
+  for (var trackIndex = 0; trackIndex < sequence.videoTracks.numTracks; trackIndex += 1) {
+    var track = sequence.videoTracks[trackIndex];
+    var clips = subcreator_collection_to_array(track ? track.clips : null);
+    for (var clipIndex = 0; clipIndex < clips.length; clipIndex += 1) {
+      if (clips[clipIndex] === trackItem) {
+        return trackIndex;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function subcreator_build_selected_mogrt_text_signature(sequence, trackItems) {
+  // // Encode enough selection details so text-apply can reject stale selections after the user changes clips.
+  var sortedItems = subcreator_sort_track_items_by_time(trackItems || []);
+  var parts = [];
+
+  for (var index = 0; index < sortedItems.length; index += 1) {
+    var trackItem = sortedItems[index];
+    var videoTrackIndex = subcreator_find_track_item_video_track_index(sequence, trackItem);
+    var startSeconds = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
+    var endSeconds = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.outPoint || trackItem.endTime));
+    var clipText = subcreator_trim_string(String(subcreator_extract_text_from_item(trackItem) || "").replace(/\s+/g, " "));
+    parts.push(
+      [
+        String(videoTrackIndex),
+        String(Math.round(Number(startSeconds || 0) * 1000)),
+        String(Math.round(Number(endSeconds || 0) * 1000)),
+        clipText
+      ].join("|")
+    );
+  }
+
+  return parts.join("||");
+}
+
 function subcreator_detect_visual_property_type(rawValue) {
   // // Categorize host property values so panel can render matching input controls.
   if (typeof rawValue === "number") {
@@ -4704,6 +4773,224 @@ function subcreator_get_selected_mogrt_count() {
   }
 }
 
+function subcreator_list_selected_mogrt_text_items() {
+  // // Return selected MOGRT clips as editable subtitle text blocks for the Text tab.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var mogrtItems = subcreator_sort_track_items_by_time(subcreator_collect_selected_mogrt_items(sequence));
+    if (!mogrtItems.length) {
+      return subcreator_ok({
+        selectedCount: 0,
+        signature: "",
+        items: []
+      });
+    }
+
+    var firstTrackIndex = subcreator_find_track_item_video_track_index(sequence, mogrtItems[0]);
+    var sameTrack = true;
+    var items = [];
+
+    for (var itemIndex = 0; itemIndex < mogrtItems.length; itemIndex += 1) {
+      var trackItem = mogrtItems[itemIndex];
+      var trackIndex = subcreator_find_track_item_video_track_index(sequence, trackItem);
+      if (trackIndex !== firstTrackIndex) {
+        sameTrack = false;
+      }
+
+      items.push({
+        selectionIndex: itemIndex,
+        videoTrackIndex: trackIndex,
+        startSeconds: subcreator_to_seconds(trackItem.start || trackItem.inPoint || trackItem.startTime),
+        endSeconds: subcreator_to_seconds(trackItem.end || trackItem.outPoint || trackItem.endTime),
+        text: subcreator_trim_string(String(subcreator_extract_text_from_item(trackItem) || "").replace(/\s+/g, " ")),
+        clipName: subcreator_trim_string(String((trackItem.projectItem && trackItem.projectItem.name) || trackItem.name || "MOGRT"))
+      });
+    }
+
+    return subcreator_ok({
+      selectedCount: mogrtItems.length,
+      sameTrack: sameTrack,
+      videoTrackIndex: firstTrackIndex,
+      signature: subcreator_build_selected_mogrt_text_signature(sequence, mogrtItems),
+      items: items
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
+function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
+  // // Rebuild selected subtitle MOGRT clips from edited text blocks while keeping them on the same track.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
+    var payload = JSON.parse(decodedPayload || "{}");
+    var editedItems = payload && payload.items && typeof payload.items.length === "number" ? payload.items : [];
+    var currentSelection = subcreator_sort_track_items_by_time(subcreator_collect_selected_mogrt_items(sequence));
+    var currentSignature = subcreator_build_selected_mogrt_text_signature(sequence, currentSelection);
+    var expectedSignature = subcreator_trim_string(String(payload.selectionSignature || ""));
+
+    if (!currentSelection.length) {
+      return subcreator_ok({
+        selectedCount: 0,
+        rebuiltCount: 0,
+        failedCount: 0,
+        debug: ["text_apply selection empty"]
+      });
+    }
+
+    if (expectedSignature && currentSignature !== expectedSignature) {
+      return subcreator_error("Selection changed since last read. Reload the Text tab selection before applying.");
+    }
+
+    if (!editedItems.length) {
+      return subcreator_error("No edited text blocks supplied.");
+    }
+
+    var targetTrackIndex = subcreator_find_track_item_video_track_index(sequence, currentSelection[0]);
+    if (targetTrackIndex < 0) {
+      return subcreator_error("Unable to resolve selected MOGRT track.");
+    }
+
+    for (var selectedIndex = 0; selectedIndex < currentSelection.length; selectedIndex += 1) {
+      if (subcreator_find_track_item_video_track_index(sequence, currentSelection[selectedIndex]) !== targetTrackIndex) {
+        return subcreator_error("Text tab currently supports selected MOGRT clips on one video track only.");
+      }
+    }
+
+    var track = sequence.videoTracks ? sequence.videoTracks[targetTrackIndex] : null;
+    if (!track) {
+      return subcreator_error("Unable to access target video track.");
+    }
+
+    var sourceSnapshots = [];
+    for (var snapshotIndex = 0; snapshotIndex < currentSelection.length; snapshotIndex += 1) {
+      sourceSnapshots.push({
+        projectItem: currentSelection[snapshotIndex] ? currentSelection[snapshotIndex].projectItem || null : null,
+        visualChanges: subcreator_build_visual_clone_changes_from_track_item(currentSelection[snapshotIndex])
+      });
+    }
+
+    var fallbackOptions = payload && payload.options && typeof payload.options === "object" ? payload.options : {};
+    var fallbackMogrtPath = subcreator_resolve_mogrt_path(fallbackOptions);
+    var fallbackPathCandidates = subcreator_build_mogrt_path_candidates(fallbackMogrtPath);
+    var debugLines = [];
+    var rebuiltCount = 0;
+    var failedCount = 0;
+    var clonedStyleUpdates = 0;
+    var clonedStyleFailures = 0;
+    var durationAdjusted = 0;
+    var selectedTrackItems = [];
+
+    debugLines.push("text_apply selected=" + String(currentSelection.length) + " edited=" + String(editedItems.length));
+    debugLines.push("text_apply track=" + String(targetTrackIndex));
+
+    for (var removeIndex = currentSelection.length - 1; removeIndex >= 0; removeIndex -= 1) {
+      if (!subcreator_remove_track_item_without_ripple(currentSelection[removeIndex])) {
+        failedCount += 1;
+        debugLines.push("text_apply remove_failed index=" + String(removeIndex));
+      }
+    }
+
+    for (var editedIndex = 0; editedIndex < editedItems.length; editedIndex += 1) {
+      var editedItem = editedItems[editedIndex] || {};
+      var textValue = subcreator_trim_string(String(editedItem.text || "").replace(/\s+/g, " "));
+      var startSeconds = Number(editedItem.startSeconds);
+      var endSeconds = Number(editedItem.endSeconds);
+      var sourceSelectionIndex = Number(editedItem.sourceSelectionIndex);
+      if (isNaN(sourceSelectionIndex) || sourceSelectionIndex < 0 || sourceSelectionIndex >= sourceSnapshots.length) {
+        sourceSelectionIndex = 0;
+      }
+
+      if (!textValue || isNaN(startSeconds) || isNaN(endSeconds) || endSeconds <= startSeconds) {
+        failedCount += 1;
+        debugLines.push("text_apply invalid_item index=" + String(editedIndex));
+        continue;
+      }
+
+      var sourceSnapshot = sourceSnapshots[sourceSelectionIndex] || sourceSnapshots[0] || {
+        projectItem: null,
+        visualChanges: []
+      };
+      var insertedTrackItem = null;
+
+      if (sourceSnapshot.projectItem) {
+        insertedTrackItem = subcreator_try_place_project_item_on_track(
+          sequence,
+          track,
+          sourceSnapshot.projectItem,
+          startSeconds,
+          targetTrackIndex,
+          0
+        );
+      }
+
+      if (!insertedTrackItem && fallbackPathCandidates.length > 0) {
+        var importAttempt = subcreator_try_import_mogrt(sequence, fallbackPathCandidates, startSeconds, targetTrackIndex, 0);
+        insertedTrackItem = importAttempt.trackItem;
+        if (insertedTrackItem) {
+          debugLines.push(
+            "text_apply import_fallback path=" + String(importAttempt.usedPath || "") + " mode=" + String(importAttempt.usedTimeMode || "")
+          );
+        }
+      }
+
+      if (!insertedTrackItem) {
+        failedCount += 1;
+        debugLines.push("text_apply insert_failed index=" + String(editedIndex));
+        continue;
+      }
+
+      if (sourceSnapshot.visualChanges && sourceSnapshot.visualChanges.length > 0) {
+        var cloneStats = subcreator_apply_visual_changes_to_track_item(insertedTrackItem, sourceSnapshot.visualChanges, debugLines);
+        clonedStyleUpdates += cloneStats.updatedCount;
+        clonedStyleFailures += cloneStats.failedCount;
+      }
+
+      var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null);
+      if (!textStats || textStats.textUpdates < 1) {
+        debugLines.push("text_apply text_update_missing index=" + String(editedIndex));
+      }
+
+      if (subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds)) {
+        durationAdjusted += 1;
+      } else {
+        debugLines.push("text_apply duration_failed index=" + String(editedIndex));
+      }
+
+      selectedTrackItems.push(insertedTrackItem);
+      rebuiltCount += 1;
+    }
+
+    for (var selectIndex = 0; selectIndex < selectedTrackItems.length; selectIndex += 1) {
+      subcreator_try_select_track_item(selectedTrackItems[selectIndex], selectIndex === 0);
+    }
+
+    var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);
+    debugLines.push("text_apply cloned_style_updates=" + String(clonedStyleUpdates));
+    debugLines.push("text_apply cloned_style_failures=" + String(clonedStyleFailures));
+    debugLines.push("text_apply duration_adjusted=" + String(durationAdjusted));
+    debugLines.push("text_apply ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
+
+    return subcreator_ok({
+      selectedCount: currentSelection.length,
+      rebuiltCount: rebuiltCount,
+      failedCount: failedCount,
+      debug: debugLines
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
   // // Apply visual property changes from panel payload to each selected MOGRT clip.
   try {
@@ -5898,6 +6185,132 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
   return stats;
 }
 
+function subcreator_build_visual_clone_changes_from_track_item(trackItem) {
+  // // Snapshot editable visual controls from one clip so split/merge can recreate clips without losing style.
+  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
+  if (!component || !component.properties) {
+    return [];
+  }
+
+  var properties = [];
+  subcreator_visual_reset_group_sequence_axis_preferences();
+  subcreator_visual_reset_text_style_option_cache();
+  subcreator_collect_mogrt_visual_properties_recursive(component.properties, "", "", properties);
+
+  var changes = [];
+  for (var propertyIndex = 0; propertyIndex < properties.length; propertyIndex += 1) {
+    var property = properties[propertyIndex];
+    if (!property || !property.path) {
+      continue;
+    }
+
+    changes.push({
+      path: property.path,
+      valueType: property.valueType,
+      controlKind: property.controlKind,
+      value: property.value,
+      vectorScale: property.vectorScale || null,
+      vectorMode: property.vectorMode || null
+    });
+  }
+
+  return changes;
+}
+
+function subcreator_apply_visual_changes_to_track_item(trackItem, changes, debugLines) {
+  // // Reuse visual-editor setters so rebuilt text clips inherit the source clip appearance as closely as possible.
+  if (!trackItem || !changes || typeof changes.length !== "number") {
+    return {
+      updatedCount: 0,
+      failedCount: 0
+    };
+  }
+
+  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
+  if (!component || !component.properties) {
+    return {
+      updatedCount: 0,
+      failedCount: changes.length
+    };
+  }
+
+  var updatedCount = 0;
+  var failedCount = 0;
+
+  for (var changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
+    var change = changes[changeIndex] || {};
+    var path = subcreator_trim_string(String(change.path || ""));
+    var valueType = subcreator_trim_string(String(change.valueType || "string")).toLowerCase();
+    var controlKind = subcreator_trim_string(String(change.controlKind || "")).toLowerCase();
+    var virtualTextStyleTarget = subcreator_visual_parse_text_style_virtual_path(path);
+    var resolvedPath = virtualTextStyleTarget ? virtualTextStyleTarget.basePath : path;
+    var value = change.value;
+    var vectorScale = null;
+    if (change.vectorScale && Object.prototype.toString.call(change.vectorScale) === "[object Array]") {
+      vectorScale = change.vectorScale;
+    }
+    if (!path) {
+      failedCount += 1;
+      continue;
+    }
+
+    var property = subcreator_find_property_by_path(component.properties, resolvedPath);
+    if (!property || typeof property.setValue !== "function") {
+      failedCount += 1;
+      continue;
+    }
+
+    var applied = false;
+    if (virtualTextStyleTarget) {
+      try {
+        applied = subcreator_try_set_mogrt_text_style_property(property, virtualTextStyleTarget.styleKey, value, {});
+      } catch (textStyleError) {}
+    } else if (controlKind === "color") {
+      try {
+        applied = subcreator_try_set_mogrt_color_property(property, value);
+      } catch (colorError) {}
+    } else if (controlKind === "vector") {
+      try {
+        var parsedVector = subcreator_normalize_visual_payload_value("json", value);
+        if (parsedVector && typeof parsedVector.length === "number") {
+          var sourceVector = [];
+          for (var vectorIndex = 0; vectorIndex < parsedVector.length; vectorIndex += 1) {
+            sourceVector.push(Number(parsedVector[vectorIndex]));
+          }
+
+          var hostVector = subcreator_visual_vector_to_host_units(sourceVector, vectorScale || [1, 1, 1, 1]);
+          property.setValue(hostVector, true);
+          applied = true;
+        }
+      } catch (vectorError) {}
+    }
+
+    if (!applied && controlKind !== "color" && !virtualTextStyleTarget) {
+      try {
+        var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
+        property.setValue(normalizedValue, true);
+        applied = true;
+      } catch (setError) {
+        applied = false;
+      }
+    }
+
+    if (applied) {
+      updatedCount += 1;
+    } else {
+      if (debugLines && typeof debugLines.push === "function") {
+        debugLines.push("text tab visual clone failed path=" + path + " kind=" + controlKind);
+      }
+      failedCount += 1;
+    }
+  }
+
+  return {
+    updatedCount: updatedCount,
+    failedCount: failedCount
+  };
+}
+
 function subcreator_resolve_extension_root() {
   // // Resolve extension root from current host script location.
   var scriptFile = new File($.fileName);
@@ -6106,6 +6519,195 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
   } catch (outPointError) {}
 
   return applied;
+}
+
+function subcreator_remove_track_item_without_ripple(trackItem) {
+  // // Delete one existing MOGRT clip while keeping later timeline items anchored in place.
+  if (!trackItem || typeof trackItem.remove !== "function") {
+    return false;
+  }
+
+  try {
+    trackItem.remove(0, 0);
+    return true;
+  } catch (removeFullSignatureError) {}
+
+  try {
+    trackItem.remove(0);
+    return true;
+  } catch (removeOneArgError) {}
+
+  try {
+    trackItem.remove(false, false);
+    return true;
+  } catch (removeBoolSignatureError) {}
+
+  try {
+    trackItem.remove(false);
+    return true;
+  } catch (removeBoolOneArgError) {}
+
+  try {
+    trackItem.remove();
+    return true;
+  } catch (removeNoArgError) {}
+
+  return false;
+}
+
+function subcreator_find_inserted_track_item(track, beforeItems, startSeconds, projectItem) {
+  // // Resolve the new clip object after overwrite/insert helpers that do not return a TrackItem reference.
+  var afterItems = subcreator_collection_to_array(track ? track.clips : null);
+  for (var afterIndex = 0; afterIndex < afterItems.length; afterIndex += 1) {
+    var candidate = afterItems[afterIndex];
+    var alreadyPresent = false;
+    for (var beforeIndex = 0; beforeIndex < beforeItems.length; beforeIndex += 1) {
+      if (beforeItems[beforeIndex] === candidate) {
+        alreadyPresent = true;
+        break;
+      }
+    }
+
+    if (alreadyPresent) {
+      continue;
+    }
+
+    var candidateStart = subcreator_to_seconds(candidate && (candidate.start || candidate.inPoint || candidate.startTime));
+    if (Math.abs(candidateStart - Number(startSeconds || 0)) > 0.2) {
+      continue;
+    }
+
+    if (projectItem && candidate && candidate.projectItem && candidate.projectItem !== projectItem) {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  var closestCandidate = null;
+  var closestDistance = 999999;
+  for (var candidateIndex = 0; candidateIndex < afterItems.length; candidateIndex += 1) {
+    var fallbackCandidate = afterItems[candidateIndex];
+    var fallbackStart = subcreator_to_seconds(
+      fallbackCandidate && (fallbackCandidate.start || fallbackCandidate.inPoint || fallbackCandidate.startTime)
+    );
+    var fallbackDistance = Math.abs(fallbackStart - Number(startSeconds || 0));
+    if (fallbackDistance < closestDistance) {
+      closestDistance = fallbackDistance;
+      closestCandidate = fallbackCandidate;
+    }
+  }
+
+  return closestDistance <= 0.25 ? closestCandidate : null;
+}
+
+function subcreator_try_place_project_item_on_track(sequence, track, projectItem, startSeconds, videoTrackIndex, audioTrackIndex) {
+  // // Try overwrite/insert variants so rebuilt clips can be recreated from the selected source ProjectItem.
+  if (!track || !projectItem) {
+    return null;
+  }
+
+  var beforeItems = subcreator_collection_to_array(track.clips);
+  var timeObject = null;
+  try {
+    timeObject = new Time();
+    timeObject.seconds = Number(startSeconds || 0);
+  } catch (timeError) {
+    timeObject = null;
+  }
+  var tickValue = subcreator_seconds_to_ticks(startSeconds);
+  var rawSeconds = Number(startSeconds || 0);
+
+  var attempts = [
+    function () {
+      if (typeof track.overwriteClip === "function") {
+        track.overwriteClip(projectItem, tickValue);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (typeof track.overwriteClip === "function") {
+        track.overwriteClip(projectItem, rawSeconds);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (typeof track.insertClip === "function") {
+        track.insertClip(projectItem, tickValue, videoTrackIndex, audioTrackIndex);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (typeof track.insertClip === "function") {
+        track.insertClip(projectItem, rawSeconds, videoTrackIndex, audioTrackIndex);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (typeof sequence.insertClip === "function") {
+        sequence.insertClip(projectItem, tickValue, videoTrackIndex, audioTrackIndex);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (typeof sequence.overwriteClip === "function") {
+        sequence.overwriteClip(projectItem, tickValue, videoTrackIndex, audioTrackIndex);
+        return true;
+      }
+      return false;
+    },
+    function () {
+      if (timeObject && typeof track.insertClip === "function") {
+        track.insertClip(projectItem, timeObject, videoTrackIndex, audioTrackIndex);
+        return true;
+      }
+      return false;
+    }
+  ];
+
+  for (var attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+    try {
+      var attempted = attempts[attemptIndex]();
+      if (!attempted) {
+        continue;
+      }
+      var insertedItem = subcreator_find_inserted_track_item(track, beforeItems, startSeconds, projectItem);
+      if (insertedItem) {
+        return insertedItem;
+      }
+    } catch (insertError) {}
+  }
+
+  return null;
+}
+
+function subcreator_try_select_track_item(trackItem, deselectOthers) {
+  // // Reselect rebuilt clips so the Text tab can continue operating on the updated subtitle block.
+  if (!trackItem || typeof trackItem.setSelected !== "function") {
+    return false;
+  }
+
+  try {
+    trackItem.setSelected(true, deselectOthers === true);
+    return true;
+  } catch (selectError) {}
+
+  try {
+    trackItem.setSelected(1, deselectOthers === true ? 1 : 0);
+    return true;
+  } catch (selectNumericError) {}
+
+  try {
+    trackItem.setSelected(true);
+    return true;
+  } catch (selectSingleError) {}
+
+  return false;
 }
 
 function subcreator_get_video_track_clip_count(track) {

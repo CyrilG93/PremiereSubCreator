@@ -41,6 +41,9 @@
         <button id="tabVisual" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="visual" data-i18n="tab.visual">
           Visual editor
         </button>
+        <button id="tabText" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="text" data-i18n="tab.text">
+          Text editor
+        </button>
       </section>
 
       <section id="modeGenerate" class="mode-panel is-active" data-mode="generate">
@@ -184,6 +187,26 @@
             </div>
             <p id="visualSelectionSummary" class="hint" data-i18n="visual.selectionDefault">Aucune selection MOGRT lue.</p>
             <div id="visualPropertyList" class="visual-property-list"></div>
+          </section>
+        </section>
+      </section>
+      <section id="modeText" class="mode-panel" data-mode="text" hidden>
+        <section class="panel__grid">
+          <section class="field field--full">
+            <span data-i18n="text.title">Text editor for selected MOGRT clips</span>
+            <p class="hint" data-i18n="text.description">
+              Read the selected subtitle MOGRT clips, move words between neighboring subtitles, split or merge blocks, then apply the rebuilt timing.
+            </p>
+            <div class="inline-row inline-row--double">
+              <button id="textReadButton" type="button" class="button button--secondary" data-i18n="action.readTextItems">
+                Read selected subtitles
+              </button>
+              <button id="textApplyButton" type="button" class="button" data-i18n="action.applyTextItems">
+                Apply text changes
+              </button>
+            </div>
+            <p id="textSelectionSummary" class="hint" data-i18n="text.selectionDefault">No subtitle selection loaded yet.</p>
+            <div id="textEditorList" class="text-editor-list"></div>
           </section>
         </section>
       </section>

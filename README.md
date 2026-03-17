@@ -7,6 +7,7 @@ It is designed to be simple to use inside Premiere:
 - choose a MOGRT style
 - generate subtitles on the timeline
 - optionally fine-tune the selected MOGRTs in the built-in visual editor
+- rebalance subtitle text between selected MOGRTs in the built-in text editor
 
 A backup of the previous technical README is kept here:
 - `README.technical-backup.md`
@@ -28,6 +29,11 @@ A backup of the previous technical README is kept here:
   - checkboxes
   - vectors/position/scale
   - font family/style/size when the template exposes them
+- Edit subtitle text after generation in the `Text editor` tab:
+  - move words between neighboring subtitles with drag and drop
+  - split one subtitle at a selected word
+  - merge subtitle blocks
+  - retime rebuilt subtitles automatically
 
 ## Requirements
 
@@ -221,6 +227,26 @@ Useful notes:
 - `Live update` can apply changes while you tweak values
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
+
+## Text editor
+
+After generation, you can switch to the `Text editor` tab to fix subtitle wording and block boundaries without doing manual copy/paste and retiming on the timeline.
+
+Current `V1` workflow:
+1. Select the subtitle MOGRT clips you want to edit in the timeline.
+2. Open the `Text editor` tab.
+3. Click `Read selected subtitles`.
+4. Edit the text directly, or drag one word to another subtitle block.
+5. Use:
+   - `Split at selected word`
+   - `Merge previous`
+   - `Merge next`
+6. Click `Apply text changes`.
+
+Important notes:
+- `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
+- the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
+- timing redistribution is heuristic in this `V1`, so it is designed for practical fixes rather than perfect word-level retiming
 
 ## Dependencies summary
 

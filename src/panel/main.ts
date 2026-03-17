@@ -2,6 +2,15 @@
 import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
 import { parseSrt } from "../core/srt";
+import {
+  mergeTextEditorBlocks,
+  moveTextEditorWord,
+  retimeTextEditorBlocks,
+  sanitizeTextEditorBlocksForApply,
+  splitTextEditorBlock,
+  updateTextEditorBlockText,
+  type TextEditorBlock
+} from "../core/textEditor";
 import type {
   AnimationMode,
   CaptionBuildOptions,
@@ -21,13 +30,22 @@ import {
   openExternalUrl,
   openInstalledMogrtFolder,
   pickSrtPath,
+  readSelectedMogrtTextItems,
   readInstalledMogrtCatalog,
   readSelectedMogrtVisualProperties,
   readSystemFontCatalog,
   readTextFileFromHost,
-  transcribeWithWhisper
+  transcribeWithWhisper,
+  applySelectedMogrtTextItems
 } from "./cepBridge";
-import type { InstalledMogrtCatalog, SystemFontCatalog, WhisperProgressUpdate } from "./cepBridge";
+import type {
+  ApplySelectedMogrtTextResult,
+  InstalledMogrtCatalog,
+  SelectedMogrtTextItem,
+  SystemFontCatalog,
+  TextEditorApplyPayload,
+  WhisperProgressUpdate
+} from "./cepBridge";
 
 type LocaleMap = Record<string, string>;
 
@@ -50,7 +68,7 @@ interface UpdateState {
   downloadUrl: string;
 }
 
-type PanelMode = "generate" | "visual";
+type PanelMode = "generate" | "visual" | "text";
 
 interface HostVisualProperty {
   path: string;
@@ -86,6 +104,11 @@ interface PanelStateSnapshot {
   verboseLogs: boolean;
 }
 
+interface TextEditorBlockState extends TextEditorBlock {
+  editorId: string;
+  selectedWordIndex: number;
+}
+
 interface RgbColor {
   red: number;
   green: number;
@@ -110,8 +133,10 @@ const elements = {
   updateLink: document.querySelector<HTMLAnchorElement>("#updateLink"),
   tabGenerate: document.querySelector<HTMLButtonElement>("#tabGenerate"),
   tabVisual: document.querySelector<HTMLButtonElement>("#tabVisual"),
+  tabText: document.querySelector<HTMLButtonElement>("#tabText"),
   modeGenerate: document.querySelector<HTMLElement>("#modeGenerate"),
   modeVisual: document.querySelector<HTMLElement>("#modeVisual"),
+  modeText: document.querySelector<HTMLElement>("#modeText"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
@@ -138,6 +163,10 @@ const elements = {
   visualApplyProgressText: document.querySelector<HTMLElement>("#visualApplyProgressText"),
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
+  textReadButton: document.querySelector<HTMLButtonElement>("#textReadButton"),
+  textApplyButton: document.querySelector<HTMLButtonElement>("#textApplyButton"),
+  textSelectionSummary: document.querySelector<HTMLParagraphElement>("#textSelectionSummary"),
+  textEditorList: document.querySelector<HTMLElement>("#textEditorList"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
   generateProgress: document.querySelector<HTMLElement>("#generateProgress"),
   generateProgressBar: document.querySelector<HTMLProgressElement>("#generateProgressBar"),
@@ -191,7 +220,13 @@ let currentLogState: PanelLogState | null = null;
 let passiveMogrtRefreshTimer: number | null = null;
 let lastPassiveMogrtCatalogRefreshAt = 0;
 let generateInProgress = false;
+let textApplyInProgress = false;
 let hostThemeListenerBound = false;
+let textEditorBlocks: TextEditorBlockState[] = [];
+let textEditorSelectionSignature = "";
+let textEditorSameTrack = true;
+let textEditorVideoTrackIndex = -1;
+let textEditorBlockIdCounter = 0;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -668,8 +703,8 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     pendingSelectedMogrtId = snapshot.selectedMogrtId;
   }
 
-  if (snapshot.activeMode === "visual") {
-    activeMode = "visual";
+  if (snapshot.activeMode === "visual" || snapshot.activeMode === "text") {
+    activeMode = snapshot.activeMode;
   } else {
     activeMode = "generate";
   }
@@ -1048,6 +1083,11 @@ async function loadLocale(languageCode: string): Promise<void> {
   if (elements.visualApplyProgress && !elements.visualApplyProgress.hidden && elements.visualApplyProgressBar) {
     setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
   }
+  if (textEditorBlocks.length > 0) {
+    renderTextEditor();
+  } else {
+    setTextSelectionSummary(translate("text.selectionDefault"));
+  }
   refreshLiveUpdateButtonState();
   refreshLogControlsState();
   renderCurrentLog();
@@ -1242,12 +1282,22 @@ function setActiveMode(mode: PanelMode): void {
     elements.tabVisual.setAttribute("aria-selected", isActive ? "true" : "false");
   }
 
+  if (elements.tabText) {
+    const isActive = mode === "text";
+    elements.tabText.classList.toggle("is-active", isActive);
+    elements.tabText.setAttribute("aria-selected", isActive ? "true" : "false");
+  }
+
   if (elements.modeGenerate) {
     elements.modeGenerate.hidden = mode !== "generate";
   }
 
   if (elements.modeVisual) {
     elements.modeVisual.hidden = mode !== "visual";
+  }
+
+  if (elements.modeText) {
+    elements.modeText.hidden = mode !== "text";
   }
 }
 
@@ -1533,6 +1583,443 @@ function setVisualApplyProgressState(visible: boolean, done = 0, total = 0): voi
     total: String(total),
     remaining: String(remaining)
   });
+}
+
+function nextTextEditorBlockId(): string {
+  // // Generate stable-enough UI ids for subtitle blocks inside one panel session.
+  textEditorBlockIdCounter += 1;
+  return `text-block-${textEditorBlockIdCounter}`;
+}
+
+function buildTextEditorBlockState(item: SelectedMogrtTextItem): TextEditorBlockState {
+  // // Convert one host-read MOGRT subtitle item into local Text tab state.
+  return {
+    editorId: nextTextEditorBlockId(),
+    selectedWordIndex: -1,
+    sourceSelectionIndex: Number(item.selectionIndex || 0),
+    clipName: String(item.clipName || "").trim(),
+    startSeconds: Number(item.startSeconds || 0),
+    endSeconds: Number(item.endSeconds || 0),
+    text: String(item.text || "").trim(),
+    words: String(item.text || "")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  };
+}
+
+function mapTextEditorBlocksToState(blocks: TextEditorBlock[]): TextEditorBlockState[] {
+  // // Rebuild UI state from pure text-editor helper output after one editing operation.
+  return blocks.map((block) => ({
+    ...block,
+    editorId: nextTextEditorBlockId(),
+    selectedWordIndex: -1
+  }));
+}
+
+function getSanitizedTextEditorBlocks(): TextEditorBlock[] {
+  // // Normalize current Text tab state into apply-ready subtitle blocks and drop any empty rows.
+  return sanitizeTextEditorBlocksForApply(
+    textEditorBlocks.map((block) => ({
+      sourceSelectionIndex: block.sourceSelectionIndex,
+      clipName: block.clipName,
+      startSeconds: block.startSeconds,
+      endSeconds: block.endSeconds,
+      text: block.text,
+      words: block.words.slice()
+    }))
+  );
+}
+
+function setTextSelectionSummary(message: string): void {
+  // // Centralize Text tab status feedback like selection count and unsupported multi-track warnings.
+  if (!elements.textSelectionSummary) {
+    return;
+  }
+  elements.textSelectionSummary.textContent = message;
+}
+
+function setTextButtonsBusy(isBusy: boolean): void {
+  // // Prevent concurrent read/apply actions while the Text tab is rebuilding subtitle clips in Premiere.
+  if (elements.textReadButton) {
+    elements.textReadButton.disabled = isBusy;
+  }
+  if (elements.textApplyButton) {
+    elements.textApplyButton.disabled = isBusy;
+  }
+}
+
+function formatTextEditorSeconds(seconds: number): string {
+  // // Render compact time labels so subtitle blocks stay readable inside the panel.
+  const safeSeconds = Math.max(0, Number(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds - minutes * 60;
+  return `${String(minutes).padStart(2, "0")}:${remainingSeconds.toFixed(2).padStart(5, "0")}`;
+}
+
+function formatTextEditorRangeLabel(block: TextEditorBlockState): string {
+  // // Show start, end, and duration for one subtitle block in the Text tab.
+  const duration = Math.max(0, block.endSeconds - block.startSeconds);
+  return translateTemplate("text.blockRange", {
+    start: formatTextEditorSeconds(block.startSeconds),
+    end: formatTextEditorSeconds(block.endSeconds),
+    duration: duration.toFixed(2)
+  });
+}
+
+function selectTextEditorWord(blockIndex: number, wordIndex: number): void {
+  // // Track which word the user picked so split actions can cut before that exact chip.
+  textEditorBlocks = textEditorBlocks.map((block, index) => ({
+    ...block,
+    selectedWordIndex: index === blockIndex && block.selectedWordIndex === wordIndex ? -1 : index === blockIndex ? wordIndex : -1
+  }));
+  renderTextEditor();
+}
+
+function applyTextEditorBlocks(blocks: TextEditorBlock[]): void {
+  // // Commit one pure text-edit result back into UI state and re-render the Text tab.
+  textEditorBlocks = mapTextEditorBlocksToState(retimeTextEditorBlocks(blocks));
+  renderTextEditor();
+}
+
+function updateTextEditorBlockInput(blockIndex: number, nextText: string): void {
+  // // Keep Text tab state synchronized with freeform text edits without hitting Premiere yet.
+  textEditorBlocks = textEditorBlocks.map((block, index) => {
+    if (index !== blockIndex) {
+      return block;
+    }
+    const words = String(nextText || "")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return {
+      ...block,
+      text: String(nextText || ""),
+      words,
+      selectedWordIndex:
+        block.selectedWordIndex >= 0 && block.selectedWordIndex < words.length ? block.selectedWordIndex : -1
+    };
+  });
+}
+
+function commitTextEditorBlockInput(blockIndex: number, nextText: string): void {
+  // // Normalize one edited subtitle row after blur/change and refresh its chip list/timing display.
+  const updatedBlocks = updateTextEditorBlockText(
+    textEditorBlocks.map((block) => ({
+      sourceSelectionIndex: block.sourceSelectionIndex,
+      clipName: block.clipName,
+      startSeconds: block.startSeconds,
+      endSeconds: block.endSeconds,
+      text: block.text,
+      words: block.words.slice()
+    })),
+    blockIndex,
+    nextText
+  );
+  textEditorBlocks = mapTextEditorBlocksToState(updatedBlocks);
+  renderTextEditor();
+}
+
+function parseTextEditorDragPayload(event: DragEvent): { sourceBlockIndex: number; sourceWordIndex: number } | null {
+  // // Decode one dragged word origin so drops can move chips across subtitle blocks.
+  const rawPayload = event.dataTransfer?.getData("application/x-subcreator-word");
+  if (!rawPayload) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawPayload) as { sourceBlockIndex?: unknown; sourceWordIndex?: unknown };
+    const sourceBlockIndex = Number(parsed.sourceBlockIndex);
+    const sourceWordIndex = Number(parsed.sourceWordIndex);
+    if (!Number.isFinite(sourceBlockIndex) || !Number.isFinite(sourceWordIndex)) {
+      return null;
+    }
+    return {
+      sourceBlockIndex,
+      sourceWordIndex
+    };
+  } catch {
+    return null;
+  }
+}
+
+function moveTextEditorWordByDrop(targetBlockIndex: number, targetWordIndex?: number): (event: DragEvent) => void {
+  // // Build one drop handler that inserts the dragged word before one chip or appends it to the target block.
+  return (event: DragEvent) => {
+    event.preventDefault();
+    const payload = parseTextEditorDragPayload(event);
+    if (!payload) {
+      return;
+    }
+    const updatedBlocks = moveTextEditorWord(
+      textEditorBlocks.map((block) => ({
+        sourceSelectionIndex: block.sourceSelectionIndex,
+        clipName: block.clipName,
+        startSeconds: block.startSeconds,
+        endSeconds: block.endSeconds,
+        text: block.text,
+        words: block.words.slice()
+      })),
+      payload.sourceBlockIndex,
+      payload.sourceWordIndex,
+      targetBlockIndex,
+      targetWordIndex
+    );
+    applyTextEditorBlocks(updatedBlocks);
+  };
+}
+
+function bindTextEditorDropTarget(node: HTMLElement, targetBlockIndex: number, targetWordIndex?: number): void {
+  // // Attach drag-over/drop handlers to chips and block containers for intuitive word moves.
+  node.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    node.classList.add("text-chip--drop-target");
+  });
+  node.addEventListener("dragleave", () => {
+    node.classList.remove("text-chip--drop-target");
+  });
+  node.addEventListener("drop", (event) => {
+    node.classList.remove("text-chip--drop-target");
+    moveTextEditorWordByDrop(targetBlockIndex, targetWordIndex)(event);
+  });
+}
+
+function renderTextEditor(): void {
+  // // Render subtitle blocks, editable text, and draggable word chips for the Text tab.
+  if (!elements.textEditorList) {
+    return;
+  }
+
+  elements.textEditorList.innerHTML = "";
+  if (textEditorBlocks.length < 1) {
+    elements.textEditorList.textContent = translate("text.emptyState");
+    return;
+  }
+
+  textEditorBlocks.forEach((block, blockIndex) => {
+    const card = document.createElement("article");
+    card.className = "text-block";
+
+    const header = document.createElement("div");
+    header.className = "text-block__header";
+
+    const title = document.createElement("div");
+    title.className = "text-block__title";
+    title.textContent = translateTemplate("text.blockLabel", {
+      index: String(blockIndex + 1)
+    });
+
+    const meta = document.createElement("div");
+    meta.className = "text-block__meta";
+    meta.textContent = formatTextEditorRangeLabel(block);
+
+    header.append(title, meta);
+
+    const clipName = document.createElement("div");
+    clipName.className = "text-block__clip";
+    clipName.textContent = block.clipName || translate("text.unnamedClip");
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "text-block__textarea";
+    textarea.value = block.text;
+    textarea.placeholder = translate("text.textPlaceholder");
+    textarea.addEventListener("input", () => {
+      updateTextEditorBlockInput(blockIndex, textarea.value);
+    });
+    textarea.addEventListener("change", () => {
+      commitTextEditorBlockInput(blockIndex, textarea.value);
+    });
+    textarea.addEventListener("blur", () => {
+      commitTextEditorBlockInput(blockIndex, textarea.value);
+    });
+
+    const chips = document.createElement("div");
+    chips.className = "text-chip-list";
+    bindTextEditorDropTarget(chips, blockIndex);
+
+    block.words.forEach((word, wordIndex) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "text-chip";
+      if (block.selectedWordIndex === wordIndex) {
+        chip.classList.add("is-selected");
+      }
+      chip.textContent = word;
+      chip.draggable = true;
+      chip.addEventListener("click", () => {
+        selectTextEditorWord(blockIndex, wordIndex);
+      });
+      chip.addEventListener("dragstart", (event) => {
+        chip.classList.add("is-dragging");
+        event.dataTransfer?.setData(
+          "application/x-subcreator-word",
+          JSON.stringify({
+            sourceBlockIndex: blockIndex,
+            sourceWordIndex: wordIndex
+          })
+        );
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+      chip.addEventListener("dragend", () => {
+        chip.classList.remove("is-dragging");
+      });
+      bindTextEditorDropTarget(chip, blockIndex, wordIndex);
+      chips.appendChild(chip);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "text-block__actions";
+
+    const mergePreviousButton = document.createElement("button");
+    mergePreviousButton.type = "button";
+    mergePreviousButton.className = "button button--secondary";
+    mergePreviousButton.textContent = translate("action.mergePrevious");
+    mergePreviousButton.disabled = blockIndex < 1;
+    mergePreviousButton.addEventListener("click", () => {
+      applyTextEditorBlocks(
+        mergeTextEditorBlocks(
+          textEditorBlocks.map((item) => ({
+            sourceSelectionIndex: item.sourceSelectionIndex,
+            clipName: item.clipName,
+            startSeconds: item.startSeconds,
+            endSeconds: item.endSeconds,
+            text: item.text,
+            words: item.words.slice()
+          })),
+          blockIndex,
+          "previous"
+        )
+      );
+    });
+
+    const splitButton = document.createElement("button");
+    splitButton.type = "button";
+    splitButton.className = "button button--secondary";
+    splitButton.textContent = translate("action.splitSelectedWord");
+    splitButton.disabled = block.selectedWordIndex <= 0 || block.selectedWordIndex >= block.words.length;
+    splitButton.addEventListener("click", () => {
+      if (block.selectedWordIndex <= 0) {
+        return;
+      }
+      applyTextEditorBlocks(
+        splitTextEditorBlock(
+          textEditorBlocks.map((item) => ({
+            sourceSelectionIndex: item.sourceSelectionIndex,
+            clipName: item.clipName,
+            startSeconds: item.startSeconds,
+            endSeconds: item.endSeconds,
+            text: item.text,
+            words: item.words.slice()
+          })),
+          blockIndex,
+          block.selectedWordIndex
+        )
+      );
+    });
+
+    const mergeNextButton = document.createElement("button");
+    mergeNextButton.type = "button";
+    mergeNextButton.className = "button button--secondary";
+    mergeNextButton.textContent = translate("action.mergeNext");
+    mergeNextButton.disabled = blockIndex >= textEditorBlocks.length - 1;
+    mergeNextButton.addEventListener("click", () => {
+      applyTextEditorBlocks(
+        mergeTextEditorBlocks(
+          textEditorBlocks.map((item) => ({
+            sourceSelectionIndex: item.sourceSelectionIndex,
+            clipName: item.clipName,
+            startSeconds: item.startSeconds,
+            endSeconds: item.endSeconds,
+            text: item.text,
+            words: item.words.slice()
+          })),
+          blockIndex,
+          "next"
+        )
+      );
+    });
+
+    actions.append(mergePreviousButton, splitButton, mergeNextButton);
+    card.append(header, clipName, textarea, chips, actions);
+    elements.textEditorList?.appendChild(card);
+  });
+}
+
+async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
+  // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
+  const result = await readSelectedMogrtTextItems();
+  textEditorSelectionSignature = result.signature;
+  textEditorSameTrack = result.sameTrack !== false;
+  textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
+  textEditorBlocks = result.items.map((item) => buildTextEditorBlockState(item));
+  renderTextEditor();
+
+  if (emitHostLog) {
+    setStructuredLog(translate("log.hostResult"), result);
+  }
+
+  if (result.selectedCount < 1) {
+    setTextSelectionSummary(translate("text.selectionDefault"));
+    return;
+  }
+
+  if (!textEditorSameTrack) {
+    setTextSelectionSummary(
+      translateTemplate("text.selectionMixedTracks", {
+        clips: String(result.selectedCount)
+      })
+    );
+    return;
+  }
+
+  setTextSelectionSummary(
+    translateTemplate("text.selectionSummary", {
+      clips: String(result.selectedCount),
+      track: String(Math.max(0, textEditorVideoTrackIndex) + 1)
+    })
+  );
+}
+
+async function applyTextEditorChanges(): Promise<void> {
+  // // Rebuild selected subtitle MOGRTs from edited Text tab blocks using heuristic V1 timing redistribution.
+  if (textApplyInProgress) {
+    return;
+  }
+  if (!textEditorSelectionSignature) {
+    throw new Error(translate("error.textSelectionMissing"));
+  }
+  if (!textEditorSameTrack) {
+    throw new Error(translate("error.textMixedTracks"));
+  }
+
+  const blocksToApply = getSanitizedTextEditorBlocks();
+  if (blocksToApply.length < 1) {
+    throw new Error(translate("error.textEmptyBlocks"));
+  }
+
+  const options = collectBuildOptions();
+  const payload: TextEditorApplyPayload = {
+    selectionSignature: textEditorSelectionSignature,
+    items: blocksToApply.map((block) => ({
+      sourceSelectionIndex: block.sourceSelectionIndex,
+      startSeconds: block.startSeconds,
+      endSeconds: block.endSeconds,
+      text: block.text
+    })),
+    options
+  };
+
+  textApplyInProgress = true;
+  setTextButtonsBusy(true);
+  try {
+    const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
+    setStructuredLog(translate("log.textApplyDone"), result);
+    await loadTextItemsFromSelection();
+  } finally {
+    textApplyInProgress = false;
+    setTextButtonsBusy(false);
+  }
 }
 
 function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
@@ -3269,6 +3756,10 @@ async function initialize(): Promise<void> {
     setActiveMode("visual");
     persistPanelState();
   });
+  elements.tabText?.addEventListener("click", () => {
+    setActiveMode("text");
+    persistPanelState();
+  });
 
   elements.sourceMode?.addEventListener("change", () => {
     toggleSourceFields();
@@ -3386,6 +3877,28 @@ async function initialize(): Promise<void> {
       }
       await applyVisualChangesToSelection();
       persistPanelState();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
+  elements.textReadButton?.addEventListener("click", async () => {
+    try {
+      if (textApplyInProgress) {
+        return;
+      }
+      await loadTextItemsFromSelection(true);
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
+  elements.textApplyButton?.addEventListener("click", async () => {
+    try {
+      if (textApplyInProgress) {
+        return;
+      }
+      await applyTextEditorChanges();
     } catch (error) {
       setLog(String(error), true);
     }

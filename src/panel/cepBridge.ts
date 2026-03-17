@@ -1,5 +1,5 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
-import type { HostApplyPayload, MogrtTemplateItem } from "../core/types";
+import type { CaptionBuildOptions, HostApplyPayload, MogrtTemplateItem } from "../core/types";
 import { unzipSync } from "fflate";
 import type { WhisperSequenceRangeMode } from "../core/types";
 
@@ -107,6 +107,43 @@ export interface ApplyVisualPropertiesResult {
   clipStartIndex?: number;
   clipEndIndex?: number;
   updatedCount: number;
+  failedCount: number;
+  debug?: string[];
+}
+
+export interface SelectedMogrtTextItem {
+  selectionIndex: number;
+  videoTrackIndex: number;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+  clipName: string;
+}
+
+export interface SelectedMogrtTextItemList {
+  selectedCount: number;
+  sameTrack: boolean;
+  videoTrackIndex?: number;
+  signature: string;
+  items: SelectedMogrtTextItem[];
+}
+
+export interface TextEditorApplyItemPayload {
+  sourceSelectionIndex: number;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface TextEditorApplyPayload {
+  selectionSignature: string;
+  items: TextEditorApplyItemPayload[];
+  options: CaptionBuildOptions;
+}
+
+export interface ApplySelectedMogrtTextResult {
+  selectedCount: number;
+  rebuiltCount: number;
   failedCount: number;
   debug?: string[];
 }
@@ -2373,6 +2410,39 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
   };
 }
 
+function normalizeSelectedMogrtTextItemList(data: unknown): SelectedMogrtTextItemList {
+  // // Sanitize host text-selection payload before rendering editable subtitle blocks in the Text tab.
+  const payload = (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) || {};
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
+  const items: SelectedMogrtTextItem[] = [];
+
+  for (const rawItem of rawItems) {
+    const item = rawItem && typeof rawItem === "object" ? (rawItem as Record<string, unknown>) : null;
+    if (!item) {
+      continue;
+    }
+
+    const startSeconds = Number(item.startSeconds);
+    const endSeconds = Number(item.endSeconds);
+    items.push({
+      selectionIndex: Number(item.selectionIndex || 0),
+      videoTrackIndex: Number(item.videoTrackIndex || 0),
+      startSeconds: Number.isFinite(startSeconds) ? startSeconds : 0,
+      endSeconds: Number.isFinite(endSeconds) ? endSeconds : 0,
+      text: String(item.text || "").trim(),
+      clipName: String(item.clipName || "").trim()
+    });
+  }
+
+  return {
+    selectedCount: Number(payload.selectedCount || items.length),
+    sameTrack: payload.sameTrack !== false,
+    videoTrackIndex: Number.isFinite(Number(payload.videoTrackIndex)) ? Number(payload.videoTrackIndex) : undefined,
+    signature: String(payload.signature || ""),
+    items
+  };
+}
+
 export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrtVisualPropertyList> {
   // // Request editable MOGRT properties from selected timeline clips.
   const response = await evalHostJson<SelectedMogrtVisualPropertyList>("subcreator_list_selected_mogrt_properties()");
@@ -2381,6 +2451,16 @@ export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrt
   }
 
   return normalizeVisualPropertyList(response.data);
+}
+
+export async function readSelectedMogrtTextItems(): Promise<SelectedMogrtTextItemList> {
+  // // Request selected MOGRT text blocks from host for Text tab editing.
+  const response = await evalHostJson<SelectedMogrtTextItemList>("subcreator_list_selected_mogrt_text_items()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read selected MOGRT text items.");
+  }
+
+  return normalizeSelectedMogrtTextItemList(response.data);
 }
 
 export async function getSelectedMogrtCount(): Promise<number> {
@@ -2574,6 +2654,24 @@ export async function applyVisualPropertiesToSelectedMogrts(
     clipStartIndex: Number.isFinite(Number(response.data?.clipStartIndex)) ? Number(response.data?.clipStartIndex) : undefined,
     clipEndIndex: Number.isFinite(Number(response.data?.clipEndIndex)) ? Number(response.data?.clipEndIndex) : undefined,
     updatedCount: Number(response.data?.updatedCount || 0),
+    failedCount: Number(response.data?.failedCount || 0),
+    debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined
+  };
+}
+
+export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayload): Promise<ApplySelectedMogrtTextResult> {
+  // // Send edited subtitle text blocks to host so it can rebuild and retime the selected MOGRT clips.
+  const encodedPayload = encodeURIComponent(JSON.stringify(payload));
+  const response = await evalHostJson<ApplySelectedMogrtTextResult>(
+    `subcreator_apply_selected_mogrt_text_items("${escapeForJsx(encodedPayload)}")`
+  );
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to apply selected MOGRT text items.");
+  }
+
+  return {
+    selectedCount: Number(response.data?.selectedCount || 0),
+    rebuiltCount: Number(response.data?.rebuiltCount || 0),
     failedCount: Number(response.data?.failedCount || 0),
     debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined
   };

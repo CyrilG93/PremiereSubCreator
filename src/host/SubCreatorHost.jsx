@@ -4917,10 +4917,6 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       return subcreator_error("Selection changed since last read. Reload the Text tab selection before applying.");
     }
 
-    if (!editedItems.length) {
-      return subcreator_error("No edited text blocks supplied.");
-    }
-
     var targetTrackIndex = subcreator_find_track_item_video_track_index(sequence, currentSelection[0]);
     if (targetTrackIndex < 0) {
       return subcreator_error("Unable to resolve selected MOGRT track.");
@@ -4935,6 +4931,32 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var track = sequence.videoTracks ? sequence.videoTracks[targetTrackIndex] : null;
     if (!track) {
       return subcreator_error("Unable to access target video track.");
+    }
+
+    var replaceSelectionStartIndex = Number(payload.replaceSelectionStartIndex);
+    var replaceSelectionEndIndex = Number(payload.replaceSelectionEndIndex);
+    if (isNaN(replaceSelectionStartIndex) || replaceSelectionStartIndex < 0) {
+      replaceSelectionStartIndex = 0;
+    }
+    if (isNaN(replaceSelectionEndIndex) || replaceSelectionEndIndex >= currentSelection.length) {
+      replaceSelectionEndIndex = currentSelection.length - 1;
+    }
+    if (replaceSelectionEndIndex < replaceSelectionStartIndex) {
+      replaceSelectionEndIndex = replaceSelectionStartIndex;
+    }
+
+    var selectionItemsToReplace = [];
+    var untouchedSelectedTrackItems = [];
+    for (var currentIndex = 0; currentIndex < currentSelection.length; currentIndex += 1) {
+      if (currentIndex >= replaceSelectionStartIndex && currentIndex <= replaceSelectionEndIndex) {
+        selectionItemsToReplace.push(currentSelection[currentIndex]);
+      } else {
+        untouchedSelectedTrackItems.push(currentSelection[currentIndex]);
+      }
+    }
+
+    if (selectionItemsToReplace.length < 1) {
+      return subcreator_error("No selected subtitle range available for text rebuild.");
     }
 
     var sourceSnapshots = [];
@@ -4960,9 +4982,12 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var selectedTrackItems = [];
 
     debugLines.push("text_apply selected=" + String(currentSelection.length) + " edited=" + String(editedItems.length));
+    debugLines.push(
+      "text_apply replace_range=" + String(replaceSelectionStartIndex) + "-" + String(replaceSelectionEndIndex)
+    );
     debugLines.push("text_apply source_track=" + String(targetTrackIndex));
 
-    var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
+    var overlapConflict = subcreator_find_text_rebuild_overlap(track, selectionItemsToReplace, editedItems);
     if (overlapConflict) {
       var fallbackTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
       if (fallbackTrackInfo && fallbackTrackInfo.index >= 0) {
@@ -4994,8 +5019,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     }
     debugLines.push("text_apply rebuild_track=" + String(targetTrackIndex));
 
-    for (var removeIndex = currentSelection.length - 1; removeIndex >= 0; removeIndex -= 1) {
-      if (!subcreator_remove_track_item_without_ripple(currentSelection[removeIndex])) {
+    for (var removeIndex = selectionItemsToReplace.length - 1; removeIndex >= 0; removeIndex -= 1) {
+      if (!subcreator_remove_track_item_without_ripple(selectionItemsToReplace[removeIndex])) {
         failedCount += 1;
         debugLines.push("text_apply remove_failed index=" + String(removeIndex));
       }
@@ -5088,8 +5113,9 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       rebuiltCount += 1;
     }
 
-    for (var selectIndex = 0; selectIndex < selectedTrackItems.length; selectIndex += 1) {
-      subcreator_try_select_track_item(selectedTrackItems[selectIndex], selectIndex === 0);
+    var selectionAfterApply = subcreator_sort_track_items_by_time(untouchedSelectedTrackItems.concat(selectedTrackItems));
+    for (var selectIndex = 0; selectIndex < selectionAfterApply.length; selectIndex += 1) {
+      subcreator_try_select_track_item(selectionAfterApply[selectIndex], selectIndex === 0);
     }
 
     var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);

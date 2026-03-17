@@ -82,6 +82,7 @@
   "log.whisperDone": "Whisper termine, modele:",
   "log.visualApplyDone": "Resultat application editeur visuel:",
   "log.textApplyDone": "Resultat application editeur texte:",
+  "log.textNoChanges": "Aucun changement texte detecte.",
   "error.missingSrtPath": "Selectionne un fichier SRT via Parcourir.",
   "error.emptySrt": "Le fichier SRT ne contient aucun sous-titre valide.",
   "error.missingActiveSequenceAudio": "Impossible d'exporter l'audio de la sequence active pour Whisper.",

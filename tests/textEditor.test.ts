@@ -1,6 +1,7 @@
 // // Verify text-tab editing helpers for moving, splitting, merging, and retiming subtitle blocks.
 import { describe, expect, it } from "vitest";
 import {
+  buildTextEditorApplyPlan,
   buildTextEditorBlocks,
   mergeTextEditorBlocks,
   moveTextEditorWord,
@@ -191,5 +192,100 @@ describe("textEditor helpers", () => {
     expect(sanitized[0].text).toBe("bonjour");
     expect(sanitized[0].startSeconds).toBe(0);
     expect(sanitized[0].endSeconds).toBe(5);
+  });
+
+  it("builds an apply plan only for the changed middle range", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four"
+      }
+    ]);
+
+    const edited = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two updated"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three updated"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four"
+      }
+    ]);
+
+    const plan = buildTextEditorApplyPlan(original, edited);
+    expect(plan).not.toBeNull();
+    expect(plan?.selectionStartIndex).toBe(1);
+    expect(plan?.selectionEndIndex).toBe(2);
+    expect(plan?.blocks).toHaveLength(2);
+    expect(plan?.blocks[0].text).toBe("two updated");
+    expect(plan?.blocks[1].text).toBe("three updated");
+    expect(plan?.timingRange.startSeconds).toBe(1);
+    expect(plan?.timingRange.endSeconds).toBe(3);
+  });
+
+  it("returns no apply plan when nothing changed", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "same"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "content"
+      }
+    ]);
+
+    expect(buildTextEditorApplyPlan(original, original)).toBeNull();
   });
 });

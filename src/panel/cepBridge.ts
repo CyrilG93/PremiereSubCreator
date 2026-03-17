@@ -137,6 +137,8 @@ export interface TextEditorApplyItemPayload {
 
 export interface TextEditorApplyPayload {
   selectionSignature: string;
+  replaceSelectionStartIndex: number;
+  replaceSelectionEndIndex: number;
   items: TextEditorApplyItemPayload[];
   options: CaptionBuildOptions;
 }

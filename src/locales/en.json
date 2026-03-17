@@ -82,6 +82,7 @@
   "log.whisperDone": "Whisper done, model:",
   "log.visualApplyDone": "Visual editor apply result:",
   "log.textApplyDone": "Text editor apply result:",
+  "log.textNoChanges": "No text changes detected.",
   "error.missingSrtPath": "Select an SRT file using Browse.",
   "error.emptySrt": "The SRT file contains no valid subtitle cues.",
   "error.missingActiveSequenceAudio": "Unable to export the active sequence audio for Whisper.",

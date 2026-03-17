@@ -16,6 +16,13 @@ export interface TextEditorTimingRange {
   endSeconds: number;
 }
 
+export interface TextEditorApplyPlan {
+  selectionStartIndex: number;
+  selectionEndIndex: number;
+  timingRange: TextEditorTimingRange;
+  blocks: TextEditorBlock[];
+}
+
 function normalizeTextEditorWords(text: string): string[] {
   // // Split one subtitle text into compact word tokens while preserving punctuation on each token.
   return String(text || "")
@@ -37,6 +44,16 @@ function syncTextEditorBlock(block: TextEditorBlock): TextEditorBlock {
     text: words.join(" "),
     words
   };
+}
+
+function areTextEditorBlocksEquivalent(left: TextEditorBlock, right: TextEditorBlock): boolean {
+  // // Match unchanged prefix/suffix rows by original source index plus normalized text content.
+  const normalizedLeft = syncTextEditorBlock(left);
+  const normalizedRight = syncTextEditorBlock(right);
+  return (
+    normalizedLeft.sourceSelectionIndex === normalizedRight.sourceSelectionIndex &&
+    normalizedLeft.text === normalizedRight.text
+  );
 }
 
 function cloneTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlock[] {
@@ -264,4 +281,56 @@ export function sanitizeTextEditorBlocksForApply(
 ): TextEditorBlock[] {
   // // Remove empty blocks and retime the remaining subtitles before they are rebuilt on the Premiere timeline.
   return retimeTextEditorBlocks(blocks, timingRange);
+}
+
+export function buildTextEditorApplyPlan(
+  originalBlocks: TextEditorBlock[],
+  editedBlocks: TextEditorBlock[]
+): TextEditorApplyPlan | null {
+  // // Limit rebuilds to the smallest changed subtitle slice by trimming common prefix/suffix around the edit region.
+  const normalizedOriginalBlocks = cloneTextEditorBlocks(originalBlocks);
+  const normalizedEditedBlocks = filterNonEmptyTextEditorBlocks(editedBlocks);
+  if (normalizedOriginalBlocks.length < 1) {
+    return null;
+  }
+
+  let prefixLength = 0;
+  while (
+    prefixLength < normalizedOriginalBlocks.length &&
+    prefixLength < normalizedEditedBlocks.length &&
+    areTextEditorBlocksEquivalent(normalizedOriginalBlocks[prefixLength], normalizedEditedBlocks[prefixLength])
+  ) {
+    prefixLength += 1;
+  }
+
+  let originalSuffixIndex = normalizedOriginalBlocks.length - 1;
+  let editedSuffixIndex = normalizedEditedBlocks.length - 1;
+  while (
+    originalSuffixIndex >= prefixLength &&
+    editedSuffixIndex >= prefixLength &&
+    areTextEditorBlocksEquivalent(normalizedOriginalBlocks[originalSuffixIndex], normalizedEditedBlocks[editedSuffixIndex])
+  ) {
+    originalSuffixIndex -= 1;
+    editedSuffixIndex -= 1;
+  }
+
+  if (prefixLength >= normalizedOriginalBlocks.length && prefixLength >= normalizedEditedBlocks.length) {
+    return null;
+  }
+
+  const selectionStartIndex = Math.min(prefixLength, normalizedOriginalBlocks.length - 1);
+  const selectionEndIndex = Math.max(selectionStartIndex, originalSuffixIndex);
+  const changedEditedBlocks =
+    editedSuffixIndex >= prefixLength ? normalizedEditedBlocks.slice(prefixLength, editedSuffixIndex + 1) : [];
+  const timingRange = {
+    startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex].startSeconds || 0),
+    endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex].endSeconds || 0)
+  };
+
+  return {
+    selectionStartIndex,
+    selectionEndIndex,
+    timingRange,
+    blocks: retimeTextEditorBlocks(changedEditedBlocks, timingRange)
+  };
 }

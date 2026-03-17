@@ -246,6 +246,7 @@ Current `V1` workflow:
 Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
+- when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection
 - the rebuilt clips keep the full original time span of the selected subtitle range, even after merges reduce the number of blocks
 - if the rebuilt subtitle timing would overlap non-selected clips on the same track, Sub Creator rebuilds on the first empty video track above
 - if no empty video track exists above, Sub Creator creates a new top video track and rebuilds there instead

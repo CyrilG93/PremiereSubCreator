@@ -3,10 +3,10 @@ import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
 import { parseSrt } from "../core/srt";
 import {
+  buildTextEditorApplyPlan,
   mergeTextEditorBlocks,
   moveTextEditorWord,
   retimeTextEditorBlocks,
-  sanitizeTextEditorBlocksForApply,
   splitTextEditorBlock,
   updateTextEditorBlockText,
   type TextEditorBlock,
@@ -42,7 +42,6 @@ import {
 import type {
   ApplySelectedMogrtTextResult,
   InstalledMogrtCatalog,
-  SelectedMogrtTextItem,
   SystemFontCatalog,
   TextEditorApplyPayload,
   WhisperProgressUpdate
@@ -224,6 +223,7 @@ let generateInProgress = false;
 let textApplyInProgress = false;
 let hostThemeListenerBound = false;
 let textEditorBlocks: TextEditorBlockState[] = [];
+let textEditorOriginalBlocks: TextEditorBlock[] = [];
 let textEditorSelectionSignature = "";
 let textEditorSameTrack = true;
 let textEditorVideoTrackIndex = -1;
@@ -428,9 +428,11 @@ function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
 }
 
 function buildHostAccentColor(baseColor: RgbColor, backgroundColor: RgbColor, isLightTheme: boolean): RgbColor {
-  // // Keep the host accent vivid enough for labels and value readouts across Premiere skin variants.
-  const mixedColor = mixRgbColor(baseColor, backgroundColor, isLightTheme ? 0.06 : 0.02);
-  return isLightTheme ? offsetRgbColor(mixedColor, -10) : offsetRgbColor(mixedColor, 14);
+  // // Anchor the accent around Adobe's brighter UI blue while still reacting to the host skin highlight color.
+  const adobeBlue = { red: 0, green: 100, blue: 203 };
+  const accentSeed = mixRgbColor(baseColor, adobeBlue, 0.72);
+  const mixedColor = mixRgbColor(accentSeed, backgroundColor, isLightTheme ? 0.04 : 0.01);
+  return isLightTheme ? offsetRgbColor(mixedColor, -6) : offsetRgbColor(mixedColor, 10);
 }
 
 function normalizeHostPanelBackground(color: RgbColor): RgbColor {
@@ -1600,29 +1602,24 @@ function nextTextEditorBlockId(): string {
   return `text-block-${textEditorBlockIdCounter}`;
 }
 
-function buildTextEditorBlockState(item: SelectedMogrtTextItem): TextEditorBlockState {
-  // // Convert one host-read MOGRT subtitle item into local Text tab state.
-  return {
-    editorId: nextTextEditorBlockId(),
-    selectedWordIndex: -1,
-    sourceSelectionIndex: Number(item.selectionIndex || 0),
-    clipName: String(item.clipName || "").trim(),
-    startSeconds: Number(item.startSeconds || 0),
-    endSeconds: Number(item.endSeconds || 0),
-    text: String(item.text || "").trim(),
-    words: String(item.text || "")
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean)
-  };
-}
-
 function mapTextEditorBlocksToState(blocks: TextEditorBlock[]): TextEditorBlockState[] {
   // // Rebuild UI state from pure text-editor helper output after one editing operation.
   return blocks.map((block) => ({
     ...block,
     editorId: nextTextEditorBlockId(),
     selectedWordIndex: -1
+  }));
+}
+
+function buildTextEditorBlocksFromState(blocks: TextEditorBlockState[]): TextEditorBlock[] {
+  // // Convert panel block state back to pure text-editor blocks before diff/retime/apply helpers run.
+  return blocks.map((block) => ({
+    sourceSelectionIndex: block.sourceSelectionIndex,
+    clipName: block.clipName,
+    startSeconds: block.startSeconds,
+    endSeconds: block.endSeconds,
+    text: block.text,
+    words: block.words.slice()
   }));
 }
 
@@ -1635,21 +1632,6 @@ function getTextEditorSelectionTimingRange(): TextEditorTimingRange | undefined 
     startSeconds: textEditorSelectionStartSeconds,
     endSeconds: textEditorSelectionEndSeconds
   };
-}
-
-function getSanitizedTextEditorBlocks(): TextEditorBlock[] {
-  // // Normalize current Text tab state into apply-ready subtitle blocks and drop any empty rows.
-  return sanitizeTextEditorBlocksForApply(
-    textEditorBlocks.map((block) => ({
-      sourceSelectionIndex: block.sourceSelectionIndex,
-      clipName: block.clipName,
-      startSeconds: block.startSeconds,
-      endSeconds: block.endSeconds,
-      text: block.text,
-      words: block.words.slice()
-    })),
-    getTextEditorSelectionTimingRange()
-  );
 }
 
 function setTextSelectionSummary(message: string): void {
@@ -1948,7 +1930,18 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   textEditorSelectionSignature = result.signature;
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
-  textEditorBlocks = result.items.map((item) => buildTextEditorBlockState(item));
+  textEditorOriginalBlocks = result.items.map((item) => ({
+    sourceSelectionIndex: Number(item.selectionIndex || 0),
+    clipName: String(item.clipName || "").trim(),
+    startSeconds: Number(item.startSeconds || 0),
+    endSeconds: Number(item.endSeconds || 0),
+    text: String(item.text || "").trim(),
+    words: String(item.text || "")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  }));
+  textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
   textEditorSelectionStartSeconds =
     result.items.length > 0
       ? result.items.reduce(
@@ -2003,15 +1996,19 @@ async function applyTextEditorChanges(): Promise<void> {
     throw new Error(translate("error.textMixedTracks"));
   }
 
-  const blocksToApply = getSanitizedTextEditorBlocks();
-  if (blocksToApply.length < 1) {
-    throw new Error(translate("error.textEmptyBlocks"));
+  const editableBlocks = buildTextEditorBlocksFromState(textEditorBlocks);
+  const applyPlan = buildTextEditorApplyPlan(textEditorOriginalBlocks, editableBlocks);
+  if (!applyPlan) {
+    setLog(translate("log.textNoChanges"));
+    return;
   }
 
   const options = collectBuildOptions();
   const payload: TextEditorApplyPayload = {
     selectionSignature: textEditorSelectionSignature,
-    items: blocksToApply.map((block) => ({
+    replaceSelectionStartIndex: applyPlan.selectionStartIndex,
+    replaceSelectionEndIndex: applyPlan.selectionEndIndex,
+    items: applyPlan.blocks.map((block) => ({
       sourceSelectionIndex: block.sourceSelectionIndex,
       startSeconds: block.startSeconds,
       endSeconds: block.endSeconds,

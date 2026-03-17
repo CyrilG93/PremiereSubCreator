@@ -427,6 +427,12 @@ function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
   };
 }
 
+function buildHostAccentColor(baseColor: RgbColor, backgroundColor: RgbColor, isLightTheme: boolean): RgbColor {
+  // // Keep the host accent vivid enough for labels and value readouts across Premiere skin variants.
+  const mixedColor = mixRgbColor(baseColor, backgroundColor, isLightTheme ? 0.06 : 0.02);
+  return isLightTheme ? offsetRgbColor(mixedColor, -10) : offsetRgbColor(mixedColor, 14);
+}
+
 function normalizeHostPanelBackground(color: RgbColor): RgbColor {
   // // Keep Premiere skin variants readable while still following host light/dark/darkest appearance changes.
   const luminance = rgbColorLuminance(color);
@@ -506,8 +512,8 @@ function applyHostPanelTheme(): void {
   const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 13 : isDarkestTheme ? 12 : 10);
   const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -3 : isDarkestTheme ? -2 : -1);
   const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 5 : isDarkestTheme ? 5 : 4);
-  const accent = mixRgbColor(highlightColor, normalizedPanelBackground, 0.15);
-  const accentSoft = mixRgbColor(highlightColor, textPrimary, isLightTheme ? 0.22 : 0.18);
+  const accent = buildHostAccentColor(highlightColor, normalizedPanelBackground, isLightTheme);
+  const accentSoft = isLightTheme ? offsetRgbColor(accent, -4) : offsetRgbColor(accent, 18);
   const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -28 : 16);
   const borderStrong = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -42 : 24);
   const buttonPrimary = mixRgbColor(accent, bgSurface, 0.28);
@@ -1854,6 +1860,12 @@ function renderTextEditor(): void {
     mergePreviousButton.className = "button button--secondary";
     mergePreviousButton.textContent = translate("action.mergePrevious");
     mergePreviousButton.disabled = blockIndex < 1;
+    if (blockIndex < 1) {
+      // // Keep the three-button layout aligned while hiding impossible edge merges.
+      mergePreviousButton.classList.add("is-placeholder");
+      mergePreviousButton.setAttribute("aria-hidden", "true");
+      mergePreviousButton.tabIndex = -1;
+    }
     mergePreviousButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
@@ -1901,6 +1913,12 @@ function renderTextEditor(): void {
     mergeNextButton.className = "button button--secondary";
     mergeNextButton.textContent = translate("action.mergeNext");
     mergeNextButton.disabled = blockIndex >= textEditorBlocks.length - 1;
+    if (blockIndex >= textEditorBlocks.length - 1) {
+      // // Keep the three-button layout aligned while hiding impossible edge merges.
+      mergeNextButton.classList.add("is-placeholder");
+      mergeNextButton.setAttribute("aria-hidden", "true");
+      mergeNextButton.tabIndex = -1;
+    }
     mergeNextButton.addEventListener("click", () => {
       applyTextEditorBlocks(
         mergeTextEditorBlocks(

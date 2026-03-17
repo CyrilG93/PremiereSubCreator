@@ -4962,6 +4962,23 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     debugLines.push("text_apply selected=" + String(currentSelection.length) + " edited=" + String(editedItems.length));
     debugLines.push("text_apply track=" + String(targetTrackIndex));
 
+    var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
+    if (overlapConflict) {
+      debugLines.push(
+        "text_apply overlap_abort clip=" +
+          String(overlapConflict.clipName || "") +
+          " range=" +
+          String(Math.round(Number(overlapConflict.startSeconds || 0) * 1000)) +
+          "-" +
+          String(Math.round(Number(overlapConflict.endSeconds || 0) * 1000))
+      );
+      return subcreator_error(
+        "Text editor apply would overlap non-selected clip '" +
+          String(overlapConflict.clipName || "Clip") +
+          "' on the same track. Adjust the selection or timings before applying."
+      );
+    }
+
     for (var removeIndex = currentSelection.length - 1; removeIndex >= 0; removeIndex -= 1) {
       if (!subcreator_remove_track_item_without_ripple(currentSelection[removeIndex])) {
         failedCount += 1;
@@ -6837,6 +6854,67 @@ function subcreator_remove_track_item_without_ripple(trackItem) {
   } catch (removeNoArgError) {}
 
   return false;
+}
+
+function subcreator_do_ranges_overlap(leftStart, leftEnd, rightStart, rightEnd) {
+  // // Detect timeline overlap with a tiny tolerance so rebuilt MOGRTs never cover unrelated clips.
+  var safeLeftStart = Number(leftStart);
+  var safeLeftEnd = Number(leftEnd);
+  var safeRightStart = Number(rightStart);
+  var safeRightEnd = Number(rightEnd);
+  if (isNaN(safeLeftStart) || isNaN(safeLeftEnd) || isNaN(safeRightStart) || isNaN(safeRightEnd)) {
+    return false;
+  }
+
+  return safeLeftStart < safeRightEnd - 0.0005 && safeLeftEnd > safeRightStart + 0.0005;
+}
+
+function subcreator_is_selected_track_item_reference(trackItem, selectedItems) {
+  // // Keep reference-based selection matching isolated so overlap checks can safely skip the clips being rebuilt.
+  for (var index = 0; index < selectedItems.length; index += 1) {
+    if (selectedItems[index] === trackItem) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems) {
+  // // Abort risky text rebuilds before removal when rebuilt timings would overlap one non-selected clip.
+  var trackItems = subcreator_collection_to_array(track ? track.clips : null);
+  for (var trackIndex = 0; trackIndex < trackItems.length; trackIndex += 1) {
+    var candidate = trackItems[trackIndex];
+    if (!candidate || subcreator_is_selected_track_item_reference(candidate, selectedItems)) {
+      continue;
+    }
+
+    var candidateStart = subcreator_to_seconds(candidate.start || candidate.inPoint || candidate.startTime);
+    var candidateEnd = subcreator_to_seconds(candidate.end || candidate.outPoint || candidate.endTime);
+    if (isNaN(candidateStart) || isNaN(candidateEnd) || candidateEnd <= candidateStart) {
+      continue;
+    }
+
+    for (var editedIndex = 0; editedIndex < editedItems.length; editedIndex += 1) {
+      var editedItem = editedItems[editedIndex] || {};
+      var editedStart = Number(editedItem.startSeconds);
+      var editedEnd = Number(editedItem.endSeconds);
+      if (isNaN(editedStart) || isNaN(editedEnd) || editedEnd <= editedStart) {
+        continue;
+      }
+
+      if (subcreator_do_ranges_overlap(candidateStart, candidateEnd, editedStart, editedEnd)) {
+        return {
+          clipName: subcreator_trim_string(
+            String((candidate.projectItem && candidate.projectItem.name) || candidate.name || "Clip")
+          ),
+          startSeconds: candidateStart,
+          endSeconds: candidateEnd
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 function subcreator_find_inserted_track_item(track, beforeItems, startSeconds, projectItem) {

@@ -4964,15 +4964,17 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
 
     var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
     if (overlapConflict) {
-      var fallbackTrackIndex = subcreator_find_empty_video_track_above(sequence, targetTrackIndex);
-      if (fallbackTrackIndex >= 0) {
-        targetTrackIndex = fallbackTrackIndex;
+      var fallbackTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
+      if (fallbackTrackInfo && fallbackTrackInfo.index >= 0) {
+        targetTrackIndex = fallbackTrackInfo.index;
         track = sequence.videoTracks[targetTrackIndex];
         debugLines.push(
           "text_apply fallback_track=" +
             String(targetTrackIndex) +
             " reason=overlap clip=" +
-            String(overlapConflict.clipName || "")
+            String(overlapConflict.clipName || "") +
+            " created=" +
+            (fallbackTrackInfo.created ? "true" : "false")
         );
       } else {
         debugLines.push(
@@ -4986,7 +4988,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         return subcreator_error(
           "Text editor apply would overlap non-selected clip '" +
             String(overlapConflict.clipName || "Clip") +
-            "' on the same track, and no empty video track exists above for safe rebuild."
+            "' on the same track, and Sub Creator could not create a safe fallback video track above."
         );
       }
     }
@@ -6947,6 +6949,81 @@ function subcreator_find_empty_video_track_above(sequence, baseTrackIndex) {
   return -1;
 }
 
+function subcreator_append_top_video_track_via_qe(sequence) {
+  // // Append one new top video track through QE so subtitle rebuild fallback can avoid occupied tracks.
+  var currentTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
+  var inserted = false;
+
+  try {
+    if (typeof app.enableQE === "function") {
+      app.enableQE();
+      if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
+        var qeSequence = qe.project.getActiveSequence();
+        if (qeSequence && typeof qeSequence.addTracks === "function") {
+          if (!inserted && currentTracks > 0) {
+            try {
+              // // Append one video track at the top so existing tracks keep their relative ordering.
+              qeSequence.addTracks(1, currentTracks, 0, 0, 0);
+              inserted = true;
+            } catch (signatureErrorAppendFull) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks, 0, 0);
+              inserted = true;
+            } catch (signatureErrorAppendShort) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks, 0);
+              inserted = true;
+            } catch (signatureErrorAppendMinimal) {}
+          }
+
+          if (!inserted && currentTracks > 0) {
+            try {
+              qeSequence.addTracks(1, currentTracks);
+              inserted = true;
+            } catch (signatureErrorAppendTwoArgs) {}
+          }
+
+          if (!inserted) {
+            try {
+              qeSequence.addTracks(1);
+              inserted = true;
+            } catch (signatureErrorSingleArg) {}
+          }
+        }
+      }
+    }
+  } catch (error) {}
+
+  var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : currentTracks;
+  return {
+    created: updatedTracks > currentTracks || inserted,
+    beforeTracks: currentTracks,
+    afterTracks: updatedTracks,
+    index: updatedTracks > 0 ? updatedTracks - 1 : -1
+  };
+}
+
+function subcreator_get_or_create_video_track_above_index(sequence, baseTrackIndex) {
+  // // Prefer one empty track already above the edited subtitles, otherwise append a brand-new top track via QE.
+  var emptyTrackAbove = subcreator_find_empty_video_track_above(sequence, baseTrackIndex);
+  if (emptyTrackAbove >= 0) {
+    return {
+      index: emptyTrackAbove,
+      created: false,
+      beforeTracks: sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0,
+      afterTracks: sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0
+    };
+  }
+
+  return subcreator_append_top_video_track_via_qe(sequence);
+}
+
 function subcreator_find_inserted_track_item(track, beforeItems, startSeconds, projectItem) {
   // // Resolve the new clip object after overwrite/insert helpers that do not return a TrackItem reference.
   var afterItems = subcreator_collection_to_array(track ? track.clips : null);
@@ -7155,56 +7232,9 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
     }
   }
 
-  var created = false;
-  var inserted = false;
-  try {
-    if (typeof app.enableQE === "function") {
-      app.enableQE();
-      if (typeof qe !== "undefined" && qe.project && typeof qe.project.getActiveSequence === "function") {
-        var qeSequence = qe.project.getActiveSequence();
-        if (qeSequence && typeof qeSequence.addTracks === "function") {
-          if (!inserted && currentTracks > 0) {
-            try {
-              // // Append one video track at the top so existing tracks are untouched.
-              qeSequence.addTracks(1, currentTracks, 0, 0, 0);
-              inserted = true;
-            } catch (signatureErrorAppendFull) {}
-          }
-
-          if (!inserted && currentTracks > 0) {
-            try {
-              qeSequence.addTracks(1, currentTracks, 0, 0);
-              inserted = true;
-            } catch (signatureErrorAppendShort) {}
-          }
-
-          if (!inserted && currentTracks > 0) {
-            try {
-              qeSequence.addTracks(1, currentTracks, 0);
-              inserted = true;
-            } catch (signatureErrorAppendMinimal) {}
-          }
-
-          if (!inserted && currentTracks > 0) {
-            try {
-              qeSequence.addTracks(1, currentTracks);
-              inserted = true;
-            } catch (signatureErrorAppendTwoArgs) {}
-          }
-
-          try {
-            if (!inserted) {
-              qeSequence.addTracks(1);
-              inserted = true;
-            }
-          } catch (signatureErrorSingleArg) {}
-        }
-      }
-    }
-  } catch (error) {}
-
-  var updatedTracks = sequence && sequence.videoTracks ? Number(sequence.videoTracks.numTracks || 0) : 0;
-  created = updatedTracks > currentTracks;
+  var appendResult = subcreator_append_top_video_track_via_qe(sequence);
+  var updatedTracks = appendResult.afterTracks;
+  var created = appendResult.created;
   var highestEmptyAfter = subcreator_find_highest_empty_video_track_index(sequence.videoTracks);
   var fallbackTop = updatedTracks > 0 ? updatedTracks - 1 : 0;
 

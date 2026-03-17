@@ -1649,24 +1649,6 @@ function setTextButtonsBusy(isBusy: boolean): void {
   }
 }
 
-function formatTextEditorSeconds(seconds: number): string {
-  // // Render compact time labels so subtitle blocks stay readable inside the panel.
-  const safeSeconds = Math.max(0, Number(seconds || 0));
-  const minutes = Math.floor(safeSeconds / 60);
-  const remainingSeconds = safeSeconds - minutes * 60;
-  return `${String(minutes).padStart(2, "0")}:${remainingSeconds.toFixed(2).padStart(5, "0")}`;
-}
-
-function formatTextEditorRangeLabel(block: TextEditorBlockState): string {
-  // // Show start, end, and duration for one subtitle block in the Text tab.
-  const duration = Math.max(0, block.endSeconds - block.startSeconds);
-  return translateTemplate("text.blockRange", {
-    start: formatTextEditorSeconds(block.startSeconds),
-    end: formatTextEditorSeconds(block.endSeconds),
-    duration: duration.toFixed(2)
-  });
-}
-
 function selectTextEditorWord(blockIndex: number, wordIndex: number): void {
   // // Track which word the user picked so split actions can cut before that exact chip.
   textEditorBlocks = textEditorBlocks.map((block, index) => ({
@@ -1799,25 +1781,6 @@ function renderTextEditor(): void {
     const card = document.createElement("article");
     card.className = "text-block";
 
-    const header = document.createElement("div");
-    header.className = "text-block__header";
-
-    const title = document.createElement("div");
-    title.className = "text-block__title";
-    title.textContent = translateTemplate("text.blockLabel", {
-      index: String(blockIndex + 1)
-    });
-
-    const meta = document.createElement("div");
-    meta.className = "text-block__meta";
-    meta.textContent = formatTextEditorRangeLabel(block);
-
-    header.append(title, meta);
-
-    const clipName = document.createElement("div");
-    clipName.className = "text-block__clip";
-    clipName.textContent = block.clipName || translate("text.unnamedClip");
-
     const textarea = document.createElement("textarea");
     textarea.className = "text-block__textarea";
     textarea.value = block.text;
@@ -1941,7 +1904,7 @@ function renderTextEditor(): void {
     });
 
     actions.append(mergePreviousButton, splitButton, mergeNextButton);
-    card.append(header, clipName, textarea, chips, actions);
+    card.append(textarea, chips, actions);
     elements.textEditorList?.appendChild(card);
   });
 }

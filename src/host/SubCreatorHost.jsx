@@ -811,7 +811,7 @@ function subcreator_build_selected_mogrt_text_signature(sequence, trackItems) {
     var videoTrackIndex = subcreator_find_track_item_video_track_index(sequence, trackItem);
     var startSeconds = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
     var endSeconds = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.outPoint || trackItem.endTime));
-    var clipText = subcreator_trim_string(String(subcreator_extract_text_from_item(trackItem) || "").replace(/\s+/g, " "));
+    var clipText = subcreator_trim_string(String(subcreator_extract_text_from_mogrt_item(trackItem) || "").replace(/\s+/g, " "));
     parts.push(
       [
         String(videoTrackIndex),
@@ -4806,7 +4806,7 @@ function subcreator_list_selected_mogrt_text_items() {
         videoTrackIndex: trackIndex,
         startSeconds: subcreator_to_seconds(trackItem.start || trackItem.inPoint || trackItem.startTime),
         endSeconds: subcreator_to_seconds(trackItem.end || trackItem.outPoint || trackItem.endTime),
-        text: subcreator_trim_string(String(subcreator_extract_text_from_item(trackItem) || "").replace(/\s+/g, " ")),
+        text: subcreator_trim_string(String(subcreator_extract_text_from_mogrt_item(trackItem) || "").replace(/\s+/g, " ")),
         clipName: subcreator_trim_string(String((trackItem.projectItem && trackItem.projectItem.name) || trackItem.name || "MOGRT"))
       });
     }
@@ -5461,6 +5461,88 @@ function subcreator_extract_text_from_item_components(item) {
   }
 
   return subcreator_extract_text_from_component_properties(component.properties);
+}
+
+function subcreator_is_non_textual_mogrt_label(text) {
+  // // Reject generic component labels that Premiere exposes but that are not actual subtitle content.
+  var normalized = subcreator_trim_string(String(text || "")).toLowerCase();
+  return (
+    normalized === "graphic parameters" ||
+    normalized === "graphics parameters" ||
+    normalized === "parametres graphiques" ||
+    normalized === "essential graphics"
+  );
+}
+
+function subcreator_extract_text_from_mogrt_item(item) {
+  // // Read MOGRT subtitle text from real text-bearing controls and metadata only.
+  if (!item) {
+    return "";
+  }
+
+  function rememberReadableText(value) {
+    var normalizedValue = subcreator_trim_string(String(value || "").replace(/\r/g, "\n"));
+    if (!normalizedValue) {
+      return "";
+    }
+    if (subcreator_is_default_caption_label(normalizedValue) || subcreator_is_non_textual_mogrt_label(normalizedValue)) {
+      return "";
+    }
+    return normalizedValue;
+  }
+
+  var componentText = rememberReadableText(subcreator_extract_text_from_item_components(item));
+  if (componentText) {
+    return componentText;
+  }
+
+  var methodNames = ["getSourceText", "getText", "getFormattedText"];
+  for (var methodIndex = 0; methodIndex < methodNames.length; methodIndex += 1) {
+    var methodName = methodNames[methodIndex];
+    try {
+      if (typeof item[methodName] === "function") {
+        var methodText = rememberReadableText(item[methodName]());
+        if (methodText) {
+          return methodText;
+        }
+      }
+    } catch (methodError) {}
+  }
+
+  var propNames = ["captionText", "sourceText", "subtitleText", "text", "value"];
+  for (var propIndex = 0; propIndex < propNames.length; propIndex += 1) {
+    var propName = propNames[propIndex];
+    try {
+      if (typeof item[propName] !== "undefined") {
+        var propText = rememberReadableText(item[propName]);
+        if (propText) {
+          return propText;
+        }
+      }
+    } catch (propError) {}
+  }
+
+  try {
+    if (item.projectItem && typeof item.projectItem.getProjectMetadata === "function") {
+      var metadata = String(item.projectItem.getProjectMetadata() || "");
+      var metadataText = rememberReadableText(subcreator_extract_text_from_metadata_blob(metadata));
+      if (metadataText) {
+        return metadataText;
+      }
+    }
+  } catch (metadataError) {}
+
+  try {
+    if (item.projectItem && typeof item.projectItem.getXMPMetadata === "function") {
+      var xmpMetadata = String(item.projectItem.getXMPMetadata() || "");
+      var xmpText = rememberReadableText(subcreator_extract_text_from_metadata_blob(xmpMetadata));
+      if (xmpText) {
+        return xmpText;
+      }
+    }
+  } catch (xmpMetadataError) {}
+
+  return "";
 }
 
 function subcreator_extract_text_from_item(item) {

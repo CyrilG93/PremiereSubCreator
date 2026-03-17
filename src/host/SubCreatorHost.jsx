@@ -788,11 +788,77 @@ function subcreator_find_track_item_video_track_index(sequence, trackItem) {
     return -1;
   }
 
+  try {
+    if (trackItem.parentTrack) {
+      for (var parentTrackIndex = 0; parentTrackIndex < sequence.videoTracks.numTracks; parentTrackIndex += 1) {
+        if (sequence.videoTracks[parentTrackIndex] === trackItem.parentTrack) {
+          return parentTrackIndex;
+        }
+      }
+    }
+  } catch (parentTrackError) {}
+
+  function safeLowerText(value) {
+    return subcreator_trim_string(String(value || "")).toLowerCase();
+  }
+
+  function sameRoundedTime(leftValue, rightValue) {
+    var leftSeconds = subcreator_to_seconds(leftValue);
+    var rightSeconds = subcreator_to_seconds(rightValue);
+    if (isNaN(leftSeconds) || isNaN(rightSeconds)) {
+      return false;
+    }
+    return Math.abs(leftSeconds - rightSeconds) <= 0.002;
+  }
+
+  function itemsLookEquivalent(leftItem, rightItem) {
+    if (!leftItem || !rightItem) {
+      return false;
+    }
+    if (leftItem === rightItem) {
+      return true;
+    }
+
+    var sameStart = sameRoundedTime(leftItem.start || leftItem.inPoint || leftItem.startTime, rightItem.start || rightItem.inPoint || rightItem.startTime);
+    var sameEnd = sameRoundedTime(leftItem.end || leftItem.outPoint || leftItem.endTime, rightItem.end || rightItem.outPoint || rightItem.endTime);
+    if (!sameStart || !sameEnd) {
+      return false;
+    }
+
+    var leftProjectItemName = safeLowerText(leftItem.projectItem && leftItem.projectItem.name);
+    var rightProjectItemName = safeLowerText(rightItem.projectItem && rightItem.projectItem.name);
+    if (leftProjectItemName && rightProjectItemName && leftProjectItemName === rightProjectItemName) {
+      return true;
+    }
+
+    var leftName = safeLowerText(leftItem.name);
+    var rightName = safeLowerText(rightItem.name);
+    if (leftName && rightName && leftName === rightName) {
+      return true;
+    }
+
+    var leftText = safeLowerText(subcreator_extract_text_from_mogrt_item(leftItem));
+    var rightText = safeLowerText(subcreator_extract_text_from_mogrt_item(rightItem));
+    if (leftText && rightText && leftText === rightText) {
+      return true;
+    }
+
+    if (leftProjectItemName && rightName && leftProjectItemName === rightName) {
+      return true;
+    }
+
+    if (leftName && rightProjectItemName && leftName === rightProjectItemName) {
+      return true;
+    }
+
+    return false;
+  }
+
   for (var trackIndex = 0; trackIndex < sequence.videoTracks.numTracks; trackIndex += 1) {
     var track = sequence.videoTracks[trackIndex];
     var clips = subcreator_collection_to_array(track ? track.clips : null);
     for (var clipIndex = 0; clipIndex < clips.length; clipIndex += 1) {
-      if (clips[clipIndex] === trackItem) {
+      if (itemsLookEquivalent(clips[clipIndex], trackItem)) {
         return trackIndex;
       }
     }

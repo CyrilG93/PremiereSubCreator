@@ -9,7 +9,8 @@ import {
   sanitizeTextEditorBlocksForApply,
   splitTextEditorBlock,
   updateTextEditorBlockText,
-  type TextEditorBlock
+  type TextEditorBlock,
+  type TextEditorTimingRange
 } from "../core/textEditor";
 import type {
   AnimationMode,
@@ -227,6 +228,8 @@ let textEditorSelectionSignature = "";
 let textEditorSameTrack = true;
 let textEditorVideoTrackIndex = -1;
 let textEditorBlockIdCounter = 0;
+let textEditorSelectionStartSeconds = 0;
+let textEditorSelectionEndSeconds = 0;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -1617,6 +1620,17 @@ function mapTextEditorBlocksToState(blocks: TextEditorBlock[]): TextEditorBlockS
   }));
 }
 
+function getTextEditorSelectionTimingRange(): TextEditorTimingRange | undefined {
+  // // Keep one stable selection-wide timing range so merges still fill the full original subtitle span.
+  if (!(textEditorSelectionEndSeconds > textEditorSelectionStartSeconds)) {
+    return undefined;
+  }
+  return {
+    startSeconds: textEditorSelectionStartSeconds,
+    endSeconds: textEditorSelectionEndSeconds
+  };
+}
+
 function getSanitizedTextEditorBlocks(): TextEditorBlock[] {
   // // Normalize current Text tab state into apply-ready subtitle blocks and drop any empty rows.
   return sanitizeTextEditorBlocksForApply(
@@ -1627,7 +1641,8 @@ function getSanitizedTextEditorBlocks(): TextEditorBlock[] {
       endSeconds: block.endSeconds,
       text: block.text,
       words: block.words.slice()
-    }))
+    })),
+    getTextEditorSelectionTimingRange()
   );
 }
 
@@ -1660,7 +1675,7 @@ function selectTextEditorWord(blockIndex: number, wordIndex: number): void {
 
 function applyTextEditorBlocks(blocks: TextEditorBlock[]): void {
   // // Commit one pure text-edit result back into UI state and re-render the Text tab.
-  textEditorBlocks = mapTextEditorBlocksToState(retimeTextEditorBlocks(blocks));
+  textEditorBlocks = mapTextEditorBlocksToState(retimeTextEditorBlocks(blocks, getTextEditorSelectionTimingRange()));
   renderTextEditor();
 }
 
@@ -1916,6 +1931,20 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
   textEditorBlocks = result.items.map((item) => buildTextEditorBlockState(item));
+  textEditorSelectionStartSeconds =
+    result.items.length > 0
+      ? result.items.reduce(
+          (lowestValue, item) => Math.min(lowestValue, Number(item.startSeconds || 0)),
+          Number.POSITIVE_INFINITY
+        )
+      : 0;
+  textEditorSelectionEndSeconds =
+    result.items.length > 0
+      ? result.items.reduce(
+          (highestValue, item) => Math.max(highestValue, Number(item.endSeconds || 0)),
+          Number.NEGATIVE_INFINITY
+        )
+      : 0;
   renderTextEditor();
 
   if (emitHostLog) {

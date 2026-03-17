@@ -246,6 +246,7 @@ Current `V1` workflow:
 Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
+- the rebuilt clips keep the full original time span of the selected subtitle range, even after merges reduce the number of blocks
 - the rebuilt clips try to preserve the original MOGRT visual/text style from the selected subtitle clips
 - timing redistribution is heuristic in this `V1`, so it is designed for practical fixes rather than perfect word-level retiming
 

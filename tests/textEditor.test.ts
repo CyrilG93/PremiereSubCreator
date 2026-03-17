@@ -101,6 +101,42 @@ describe("textEditor helpers", () => {
     expect(retimed[1].endSeconds).toBe(4);
   });
 
+  it("keeps the original selected span when a merge removes the last block", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 10,
+        endSeconds: 11,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 11,
+        endSeconds: 12,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 12,
+        endSeconds: 14,
+        text: "three four"
+      }
+    ]);
+
+    const merged = mergeTextEditorBlocks(blocks, 2, "previous");
+    const retimed = retimeTextEditorBlocks(merged, {
+      startSeconds: 10,
+      endSeconds: 14
+    });
+
+    expect(retimed).toHaveLength(2);
+    expect(retimed[0].startSeconds).toBe(10);
+    expect(retimed[1].endSeconds).toBe(14);
+  });
+
   it("drops empty edited blocks before apply and keeps remaining timing span", () => {
     const blocks = buildTextEditorBlocks([
       {
@@ -125,5 +161,35 @@ describe("textEditor helpers", () => {
     expect(sanitized[0].text).toBe("tout le monde");
     expect(sanitized[0].startSeconds).toBe(0);
     expect(sanitized[0].endSeconds).toBe(4);
+  });
+
+  it("keeps the original selected span when the last block becomes empty before apply", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 2,
+        text: "bonjour"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 2,
+        endSeconds: 5,
+        text: "tout"
+      }
+    ]);
+
+    const edited = updateTextEditorBlockText(blocks, 1, "");
+    const sanitized = sanitizeTextEditorBlocksForApply(edited, {
+      startSeconds: 0,
+      endSeconds: 5
+    });
+
+    expect(sanitized).toHaveLength(1);
+    expect(sanitized[0].text).toBe("bonjour");
+    expect(sanitized[0].startSeconds).toBe(0);
+    expect(sanitized[0].endSeconds).toBe(5);
   });
 });

@@ -11,6 +11,11 @@ export interface TextEditorBlock {
   words: string[];
 }
 
+export interface TextEditorTimingRange {
+  startSeconds: number;
+  endSeconds: number;
+}
+
 function normalizeTextEditorWords(text: string): string[] {
   // // Split one subtitle text into compact word tokens while preserving punctuation on each token.
   return String(text || "")
@@ -175,7 +180,46 @@ export function mergeTextEditorBlocks(
   return nextBlocks.map((item) => syncTextEditorBlock(item));
 }
 
-export function retimeTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlock[] {
+function resolveTextEditorTimingRange(
+  blocks: TextEditorBlock[],
+  timingRange?: TextEditorTimingRange
+): TextEditorTimingRange | null {
+  // // Prefer one explicit selection range so merges keep the full original span even after edge blocks disappear.
+  if (
+    timingRange &&
+    Number.isFinite(Number(timingRange.startSeconds)) &&
+    Number.isFinite(Number(timingRange.endSeconds)) &&
+    Number(timingRange.endSeconds) > Number(timingRange.startSeconds)
+  ) {
+    return {
+      startSeconds: Number(timingRange.startSeconds),
+      endSeconds: Number(timingRange.endSeconds)
+    };
+  }
+
+  if (blocks.length < 1) {
+    return null;
+  }
+
+  const startSeconds = blocks.reduce(
+    (lowestValue, block) => Math.min(lowestValue, Number(block.startSeconds || 0)),
+    Number.POSITIVE_INFINITY
+  );
+  const endSeconds = blocks.reduce(
+    (highestValue, block) => Math.max(highestValue, Number(block.endSeconds || 0)),
+    Number.NEGATIVE_INFINITY
+  );
+  if (!(endSeconds > startSeconds)) {
+    return null;
+  }
+
+  return {
+    startSeconds,
+    endSeconds
+  };
+}
+
+export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: TextEditorTimingRange): TextEditorBlock[] {
   // // Redistribute the selected subtitle time span across edited blocks using weighted per-word timing.
   const sourceBlocks = cloneTextEditorBlocks(blocks);
   const normalizedBlocks = filterNonEmptyTextEditorBlocks(sourceBlocks);
@@ -183,17 +227,11 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlo
     return [];
   }
 
-  const startSeconds = sourceBlocks.reduce(
-    (lowestValue, block) => Math.min(lowestValue, Number(block.startSeconds || 0)),
-    Number.POSITIVE_INFINITY
-  );
-  const endSeconds = sourceBlocks.reduce(
-    (highestValue, block) => Math.max(highestValue, Number(block.endSeconds || 0)),
-    Number.NEGATIVE_INFINITY
-  );
-  if (!(endSeconds > startSeconds)) {
+  const resolvedTimingRange = resolveTextEditorTimingRange(sourceBlocks, timingRange);
+  if (!resolvedTimingRange) {
     return normalizedBlocks;
   }
+  const { startSeconds, endSeconds } = resolvedTimingRange;
 
   const allWords = normalizedBlocks.flatMap((block) => block.words);
   if (allWords.length < 1) {
@@ -220,7 +258,10 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[]): TextEditorBlo
   });
 }
 
-export function sanitizeTextEditorBlocksForApply(blocks: TextEditorBlock[]): TextEditorBlock[] {
+export function sanitizeTextEditorBlocksForApply(
+  blocks: TextEditorBlock[],
+  timingRange?: TextEditorTimingRange
+): TextEditorBlock[] {
   // // Remove empty blocks and retime the remaining subtitles before they are rebuilt on the Premiere timeline.
-  return retimeTextEditorBlocks(blocks);
+  return retimeTextEditorBlocks(blocks, timingRange);
 }

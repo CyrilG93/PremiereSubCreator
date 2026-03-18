@@ -1229,6 +1229,60 @@ function buildAbsoluteMogrtPath(extensionRootPath: string, templateRelativePath:
   return `${rootNormalized}/templates/mogrt/${relNormalized}`;
 }
 
+function normalizeMogrtTemplateNameKey(value: string): string {
+  // // Normalize template labels so the Text editor can map timeline clip names back to installed MOGRT files.
+  return String(value || "")
+    .trim()
+    .replace(/\.mogrt$/i, "")
+    .toLowerCase();
+}
+
+function resolveTextEditorTemplateFromSelection(): MogrtTemplateItem | null {
+  // // Prefer the actual template read from the selected subtitle clips so safe text rebuild does not depend on gallery state.
+  const uniqueClipNames = Array.from(
+    new Set(
+      textEditorOriginalBlocks
+        .map((block) => normalizeMogrtTemplateNameKey(block.clipName))
+        .filter((clipName) => clipName.length > 0)
+    )
+  );
+  if (uniqueClipNames.length !== 1) {
+    return null;
+  }
+
+  const clipNameKey = uniqueClipNames[0];
+  if (selectedMogrt && normalizeMogrtTemplateNameKey(selectedMogrt.name) === clipNameKey) {
+    return selectedMogrt;
+  }
+
+  const matches = availableMogrts.filter((template) => {
+    const templateNameKey = normalizeMogrtTemplateNameKey(template.name);
+    const relativePathLeaf = String(template.relativePath || "")
+      .split("/")
+      .pop()
+      ?.replace(/\.[^.]+$/, "");
+    const relativePathLeafKey = normalizeMogrtTemplateNameKey(relativePathLeaf || "");
+    return templateNameKey === clipNameKey || relativePathLeafKey === clipNameKey;
+  });
+
+  return matches.length === 1 ? matches[0] || null : null;
+}
+
+function collectTextEditorBuildOptions(): CaptionBuildOptions {
+  // // Override gallery selection with the template actually present on the timeline whenever it can be resolved safely.
+  const options = collectBuildOptions();
+  const textEditorTemplate = resolveTextEditorTemplateFromSelection();
+  if (!textEditorTemplate) {
+    return options;
+  }
+
+  return {
+    ...options,
+    mogrtTemplateRelativePath: textEditorTemplate.relativePath,
+    mogrtPath: buildAbsoluteMogrtPath(options.extensionRootPath, textEditorTemplate.relativePath)
+  };
+}
+
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
@@ -2154,7 +2208,7 @@ async function applyTextEditorChanges(): Promise<void> {
     return;
   }
 
-  const options = collectBuildOptions();
+  const options = collectTextEditorBuildOptions();
 
   textApplyInProgress = true;
   setTextButtonsBusy(true);

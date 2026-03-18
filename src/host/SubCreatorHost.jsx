@@ -4953,7 +4953,7 @@ function subcreator_list_selected_mogrt_text_items() {
 }
 
 function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
-  // // Rebuild selected subtitle MOGRT clips from edited text blocks while keeping them on the same track.
+  // // Rebuild selected subtitle MOGRT clips from edited text blocks, staying on the source track only when the insertion is safe.
   try {
     if (!app || !app.project || !app.project.activeSequence) {
       return subcreator_error("No active sequence in Premiere.");
@@ -5027,7 +5027,6 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var sourceSnapshots = [];
     for (var snapshotIndex = 0; snapshotIndex < currentSelection.length; snapshotIndex += 1) {
       sourceSnapshots.push({
-        projectItem: currentSelection[snapshotIndex] ? currentSelection[snapshotIndex].projectItem || null : null,
         visualChanges: subcreator_build_visual_clone_changes_from_track_item(currentSelection[snapshotIndex]),
         textChanges: subcreator_build_text_clone_changes_from_track_item(currentSelection[snapshotIndex])
       });
@@ -5051,6 +5050,46 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       "text_apply replace_range=" + String(replaceSelectionStartIndex) + "-" + String(replaceSelectionEndIndex)
     );
     debugLines.push("text_apply source_track=" + String(targetTrackIndex));
+
+    if (fallbackPathCandidates.length < 1) {
+      return subcreator_error(
+        "Sub Creator could not resolve the source MOGRT file for a safe text rebuild. Select the matching template in the gallery, then retry."
+      );
+    }
+
+    var replaceRangeEndSeconds = Number.NEGATIVE_INFINITY;
+    for (var replaceIndex = 0; replaceIndex < selectionItemsToReplace.length; replaceIndex += 1) {
+      replaceRangeEndSeconds = Math.max(
+        replaceRangeEndSeconds,
+        subcreator_to_seconds(
+          selectionItemsToReplace[replaceIndex] &&
+            (selectionItemsToReplace[replaceIndex].end ||
+              selectionItemsToReplace[replaceIndex].outPoint ||
+              selectionItemsToReplace[replaceIndex].endTime)
+        )
+      );
+    }
+
+    var followingClipConflict = subcreator_find_text_rebuild_following_clip(track, selectionItemsToReplace, replaceRangeEndSeconds);
+    if (followingClipConflict) {
+      var laterClipFallbackTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
+      if (laterClipFallbackTrackInfo && laterClipFallbackTrackInfo.index >= 0) {
+        targetTrackIndex = laterClipFallbackTrackInfo.index;
+        track = sequence.videoTracks[targetTrackIndex];
+        debugLines.push(
+          "text_apply fallback_track=" +
+            String(targetTrackIndex) +
+            " reason=later_clip clip=" +
+            String(followingClipConflict.clipName || "") +
+            " created=" +
+            (laterClipFallbackTrackInfo.created ? "true" : "false")
+        );
+      } else {
+        return subcreator_error(
+          "Text editor apply detected later clips on the source track and Sub Creator could not create a safe fallback video track above."
+        );
+      }
+    }
 
     // Keep the full current selection exempt from overlap checks so untouched selected subtitles do not trigger a false fallback track.
     var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems, selectionItemsToReplace);
@@ -5109,23 +5148,11 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       }
 
       var sourceSnapshot = sourceSnapshots[sourceSelectionIndex] || sourceSnapshots[0] || {
-        projectItem: null,
         visualChanges: []
       };
       var insertedTrackItem = null;
 
-      if (sourceSnapshot.projectItem) {
-        insertedTrackItem = subcreator_try_place_project_item_on_track(
-          sequence,
-          track,
-          sourceSnapshot.projectItem,
-          startSeconds,
-          targetTrackIndex,
-          0
-        );
-      }
-
-      if (!insertedTrackItem && fallbackPathCandidates.length > 0) {
+      if (fallbackPathCandidates.length > 0) {
         var importAttempt = subcreator_try_import_mogrt(sequence, fallbackPathCandidates, startSeconds, targetTrackIndex, 0);
         insertedTrackItem = importAttempt.trackItem;
         if (insertedTrackItem) {
@@ -7094,6 +7121,49 @@ function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems,
   }
 
   return null;
+}
+
+function subcreator_find_text_rebuild_following_clip(track, replacedItems, rangeEndSeconds) {
+  // // Force fallback-track rebuild when any clip remains later on the source track, because importMGT lands at template default duration before the final trim is applied.
+  var trackItems = subcreator_collection_to_array(track ? track.clips : null);
+  var safeRangeEnd = Number(rangeEndSeconds);
+  var overlapToleranceSeconds = 0.01;
+  var closestCandidate = null;
+  var closestStart = Number.POSITIVE_INFINITY;
+
+  if (!Number.isFinite(safeRangeEnd)) {
+    return null;
+  }
+
+  for (var trackIndex = 0; trackIndex < trackItems.length; trackIndex += 1) {
+    var candidate = trackItems[trackIndex];
+    if (!candidate || subcreator_is_selected_track_item_reference(candidate, replacedItems)) {
+      continue;
+    }
+
+    var candidateStart = subcreator_to_seconds(candidate.start || candidate.inPoint || candidate.startTime);
+    var candidateEnd = subcreator_to_seconds(candidate.end || candidate.outPoint || candidate.endTime);
+    if (isNaN(candidateStart) || isNaN(candidateEnd) || candidateEnd <= candidateStart) {
+      continue;
+    }
+
+    if (candidateEnd <= safeRangeEnd + overlapToleranceSeconds) {
+      continue;
+    }
+
+    if (candidateStart < closestStart) {
+      closestStart = candidateStart;
+      closestCandidate = {
+        clipName: subcreator_trim_string(
+          String((candidate.projectItem && candidate.projectItem.name) || candidate.name || "Clip")
+        ),
+        startSeconds: candidateStart,
+        endSeconds: candidateEnd
+      };
+    }
+  }
+
+  return closestCandidate;
 }
 
 function subcreator_find_empty_video_track_above(sequence, baseTrackIndex) {

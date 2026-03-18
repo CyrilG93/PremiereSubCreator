@@ -508,6 +508,47 @@ describe("textEditor helpers", () => {
     expect(plans[1]?.blocks.map((block) => block.text)).toEqual(["four updated"]);
   });
 
+  it("maps apply plan indexes back to real Premiere selection indexes after filtered non-subtitle entries", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      }
+    ]);
+
+    const edited = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one updated"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      }
+    ]);
+
+    const plan = buildTextEditorApplyPlan(original, edited);
+    expect(plan).not.toBeNull();
+    expect(plan?.selectionStartIndex).toBe(0);
+    expect(plan?.selectionEndIndex).toBe(0);
+  });
+
   it("keeps unchanged middle blocks out of a split disjoint apply plan", () => {
     const original = buildTextEditorBlocks([
       {

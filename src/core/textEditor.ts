@@ -32,6 +32,41 @@ interface TextEditorChangedRange {
   editedEndIndexExclusive: number;
 }
 
+function resolveSourceSelectionRange(
+  blocks: TextEditorBlock[],
+  originalStartIndex: number,
+  originalEndIndexExclusive: number
+): { startIndex: number; endIndex: number } {
+  // // Map one changed block slice back to the real Premiere selection indexes so filtered-out non-subtitle entries do not offset apply ranges.
+  const slice = blocks.slice(
+    Math.max(0, originalStartIndex),
+    Math.max(Math.max(0, originalStartIndex) + 1, originalEndIndexExclusive)
+  );
+  if (slice.length < 1) {
+    return {
+      startIndex: Math.max(0, originalStartIndex),
+      endIndex: Math.max(0, originalStartIndex)
+    };
+  }
+
+  const sourceIndexes = slice
+    .map((block) => Number(block.sourceSelectionIndex))
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => left - right);
+
+  if (sourceIndexes.length < 1) {
+    return {
+      startIndex: Math.max(0, originalStartIndex),
+      endIndex: Math.max(0, originalStartIndex)
+    };
+  }
+
+  return {
+    startIndex: sourceIndexes[0] || 0,
+    endIndex: sourceIndexes[sourceIndexes.length - 1] || sourceIndexes[0] || 0
+  };
+}
+
 function normalizeTextEditorWords(text: string): string[] {
   // // Split one subtitle text into compact word tokens while preserving punctuation on each token.
   return String(text || "")
@@ -575,23 +610,28 @@ export function buildTextEditorApplyPlans(
       continue;
     }
 
-    const selectionStartIndex = Math.max(0, Math.min(normalizedOriginalBlocks.length - 1, changedRange.originalStartIndex));
-    const selectionEndIndex = Math.max(
-      selectionStartIndex,
+    const originalSliceStartIndex = Math.max(0, Math.min(normalizedOriginalBlocks.length - 1, changedRange.originalStartIndex));
+    const originalSliceEndIndex = Math.max(
+      originalSliceStartIndex,
       Math.min(normalizedOriginalBlocks.length - 1, changedRange.originalEndIndexExclusive - 1)
+    );
+    const selectionRange = resolveSourceSelectionRange(
+      normalizedOriginalBlocks,
+      changedRange.originalStartIndex,
+      changedRange.originalEndIndexExclusive
     );
     const changedEditedBlocks = normalizedEditedBlocks.slice(
       changedRange.editedStartIndex,
       changedRange.editedEndIndexExclusive
     );
     const timingRange = {
-      startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex].startSeconds || 0),
-      endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex].endSeconds || 0)
+      startSeconds: Number(normalizedOriginalBlocks[originalSliceStartIndex].startSeconds || 0),
+      endSeconds: Number(normalizedOriginalBlocks[originalSliceEndIndex].endSeconds || 0)
     };
 
     plans.push({
-      selectionStartIndex,
-      selectionEndIndex,
+      selectionStartIndex: selectionRange.startIndex,
+      selectionEndIndex: selectionRange.endIndex,
       timingRange,
       blocks: retimeTextEditorBlocks(changedEditedBlocks, timingRange)
     });
@@ -614,27 +654,32 @@ export function buildTextEditorSafeApplyPlans(
 
   const firstChangedRange = changedRanges[0];
   const lastChangedRange = changedRanges[changedRanges.length - 1];
-  const selectionStartIndex = Math.max(
+  const originalSliceStartIndex = Math.max(
     0,
     Math.min(normalizedOriginalBlocks.length - 1, firstChangedRange.originalStartIndex)
   );
-  const selectionEndIndex = Math.max(
-    selectionStartIndex,
+  const originalSliceEndIndex = Math.max(
+    originalSliceStartIndex,
     Math.min(normalizedOriginalBlocks.length - 1, lastChangedRange.originalEndIndexExclusive - 1)
+  );
+  const selectionRange = resolveSourceSelectionRange(
+    normalizedOriginalBlocks,
+    firstChangedRange.originalStartIndex,
+    lastChangedRange.originalEndIndexExclusive
   );
   const combinedEditedBlocks = normalizedEditedBlocks.slice(
     firstChangedRange.editedStartIndex,
     lastChangedRange.editedEndIndexExclusive
   );
   const timingRange = {
-    startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex]?.startSeconds || 0),
-    endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex]?.endSeconds || 0)
+    startSeconds: Number(normalizedOriginalBlocks[originalSliceStartIndex]?.startSeconds || 0),
+    endSeconds: Number(normalizedOriginalBlocks[originalSliceEndIndex]?.endSeconds || 0)
   };
 
   return [
     {
-      selectionStartIndex,
-      selectionEndIndex,
+      selectionStartIndex: selectionRange.startIndex,
+      selectionEndIndex: selectionRange.endIndex,
       timingRange,
       blocks: retimeTextEditorBlocks(combinedEditedBlocks, timingRange)
     }

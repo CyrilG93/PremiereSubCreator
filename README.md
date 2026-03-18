@@ -261,9 +261,11 @@ Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the `Text editor` ignores selected MOGRTs that do not expose a real editable subtitle text payload
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
+- the `Text editor` now tries to resolve the `.mogrt` file from the subtitle clips actually selected on the timeline, instead of depending only on the gallery selection
 - when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection
 - when several disjoint regions were changed, Sub Creator rebuilds one safe combined span that covers the edited areas instead of risking a partial multi-pass apply
 - the rebuilt clips keep the full original time span of the selected subtitle range, even after merges reduce the number of blocks
+- if clips remain later on the source track, Sub Creator rebuilds on a safe track above instead of risking a transient MOGRT insert that could trim or overwrite later media
 - if the rebuilt subtitle timing would create one real new overlap with non-selected clips on the same track, Sub Creator rebuilds on the first empty video track above
 - if no empty video track exists above, Sub Creator creates a new top video track and rebuilds there instead
 - the rebuilt clips try to preserve the original MOGRT visual/text style from the selected subtitle clips

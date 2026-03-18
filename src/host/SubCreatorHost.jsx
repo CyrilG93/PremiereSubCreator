@@ -5038,7 +5038,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     );
     debugLines.push("text_apply source_track=" + String(targetTrackIndex));
 
-    var overlapConflict = subcreator_find_text_rebuild_overlap(track, selectionItemsToReplace, editedItems);
+    // Keep the full current selection exempt from overlap checks so untouched selected subtitles do not trigger a false fallback track.
+    var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
     if (overlapConflict) {
       var fallbackTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
       if (fallbackTrackInfo && fallbackTrackInfo.index >= 0) {

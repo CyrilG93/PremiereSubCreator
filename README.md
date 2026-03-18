@@ -265,6 +265,7 @@ Important notes:
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
 - when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection
 - when several disjoint regions were changed, Sub Creator rebuilds those changed slices independently from right to left instead of forcing one large middle rebuild
+- when disjoint regions are rebuilt, the other selected subtitles stay part of the same edit session and do not trigger an unnecessary fallback track
 - the rebuilt clips keep the full original time span of the selected subtitle range, even after merges reduce the number of blocks
 - if the rebuilt subtitle timing would overlap non-selected clips on the same track, Sub Creator rebuilds on the first empty video track above
 - if no empty video track exists above, Sub Creator creates a new top video track and rebuilds there instead

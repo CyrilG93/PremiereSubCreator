@@ -66,7 +66,6 @@
   "action.liveUpdateOn": "Live update ON",
   "action.applyMogrtProps": "Apply changes",
   "action.applyTextItems": "Apply text changes",
-  "action.undoTextApply": "Undo last text apply",
   "action.splitSelectedWord": "Split at selected word",
   "action.mergePrevious": "Merge previous",
   "action.mergeNext": "Merge next",
@@ -86,7 +85,6 @@
   "log.whisperDone": "Whisper done, model:",
   "log.visualApplyDone": "Visual editor apply result:",
   "log.textApplyDone": "Text editor apply result:",
-  "log.textUndoDone": "Text editor undo result:",
   "log.textNoChanges": "No text changes detected.",
   "error.missingSrtPath": "Select an SRT file using Browse.",
   "error.emptySrt": "The SRT file contains no valid subtitle cues.",
@@ -97,6 +95,5 @@
   "error.textSelectionMissing": "Read the selected subtitle MOGRT clips before applying text changes.",
   "error.textMixedTracks": "Text editor V1 currently supports selected subtitle MOGRT clips on one video track only.",
   "error.textEmptyBlocks": "At least one non-empty subtitle block is required to apply text changes.",
-  "error.textApplyPartialFailure": "Text editor apply partially failed. Reload the selection and inspect the logs before continuing.",
-  "error.textUndoUnavailable": "Undo is unavailable because the current Text editor selection no longer matches the last applied rebuild."
+  "error.textApplyPartialFailure": "Text editor apply partially failed. Reload the selection and inspect the logs before continuing."
 }

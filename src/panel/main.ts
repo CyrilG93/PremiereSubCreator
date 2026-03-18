@@ -116,11 +116,6 @@ interface TextEditorBlockState extends TextEditorBlock {
   selectedWordIndex: number;
 }
 
-interface TextEditorUndoSnapshot {
-  previousBlocks: TextEditorBlock[];
-  postApplySelectionSignature: string;
-}
-
 interface ApplyCaptionPlanHostResult {
   insertedMogrt?: number;
   videoTrackUsed?: number;
@@ -187,7 +182,6 @@ const elements = {
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   textReadButton: document.querySelector<HTMLButtonElement>("#textReadButton"),
-  textUndoButton: document.querySelector<HTMLButtonElement>("#textUndoButton"),
   textApplyButton: document.querySelector<HTMLButtonElement>("#textApplyButton"),
   textSelectionSummary: document.querySelector<HTMLParagraphElement>("#textSelectionSummary"),
   textEditorList: document.querySelector<HTMLElement>("#textEditorList"),
@@ -258,7 +252,6 @@ let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
-let lastTextUndoSnapshot: TextEditorUndoSnapshot | null = null;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -1745,37 +1738,6 @@ function getTextEditorSelectionTimingRange(): TextEditorTimingRange | undefined 
   };
 }
 
-function cloneTextEditorBlocksForSnapshot(blocks: TextEditorBlock[]): TextEditorBlock[] {
-  // // Deep-clone text blocks so undo snapshots never share mutable timed-word arrays with live editor state.
-  return blocks.map((block) => ({
-    sourceSelectionIndex: block.sourceSelectionIndex,
-    clipName: block.clipName,
-    startSeconds: block.startSeconds,
-    endSeconds: block.endSeconds,
-    text: block.text,
-    words: block.words.slice(),
-    timedWords: block.timedWords ? block.timedWords.map((word) => ({ ...word })) : undefined
-  }));
-}
-
-function canUndoTextEditorApply(): boolean {
-  // // Enable undo only while the currently loaded selection still matches the last successful text rebuild result.
-  return (
-    !!lastTextUndoSnapshot &&
-    !!textEditorSelectionSignature &&
-    lastTextUndoSnapshot.postApplySelectionSignature === textEditorSelectionSignature &&
-    textEditorSameTrack
-  );
-}
-
-function refreshTextUndoButtonState(): void {
-  // // Keep the one-level undo action available only when the current Text tab selection can be restored safely.
-  if (!elements.textUndoButton) {
-    return;
-  }
-  elements.textUndoButton.disabled = textApplyInProgress || !canUndoTextEditorApply();
-}
-
 function resolveCaptionMetadataIdentityFromHostPayload(payload: {
   projectDocumentId?: string;
   projectPath?: string;
@@ -1810,7 +1772,6 @@ function setTextButtonsBusy(isBusy: boolean): void {
   if (elements.textReadButton) {
     elements.textReadButton.disabled = isBusy;
   }
-  refreshTextUndoButtonState();
   if (elements.textApplyButton) {
     elements.textApplyButton.disabled = isBusy;
   }
@@ -2117,10 +2078,6 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   textEditorSelectionSignature = result.signature;
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
-  if (lastTextUndoSnapshot && lastTextUndoSnapshot.postApplySelectionSignature !== textEditorSelectionSignature) {
-    // // Drop stale undo snapshots as soon as the loaded selection no longer matches the last rebuilt result.
-    lastTextUndoSnapshot = null;
-  }
   const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, filteredSelectionItems);
   textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => ({
     sourceSelectionIndex: Number(item.selectionIndex || 0),
@@ -2150,7 +2107,6 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
         )
       : 0;
   renderTextEditor();
-  refreshTextUndoButtonState();
 
   if (emitHostLog) {
     setStructuredLog(translate("log.hostResult"), result);
@@ -2199,10 +2155,6 @@ async function applyTextEditorChanges(): Promise<void> {
   }
 
   const options = collectBuildOptions();
-  const undoSnapshot: TextEditorUndoSnapshot = {
-    previousBlocks: cloneTextEditorBlocksForSnapshot(textEditorOriginalBlocks),
-    postApplySelectionSignature: ""
-  };
 
   textApplyInProgress = true;
   setTextButtonsBusy(true);
@@ -2266,93 +2218,6 @@ async function applyTextEditorChanges(): Promise<void> {
       ranges: rangeResults
     });
     await loadTextItemsFromSelection();
-    undoSnapshot.postApplySelectionSignature = textEditorSelectionSignature;
-    lastTextUndoSnapshot = undoSnapshot.postApplySelectionSignature ? undoSnapshot : null;
-    refreshTextUndoButtonState();
-  } finally {
-    textApplyInProgress = false;
-    setTextButtonsBusy(false);
-  }
-}
-
-async function undoLastTextEditorApply(): Promise<void> {
-  // // Restore the previous Text editor selection state by rebuilding the current selection back to the last saved snapshot.
-  if (textApplyInProgress) {
-    return;
-  }
-  if (!canUndoTextEditorApply() || !lastTextUndoSnapshot) {
-    throw new Error(translate("error.textUndoUnavailable"));
-  }
-
-  const currentBlocks = cloneTextEditorBlocksForSnapshot(textEditorOriginalBlocks);
-  const previousBlocks = cloneTextEditorBlocksForSnapshot(lastTextUndoSnapshot.previousBlocks);
-  if (currentBlocks.length < 1 || previousBlocks.length < 1) {
-    lastTextUndoSnapshot = null;
-    refreshTextUndoButtonState();
-    return;
-  }
-
-  const previousUndoSnapshot = lastTextUndoSnapshot;
-  lastTextUndoSnapshot = null;
-  refreshTextUndoButtonState();
-  const options = collectBuildOptions();
-
-  textApplyInProgress = true;
-  setTextButtonsBusy(true);
-  try {
-    const undoTimingRange = {
-      startSeconds: currentBlocks.reduce(
-        (lowestValue, block) => Math.min(lowestValue, Number(block.startSeconds || 0)),
-        Number.POSITIVE_INFINITY
-      ),
-      endSeconds: currentBlocks.reduce(
-        (highestValue, block) => Math.max(highestValue, Number(block.endSeconds || 0)),
-        Number.NEGATIVE_INFINITY
-      )
-    };
-    const payload: TextEditorApplyPayload = {
-      selectionSignature: textEditorSelectionSignature,
-      replaceSelectionStartIndex: 0,
-      replaceSelectionEndIndex: Math.max(0, currentBlocks.length - 1),
-      items: previousBlocks.map((block, blockIndex) => ({
-        sourceSelectionIndex: Math.min(blockIndex, Math.max(0, currentBlocks.length - 1)),
-        startSeconds: block.startSeconds,
-        endSeconds: block.endSeconds,
-        text: block.text
-      })),
-      options
-    };
-
-    const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
-    if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== previousBlocks.length) {
-      throw new Error(translate("error.textApplyPartialFailure"));
-    }
-
-    const lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || textEditorSelectionMetadataIdentity;
-    const lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
-      ? Number(result.sourceTrackIndex)
-      : textEditorVideoTrackIndex;
-    const lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
-      ? Number(result.rebuildTrackIndex)
-      : textEditorVideoTrackIndex;
-    persistTextEditorCaptionMetadata(
-      lastIdentity,
-      lastSourceTrackIndex,
-      lastRebuildTrackIndex,
-      undoTimingRange,
-      previousBlocks
-    );
-
-    setStructuredLog(translate("log.textUndoDone"), {
-      rebuiltCount: Number(result.rebuiltCount || 0),
-      failedCount: Number(result.failedCount || 0),
-      result
-    });
-    await loadTextItemsFromSelection();
-  } catch (error) {
-    lastTextUndoSnapshot = previousUndoSnapshot;
-    refreshTextUndoButtonState();
-    throw error;
   } finally {
     textApplyInProgress = false;
     setTextButtonsBusy(false);
@@ -4268,19 +4133,8 @@ async function initialize(): Promise<void> {
       setLog(String(error), true);
     }
   });
-  elements.textUndoButton?.addEventListener("click", async () => {
-    try {
-      if (textApplyInProgress) {
-        return;
-      }
-      await undoLastTextEditorApply();
-    } catch (error) {
-      setLog(String(error), true);
-    }
-  });
 
   setLog(translate("log.ready"));
-  refreshTextUndoButtonState();
 
   void enforceWhisperSourceAvailability()
     .then(() => {

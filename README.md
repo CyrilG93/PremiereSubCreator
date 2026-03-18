@@ -254,9 +254,6 @@ Current `V1` workflow:
    - `Merge next`
 6. Click `Apply text changes`.
 
-You also have:
-- `Undo last text apply` for a one-level rollback of the latest successful rebuild
-
 UI note:
 - hovering `Split` or `Merge` previews the subtitle block(s) affected by that action
 

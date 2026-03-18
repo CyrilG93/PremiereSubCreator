@@ -517,6 +517,47 @@ export function buildTextEditorApplyPlans(
   return plans;
 }
 
+export function buildTextEditorSafeApplyPlans(
+  originalBlocks: TextEditorBlock[],
+  editedBlocks: TextEditorBlock[]
+): TextEditorApplyPlan[] {
+  // // Collapse disjoint edits into one safe combined replacement span until the host can guarantee transactional multi-range rebuilds.
+  const normalizedOriginalBlocks = cloneTextEditorBlocks(originalBlocks);
+  const normalizedEditedBlocks = filterNonEmptyTextEditorBlocks(editedBlocks);
+  const changedRanges = buildTextEditorChangedRanges(normalizedOriginalBlocks, normalizedEditedBlocks);
+  if (changedRanges.length < 2) {
+    return buildTextEditorApplyPlans(originalBlocks, editedBlocks);
+  }
+
+  const firstChangedRange = changedRanges[0];
+  const lastChangedRange = changedRanges[changedRanges.length - 1];
+  const selectionStartIndex = Math.max(
+    0,
+    Math.min(normalizedOriginalBlocks.length - 1, firstChangedRange.originalStartIndex)
+  );
+  const selectionEndIndex = Math.max(
+    selectionStartIndex,
+    Math.min(normalizedOriginalBlocks.length - 1, lastChangedRange.originalEndIndexExclusive - 1)
+  );
+  const combinedEditedBlocks = normalizedEditedBlocks.slice(
+    firstChangedRange.editedStartIndex,
+    lastChangedRange.editedEndIndexExclusive
+  );
+  const timingRange = {
+    startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex]?.startSeconds || 0),
+    endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex]?.endSeconds || 0)
+  };
+
+  return [
+    {
+      selectionStartIndex,
+      selectionEndIndex,
+      timingRange,
+      blocks: retimeTextEditorBlocks(combinedEditedBlocks, timingRange)
+    }
+  ];
+}
+
 export function buildTextEditorApplyPlan(
   originalBlocks: TextEditorBlock[],
   editedBlocks: TextEditorBlock[]

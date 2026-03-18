@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTextEditorApplyPlan,
   buildTextEditorApplyPlans,
+  buildTextEditorSafeApplyPlans,
   buildTextEditorBlocks,
   mergeTextEditorBlocks,
   moveTextEditorWord,
@@ -538,6 +539,76 @@ describe("textEditor helpers", () => {
     expect(plans[1]?.selectionStartIndex).toBe(3);
     expect(plans[1]?.selectionEndIndex).toBe(3);
     expect(plans[1]?.blocks.map((block) => block.text)).toEqual(["epsilon updated"]);
+  });
+
+  it("collapses disjoint changed ranges into one safe combined apply span", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four"
+      }
+    ]);
+
+    const edited = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one updated"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four updated"
+      }
+    ]);
+
+    const plans = buildTextEditorSafeApplyPlans(original, edited);
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.selectionStartIndex).toBe(0);
+    expect(plans[0]?.selectionEndIndex).toBe(3);
+    expect(plans[0]?.blocks.map((block) => block.text)).toEqual(["one updated", "two", "three", "four updated"]);
   });
 
   it("returns no apply plan when nothing changed", () => {

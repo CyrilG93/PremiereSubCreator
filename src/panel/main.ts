@@ -3,7 +3,7 @@ import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
 import { parseSrt } from "../core/srt";
 import {
-  buildTextEditorApplyPlans,
+  buildTextEditorSafeApplyPlans,
   mergeTextEditorBlocks,
   moveTextEditorWord,
   retimeTextEditorBlocks,
@@ -2173,7 +2173,8 @@ async function applyTextEditorChanges(): Promise<void> {
   }
 
   const editableBlocks = buildTextEditorBlocksFromState(textEditorBlocks);
-  const applyPlans = buildTextEditorApplyPlans(textEditorOriginalBlocks, editableBlocks);
+  // // Use one safe combined span for disjoint edits so the host does not partially rebuild the selection.
+  const applyPlans = buildTextEditorSafeApplyPlans(textEditorOriginalBlocks, editableBlocks);
   if (applyPlans.length < 1) {
     setLog(translate("log.textNoChanges"));
     return;

@@ -8,6 +8,8 @@ set "SUBCREATOR_SOURCE_DIR=%SUBCREATOR_PROJECT_DIR%\dist\com.cyrilg93.subcreator
 set "SUBCREATOR_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subcreator"
 set "SUBCREATOR_RUNTIME_DIR=%APPDATA%\SubCreator"
 set "SUBCREATOR_RUNTIME_FILE=%SUBCREATOR_RUNTIME_DIR%\subcreator-runtime.json"
+set "SUBCREATOR_BUNDLED_MODELS_DIR=%SUBCREATOR_PROJECT_DIR%\Models"
+set "SUBCREATOR_WHISPER_MODELS_CACHE_DIR=%USERPROFILE%\.cache\whisper"
 set "SUBCREATOR_PYTHON_CMD="
 set "SUBCREATOR_PYTHON_LABEL="
 set "SUBCREATOR_PYTHON_VERSION_LINE="
@@ -47,6 +49,7 @@ if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_
 
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode
+call :subcreator_copy_bundled_models
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
@@ -135,6 +138,29 @@ for %%v in (7 8 9 10 11 12) do (
   reg add "HKCU\Software\Adobe\CSXS.%%v" /v PlayerDebugMode /t REG_SZ /d 1 /f >nul 2>nul
 )
 echo CEP debug mode enabled for CSXS.7 to CSXS.12
+goto :eof
+
+:subcreator_copy_bundled_models
+REM // Copy bundled Whisper model files into the local cache so the panel can expose a starter model without download.
+if not exist "%SUBCREATOR_BUNDLED_MODELS_DIR%" goto :eof
+if not exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%" mkdir "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%" >nul 2>nul
+set /a SUBCREATOR_MODELS_COPIED=0
+if exist "%SUBCREATOR_BUNDLED_MODELS_DIR%\*.pt" (
+  for %%F in ("%SUBCREATOR_BUNDLED_MODELS_DIR%\*.pt") do (
+    if exist "%%~fF" (
+      if not exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\%%~nxF" (
+        copy "%%~fF" "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\%%~nxF" >nul
+        if not errorlevel 1 set /a SUBCREATOR_MODELS_COPIED+=1
+      )
+    )
+  )
+)
+for /f "tokens=* delims=" %%L in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$src = [IO.Path]::GetFullPath($env:SUBCREATOR_BUNDLED_MODELS_DIR); $dst = [IO.Path]::GetFullPath($env:SUBCREATOR_WHISPER_MODELS_CACHE_DIR); if (-not (Test-Path -LiteralPath $src)) { exit 0 }; $copied = 0; Get-ChildItem -LiteralPath $src -File | Where-Object { $_.Name -match '\.pt\.part-\d+$' } | Group-Object { $_.Name -replace '\.part-\d+$', '' } | ForEach-Object { $target = Join-Path $dst $_.Name; if (-not (Test-Path -LiteralPath $target)) { $stream = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); try { $_.Group | Sort-Object Name | ForEach-Object { $bytes = [System.IO.File]::ReadAllBytes($_.FullName); $stream.Write($bytes, 0, $bytes.Length) } } finally { $stream.Dispose() }; $copied++ } }; if ($copied -gt 0) { Write-Output $copied }"') do (
+  set /a SUBCREATOR_MODELS_COPIED+=%%L
+)
+if !SUBCREATOR_MODELS_COPIED! GTR 0 (
+  echo Copied !SUBCREATOR_MODELS_COPIED! bundled Whisper model^(s^) to %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%
+)
 goto :eof
 
 :subcreator_detect_python

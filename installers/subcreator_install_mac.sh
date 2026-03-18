@@ -8,6 +8,8 @@ SUBCREATOR_SOURCE_DIR="${SUBCREATOR_PROJECT_DIR}/dist/com.cyrilg93.subcreator"
 SUBCREATOR_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilg93.subcreator"
 SUBCREATOR_RUNTIME_DIR="${HOME}/Library/Application Support/SubCreator"
 SUBCREATOR_RUNTIME_FILE="${SUBCREATOR_RUNTIME_DIR}/subcreator-runtime.json"
+SUBCREATOR_BUNDLED_MODELS_DIR="${SUBCREATOR_PROJECT_DIR}/Models"
+SUBCREATOR_WHISPER_MODELS_CACHE_DIR="${HOME}/.cache/whisper"
 SUBCREATOR_PYTHON_CMD=""
 SUBCREATOR_PYTHON_VERSION=""
 SUBCREATOR_PYTHON_PATH=""
@@ -72,6 +74,74 @@ subcreator_restore_existing_templates() {
   fi
   rm -rf "$(dirname "${SUBCREATOR_TEMPLATES_BACKUP_DIR}")"
   SUBCREATOR_TEMPLATES_BACKUP_DIR=""
+}
+
+subcreator_copy_bundled_whisper_models() {
+  # // Copy bundled Whisper model files into the local cache so the panel can expose a guaranteed starter model without download.
+  if [ ! -d "${SUBCREATOR_BUNDLED_MODELS_DIR}" ]; then
+    return 0
+  fi
+
+  local copied_count=0
+  local model_path=""
+  local model_paths=("${SUBCREATOR_BUNDLED_MODELS_DIR}"/*.pt)
+  local part_path=""
+  local part_paths=("${SUBCREATOR_BUNDLED_MODELS_DIR}"/*.pt.part-*)
+  local processed_models=""
+  if [ "${#model_paths[@]}" -lt 1 ] || [ ! -e "${model_paths[0]}" ]; then
+    model_paths=()
+  fi
+
+  mkdir -p "${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}"
+
+  for model_path in "${model_paths[@]}"; do
+    local model_name=""
+    if [ ! -f "${model_path}" ]; then
+      continue
+    fi
+
+    model_name="$(basename "${model_path}")"
+    if [ -f "${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/${model_name}" ]; then
+      continue
+    fi
+
+    cp "${model_path}" "${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/${model_name}"
+    copied_count=$((copied_count + 1))
+  done
+
+  for part_path in "${part_paths[@]}"; do
+    local part_name=""
+    local model_name=""
+    local ordered_parts=()
+    if [ ! -f "${part_path}" ]; then
+      continue
+    fi
+
+    part_name="$(basename "${part_path}")"
+    model_name="${part_name%.part-*}"
+    case "|${processed_models}|" in
+      *"|${model_name}|"*)
+        continue
+        ;;
+    esac
+    processed_models="${processed_models}|${model_name}"
+
+    if [ -f "${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/${model_name}" ]; then
+      continue
+    fi
+
+    ordered_parts=("${SUBCREATOR_BUNDLED_MODELS_DIR}/${model_name}.part-"*)
+    if [ "${#ordered_parts[@]}" -lt 1 ] || [ ! -e "${ordered_parts[0]}" ]; then
+      continue
+    fi
+
+    cat "${ordered_parts[@]}" >"${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/${model_name}"
+    copied_count=$((copied_count + 1))
+  done
+
+  if [ "${copied_count}" -gt 0 ]; then
+    echo "Copied ${copied_count} bundled Whisper model(s) to ${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}"
+  fi
 }
 
 subcreator_json_escape() {
@@ -332,6 +402,7 @@ subcreator_restore_existing_templates
 
 echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
 subcreator_enable_cep_debug_mode
+subcreator_copy_bundled_whisper_models
 
 # // Discover supported Python runtime; when multiple versions exist we pick the newest supported one.
 if ! subcreator_select_python_cmd; then

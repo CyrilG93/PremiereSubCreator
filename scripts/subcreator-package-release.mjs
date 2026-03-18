@@ -10,6 +10,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilg93.subcreator");
 const distMetaPath = path.join(distExtensionDir, "assets", "subcreator-meta.json");
 const distManifestPath = path.join(distExtensionDir, "CSXS", "manifest.xml");
+const bundledModelsDir = path.join(projectRoot, "Models");
 const releasesDir = path.join(projectRoot, "Releases");
 const stagingRoot = path.join(projectRoot, ".subcreator-release-staging");
 
@@ -74,6 +75,61 @@ async function subcreatorPruneReleaseMetadata(targetDir) {
   }
 }
 
+async function copyBundledModelPayload(sourceDir, targetDir) {
+  // // Copy only release-safe bundled model assets so large local source files do not exceed GitHub's regular blob limit.
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  const chunkedModelNames = new Set();
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const chunkMatch = entry.name.match(/^(.*\.pt)\.part-\d+$/i);
+    if (chunkMatch) {
+      chunkedModelNames.add(chunkMatch[1]);
+    }
+  }
+
+  const copyTasks = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    if (entry.name === ".DS_Store") {
+      continue;
+    }
+
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (/\.pt\.part-\d+$/i.test(entry.name)) {
+      copyTasks.push(cp(sourcePath, targetPath));
+      continue;
+    }
+
+    if (/\.pt$/i.test(entry.name)) {
+      if (chunkedModelNames.has(entry.name)) {
+        continue;
+      }
+
+      const entryStat = await stat(sourcePath);
+      if (entryStat.size >= 100 * 1024 * 1024) {
+        continue;
+      }
+
+      copyTasks.push(cp(sourcePath, targetPath));
+    }
+  }
+
+  if (copyTasks.length < 1) {
+    return;
+  }
+
+  await mkdir(targetDir, { recursive: true });
+  await Promise.all(copyTasks);
+}
+
 async function subcreatorPackageRelease() {
   // // Validate build output exists before packaging release assets.
   await stat(distExtensionDir);
@@ -105,12 +161,22 @@ async function subcreatorPackageRelease() {
   await mkdir(stagingBundleDir, { recursive: true });
   await mkdir(releasesDir, { recursive: true });
 
-  // // Copy only mandatory installation payload: extension, installers, and README.
-  await Promise.all([
+  // // Copy only mandatory installation payload: extension, installers, README, and bundled Whisper models when available.
+  const copyTasks = [
     cp(path.join(projectRoot, "README.md"), path.join(stagingBundleDir, "README.md")),
     cp(path.join(projectRoot, "installers"), path.join(stagingBundleDir, "installers"), { recursive: true }),
     cp(path.join(projectRoot, "dist"), path.join(stagingBundleDir, "dist"), { recursive: true })
-  ]);
+  ];
+  try {
+    const bundledModelsStat = await stat(bundledModelsDir);
+    if (bundledModelsStat.isDirectory()) {
+      copyTasks.push(copyBundledModelPayload(bundledModelsDir, path.join(stagingBundleDir, "Models")));
+    }
+  } catch {
+    // // Ignore missing bundled-model folders so packaging stays compatible with older working copies.
+  }
+
+  await Promise.all(copyTasks);
 
   await subcreatorPruneReleaseMetadata(stagingBundleDir);
 

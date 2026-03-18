@@ -58,6 +58,8 @@ interface WhisperSequenceExportResult {
 export interface WhisperRuntimeStatus {
   available: boolean;
   details: string;
+  installedModels: string[];
+  modelCachePaths: string[];
 }
 
 export interface SystemFontCatalog {
@@ -221,6 +223,11 @@ interface WhisperCommandCandidate {
   label: string;
 }
 
+interface WhisperModelDefinition {
+  value: string;
+  filenames: string[];
+}
+
 interface PythonLauncherCandidate {
   command: string;
   argsPrefix: string[];
@@ -246,6 +253,14 @@ let subcreatorInstalledMogrtCatalogCache:
       catalog: InstalledMogrtCatalog;
     }
   | undefined;
+const SUBCREATOR_SUPPORTED_WHISPER_MODELS: WhisperModelDefinition[] = [
+  { value: "tiny", filenames: ["tiny.pt"] },
+  { value: "base", filenames: ["base.pt"] },
+  { value: "small", filenames: ["small.pt"] },
+  { value: "medium", filenames: ["medium.pt"] },
+  { value: "large-v3", filenames: ["large-v3.pt"] },
+  { value: "turbo", filenames: ["turbo.pt", "large-v3-turbo.pt"] }
+];
 
 function escapeForJsx(input: string): string {
   // // Escape special characters before embedding text into evalScript call strings.
@@ -307,6 +322,71 @@ function resolveCepNodeModules(): CepNodeModules | null {
   } catch {
     return null;
   }
+}
+
+function pushUniqueString(list: string[], value: string): void {
+  // // Keep small runtime lists unique while preserving insertion order and ignoring case-only duplicates.
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return;
+  }
+
+  const lookup = normalized.toLowerCase();
+  for (const item of list) {
+    if (String(item || "").trim().toLowerCase() === lookup) {
+      return;
+    }
+  }
+
+  list.push(normalized);
+}
+
+function listWhisperModelCacheDirectories(modules: CepNodeModules): string[] {
+  // // Probe standard Whisper cache locations so the panel can show only the models already available locally.
+  const directories: string[] = [];
+  const env = modules.process.env || {};
+  const homeDir = typeof modules.os.homedir === "function" ? String(modules.os.homedir() || "").trim() : "";
+  const xdgCacheHome = String(env.XDG_CACHE_HOME || "").trim();
+  const userProfile = String(env.USERPROFILE || "").trim();
+
+  if (xdgCacheHome) {
+    pushUniqueString(directories, modules.path.join(xdgCacheHome, "whisper"));
+  }
+  if (homeDir) {
+    pushUniqueString(directories, modules.path.join(homeDir, ".cache", "whisper"));
+    pushUniqueString(directories, modules.path.join(homeDir, "Library", "Caches", "whisper"));
+  }
+  if (userProfile) {
+    pushUniqueString(directories, modules.path.join(userProfile, ".cache", "whisper"));
+  }
+
+  return directories.filter((directory) => modules.fs.existsSync(directory));
+}
+
+function detectInstalledWhisperModelsViaCepNode(modules: CepNodeModules): {
+  installedModels: string[];
+  modelCachePaths: string[];
+} {
+  // // Match cached `.pt` files against the subset of Whisper models exposed in the panel.
+  const modelCachePaths = listWhisperModelCacheDirectories(modules);
+  const installedModels: string[] = [];
+
+  for (const cachePath of modelCachePaths) {
+    for (const modelDefinition of SUBCREATOR_SUPPORTED_WHISPER_MODELS) {
+      if (
+        modelDefinition.filenames.some((filename) =>
+          modules.fs.existsSync(modules.path.join(cachePath, filename))
+        )
+      ) {
+        pushUniqueString(installedModels, modelDefinition.value);
+      }
+    }
+  }
+
+  return {
+    installedModels,
+    modelCachePaths
+  };
 }
 
 function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: string): string[] {
@@ -959,23 +1039,6 @@ function readInstalledMogrtCatalogViaCepNode(extensionRootPath: string): Install
     catalog
   };
   return catalog;
-}
-
-function pushUniqueString(target: string[], value: string): void {
-  // // Append a value only once while preserving initial order.
-  const normalized = String(value || "").trim();
-  if (!normalized) {
-    return;
-  }
-
-  const lookup = normalized.toLowerCase();
-  for (const item of target) {
-    if (String(item || "").trim().toLowerCase() === lookup) {
-      return;
-    }
-  }
-
-  target.push(normalized);
 }
 
 function normalizeFontText(value: string): string {
@@ -1754,7 +1817,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
   if (!modules) {
     return {
       available: false,
-      details: "CEP Node runtime unavailable"
+      details: "CEP Node runtime unavailable",
+      installedModels: [],
+      modelCachePaths: []
     };
   }
 
@@ -1762,6 +1827,7 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
   const runtimeConfig = getRuntimeConfig(modules);
   const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
   const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
+  const installedModels = detectInstalledWhisperModelsViaCepNode(modules);
 
   const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables, runtimeConfig);
   for (const launcher of pythonLaunchers) {
@@ -1769,7 +1835,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     if (probe.ok) {
       return {
         available: true,
-        details: `Python module detected via ${launcher.label}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`
+        details: `Python module detected via ${launcher.label}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`,
+        installedModels: installedModels.installedModels,
+        modelCachePaths: installedModels.modelCachePaths
       };
     }
 
@@ -1790,7 +1858,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     if (probe.ok) {
       return {
         available: true,
-        details: `CLI detected via ${command}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`
+        details: `CLI detected via ${command}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`,
+        installedModels: installedModels.installedModels,
+        modelCachePaths: installedModels.modelCachePaths
       };
     }
 
@@ -1807,7 +1877,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
 
   return {
     available: false,
-    details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`
+    details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`,
+    installedModels: installedModels.installedModels,
+    modelCachePaths: installedModels.modelCachePaths
   };
 }
 
@@ -2018,7 +2090,7 @@ function transcribeWithWhisperViaCepNode(request: WhisperTranscriptionRequest): 
   }
   if (rootCauseSummary && /sslcertverificationerror|certificate_verify_failed|urllib\.error\.urlerror/i.test(rootCauseSummary)) {
     runtimeHint =
-      "Model download failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or pre-download Whisper models.";
+      "Whisper model access failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or copy the model into the Whisper cache manually.";
   }
   throw new Error(
     `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
@@ -2208,7 +2280,7 @@ async function transcribeWithWhisperViaCepNodeAsync(
   }
   if (rootCauseSummary && /sslcertverificationerror|certificate_verify_failed|urllib\.error\.urlerror/i.test(rootCauseSummary)) {
     runtimeHint =
-      "Model download failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or pre-download Whisper models.";
+      "Whisper model access failed due TLS/SSL certificate validation. Configure trusted certs/proxy for Python, or copy the model into the Whisper cache manually.";
   }
   throw new Error(
     `Unable to execute Whisper CLI from CEP runtime. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${

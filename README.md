@@ -47,6 +47,7 @@ A backup of the previous technical README is kept here:
 - Python `3.8` to `3.13`
 - `openai-whisper`
 - `ffmpeg`
+- at least one Whisper model available in the local cache
 
 The installers try to configure Whisper automatically when possible.
 If that fails, `SRT` mode still works normally.
@@ -61,6 +62,7 @@ The package contains:
 - the extension itself
 - the macOS installer
 - the Windows installer
+- bundled Whisper models when the release includes them
 - this README
 
 ### 2. Close Premiere Pro
@@ -96,6 +98,7 @@ Then open Sub Creator from the Premiere extensions menu.
 The installer:
 - installs the extension into Adobe CEP extensions
 - enables CEP debug mode
+- copies bundled Whisper models into the local Whisper cache when the release includes them
 - tries to detect Python
 - tries to install `openai-whisper`
 - tries to detect or install `ffmpeg`
@@ -125,7 +128,7 @@ Use `Whisper` if you want the extension to transcribe the active sequence automa
 Basic flow:
 1. Open the `Creation` tab.
 2. Choose `Whisper` as source.
-3. Choose a Whisper model.
+3. Choose one of the Whisper models already available locally.
 4. Choose whether to analyze:
    - `Entire sequence`
    - `In/Out points`
@@ -139,9 +142,12 @@ Sub Creator will:
 
 ## Whisper models
 
-### Automatic download
+Sub Creator only shows Whisper models already present in the local Whisper cache.
 
-The first time you use a model, Whisper usually downloads it automatically.
+If the release package includes bundled models, the installer copies them there automatically.
+That gives you at least one working model without a separate download step.
+
+If the model dropdown is empty, read the manual section below and add a model yourself.
 
 Common choices:
 - `tiny`: fastest, lowest quality
@@ -151,9 +157,9 @@ Common choices:
 - `large-v3`: best quality, slowest
 - `turbo`: faster large-class option when available
 
-### Manual model download
+### Add more models manually
 
-If automatic download fails because of SSL, proxy, or offline environment, you can download the models manually and place them in the Whisper cache.
+If you want more models than the ones bundled with the installer, download them manually and place them in the Whisper cache.
 
 Model links:
 - `tiny.pt`: `https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt`
@@ -297,10 +303,22 @@ What to do:
 3. check `whisper --help`
 4. check `ffmpeg -version`
 
-### First Whisper run is slow
+### No Whisper model appears in the panel
+
+Possible reasons:
+- no bundled model was copied during install
+- you deleted the local Whisper cache files
+- you installed the extension manually without the full release package
+
+What to do:
+1. rerun the installer from the full release package
+2. read the `Whisper models` section above
+3. copy one or more `.pt` model files into the Whisper cache
+
+### Whisper transcription is slow
 
 Normal.
-The first run may download the model.
+Transcription itself can still take time depending on the model and sequence length.
 
 ### My custom MOGRT does not appear
 

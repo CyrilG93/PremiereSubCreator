@@ -1,0 +1,4 @@
+# Keep local source model files and Finder metadata out of Git history.
+.DS_Store
+base.pt
+medium.pt

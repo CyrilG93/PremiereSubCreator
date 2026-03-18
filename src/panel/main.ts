@@ -159,6 +159,7 @@ const elements = {
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
   whisperModelRow: document.querySelector<HTMLElement>("#whisperModelRow"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
+  whisperModelHint: document.querySelector<HTMLElement>("#whisperModelHint"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
   whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
@@ -237,6 +238,8 @@ let lastPassiveMogrtCatalogRefreshAt = 0;
 let generateInProgress = false;
 let textApplyInProgress = false;
 let hostThemeListenerBound = false;
+let availableWhisperModels: string[] = [];
+let pendingWhisperModelValue = "base";
 let textEditorBlocks: TextEditorBlockState[] = [];
 let textEditorOriginalBlocks: TextEditorBlock[] = [];
 let textEditorSelectionSignature = "";
@@ -606,6 +609,66 @@ function hasSelectOption(select: HTMLSelectElement | null | undefined, value: st
   return Array.from(select.options).some((option) => option.value === value);
 }
 
+function sortWhisperModels(models: string[]): string[] {
+  // // Keep Whisper models in a stable, user-facing order instead of cache-discovery order.
+  const preferredOrder = ["tiny", "base", "small", "medium", "large-v3", "turbo"];
+  return models
+    .slice()
+    .sort((left, right) => {
+      const leftIndex = preferredOrder.indexOf(left);
+      const rightIndex = preferredOrder.indexOf(right);
+      if (leftIndex >= 0 && rightIndex >= 0) {
+        return leftIndex - rightIndex;
+      }
+      if (leftIndex >= 0) {
+        return -1;
+      }
+      if (rightIndex >= 0) {
+        return 1;
+      }
+      return left.localeCompare(right);
+    });
+}
+
+function refreshWhisperModelUi(preferredValue = pendingWhisperModelValue): void {
+  // // Rebuild the Whisper model select from locally installed models only and expose a README hint when none exist.
+  if (!elements.whisperModel) {
+    return;
+  }
+
+  const installedModels = sortWhisperModels(availableWhisperModels);
+  const desiredValue = String(preferredValue || elements.whisperModel.value || "").trim();
+  elements.whisperModel.innerHTML = "";
+
+  if (installedModels.length < 1) {
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = translate("whisper.noInstalledModels");
+    elements.whisperModel.appendChild(emptyOption);
+    elements.whisperModel.value = "";
+  } else {
+    for (const model of installedModels) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      elements.whisperModel.appendChild(option);
+    }
+    elements.whisperModel.value = hasSelectOption(elements.whisperModel, desiredValue)
+      ? desiredValue
+      : installedModels.includes("base")
+        ? "base"
+        : installedModels[0];
+  }
+
+  if (elements.whisperModelHint) {
+    const whisperModeActive = getSourceMode() === "whisper_sequence";
+    elements.whisperModelHint.hidden = !whisperModeActive || installedModels.length > 0;
+    elements.whisperModelHint.textContent = translate("help.whisperModelsMissing");
+  }
+
+  pendingWhisperModelValue = String(elements.whisperModel.value || "").trim() || pendingWhisperModelValue;
+}
+
 function readPersistedPanelState(): Partial<PanelStateSnapshot> {
   // // Restore the previous panel configuration from localStorage when available.
   try {
@@ -644,7 +707,7 @@ function persistPanelState(): void {
     activeMode,
     sourceMode: getSourceMode(),
     srtPath: elements.srtPath.value || "",
-    whisperModel: elements.whisperModel.value || "base",
+    whisperModel: elements.whisperModel.value || pendingWhisperModelValue || "base",
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     animationMode: (elements.animationMode.value as AnimationMode) || "line",
     maxCharsPerLine: Number(elements.maxChars.value),
@@ -676,6 +739,10 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.srtPath && typeof snapshot.srtPath === "string") {
     elements.srtPath.value = snapshot.srtPath;
+  }
+
+  if (typeof snapshot.whisperModel === "string" && snapshot.whisperModel.trim().length > 0) {
+    pendingWhisperModelValue = snapshot.whisperModel.trim();
   }
 
   if (elements.whisperModel && snapshot.whisperModel && hasSelectOption(elements.whisperModel, snapshot.whisperModel)) {
@@ -1119,6 +1186,7 @@ async function loadLocale(languageCode: string): Promise<void> {
   refreshLogControlsState();
   renderCurrentLog();
   refreshMogrtAspectFilterOptions();
+  refreshWhisperModelUi();
 
   refreshUpdateBanner();
 }
@@ -1182,10 +1250,14 @@ function toggleSourceFields(): void {
   if (elements.whisperModelRow) {
     elements.whisperModelRow.classList.toggle("is-single", mode !== "whisper_sequence");
   }
+  refreshWhisperModelUi();
+  if (elements.generateButton && !generateInProgress) {
+    elements.generateButton.disabled = whisperModeActive && availableWhisperModels.length < 1;
+  }
 }
 
 async function enforceWhisperSourceAvailability(): Promise<void> {
-  // // Hide Whisper source option when local runtime is unavailable on this machine.
+  // // Hide Whisper when runtime is unavailable, otherwise expose only the models already installed in Whisper cache.
   if (!elements.sourceMode) {
     return;
   }
@@ -1199,6 +1271,8 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
 
   try {
     const status = await getWhisperRuntimeStatus();
+    availableWhisperModels = Array.isArray(status.installedModels) ? status.installedModels.slice() : [];
+    refreshWhisperModelUi(pendingWhisperModelValue);
     if (status.available) {
       return;
     }
@@ -1209,8 +1283,10 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     if (elements.sourceMode.value === "whisper_sequence") {
       elements.sourceMode.value = "srt";
     }
+    toggleSourceFields();
   } catch {
-    // // Keep Whisper visible when detection fails unexpectedly to avoid hiding a usable source.
+    availableWhisperModels = [];
+    refreshWhisperModelUi(pendingWhisperModelValue);
   }
 }
 
@@ -1521,7 +1597,7 @@ function setVisualApplyButtonsBusy(isBusy: boolean): void {
 function setGenerateButtonsBusy(isBusy: boolean): void {
   // // Prevent duplicate generate runs while export/transcription/apply is already active.
   if (elements.generateButton) {
-    elements.generateButton.disabled = isBusy;
+    elements.generateButton.disabled = isBusy || (getSourceMode() === "whisper_sequence" && availableWhisperModels.length < 1);
   }
   if (elements.languageSelect) {
     elements.languageSelect.disabled = isBusy;
@@ -1536,7 +1612,7 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
     elements.sourceMode.disabled = isBusy;
   }
   if (elements.whisperModel) {
-    elements.whisperModel.disabled = isBusy;
+    elements.whisperModel.disabled = isBusy || availableWhisperModels.length < 1;
   }
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled = isBusy || getSourceMode() !== "whisper_sequence";
@@ -3623,6 +3699,10 @@ function collectBuildOptions(): CaptionBuildOptions {
     selectedMogrt = availableMogrts[0];
   }
 
+  if (getSourceMode() === "whisper_sequence" && !String(elements.whisperModel.value || "").trim()) {
+    throw new Error(translate("error.whisperModelMissing"));
+  }
+
   const extensionRootPath = resolveExtensionRootPath();
   const templateRelativePath = selectedMogrt?.relativePath ?? "";
 
@@ -3890,6 +3970,7 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.whisperModel?.addEventListener("change", () => {
+    pendingWhisperModelValue = String(elements.whisperModel?.value || "").trim() || pendingWhisperModelValue;
     persistPanelState();
   });
   elements.whisperSequenceRange?.addEventListener("change", () => {

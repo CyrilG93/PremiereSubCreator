@@ -2092,9 +2092,27 @@ function renderTextEditor(): void {
   });
 }
 
+function isTextEditorPathLikeValue(text: string): boolean {
+  // // Ignore media-path strings that some MOGRT controls expose so the Text tab only shows real subtitle text blocks.
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const looksAbsolutePath =
+    normalized.startsWith("/Volumes/") ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("~/") ||
+    /^[a-z]:[\\/]/i.test(normalized) ||
+    /^\\\\/.test(normalized);
+  const looksMediaFile = /\.(mp4|mov|mxf|mp3|wav|aif|aiff|m4a|avi|mkv|jpg|jpeg|png|webp|psd|mogrt)$/i.test(normalized);
+  return looksAbsolutePath && looksMediaFile;
+}
+
 async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
   const result = await readSelectedMogrtTextItems();
+  const filteredSelectionItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
   textEditorSelectionMetadataIdentity = resolveCaptionMetadataIdentityFromHostPayload(result);
   textEditorSelectionSignature = result.signature;
   textEditorSameTrack = result.sameTrack !== false;
@@ -2103,8 +2121,8 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
     // // Drop stale undo snapshots as soon as the loaded selection no longer matches the last rebuilt result.
     lastTextUndoSnapshot = null;
   }
-  const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, result.items);
-  textEditorOriginalBlocks = result.items.map((item, itemIndex) => ({
+  const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, filteredSelectionItems);
+  textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => ({
     sourceSelectionIndex: Number(item.selectionIndex || 0),
     clipName: String(item.clipName || "").trim(),
     startSeconds: Number(item.startSeconds || 0),
@@ -2118,15 +2136,15 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   }));
   textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
   textEditorSelectionStartSeconds =
-    result.items.length > 0
-      ? result.items.reduce(
+    filteredSelectionItems.length > 0
+      ? filteredSelectionItems.reduce(
           (lowestValue, item) => Math.min(lowestValue, Number(item.startSeconds || 0)),
           Number.POSITIVE_INFINITY
         )
       : 0;
   textEditorSelectionEndSeconds =
-    result.items.length > 0
-      ? result.items.reduce(
+    filteredSelectionItems.length > 0
+      ? filteredSelectionItems.reduce(
           (highestValue, item) => Math.max(highestValue, Number(item.endSeconds || 0)),
           Number.NEGATIVE_INFINITY
         )
@@ -2138,7 +2156,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
     setStructuredLog(translate("log.hostResult"), result);
   }
 
-  if (result.selectedCount < 1) {
+  if (filteredSelectionItems.length < 1) {
     setTextSelectionSummary(translate("text.selectionDefault"));
     return;
   }
@@ -2146,7 +2164,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   if (!textEditorSameTrack) {
     setTextSelectionSummary(
       translateTemplate("text.selectionMixedTracks", {
-        clips: String(result.selectedCount)
+        clips: String(filteredSelectionItems.length)
       })
     );
     return;
@@ -2154,7 +2172,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
 
   setTextSelectionSummary(
     translateTemplate("text.selectionSummary", {
-      clips: String(result.selectedCount),
+      clips: String(filteredSelectionItems.length),
       track: String(Math.max(0, textEditorVideoTrackIndex) + 1)
     })
   );

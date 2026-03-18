@@ -796,23 +796,6 @@ function subcreator_collect_selected_mogrt_items(sequence) {
   return mogrtItems;
 }
 
-function subcreator_collect_selected_text_editable_mogrt_items(sequence) {
-  // // Keep only selected MOGRT clips that expose one real subtitle text payload for the Text tab workflow.
-  var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
-  var textEditableItems = [];
-
-  for (var index = 0; index < mogrtItems.length; index += 1) {
-    var trackItem = mogrtItems[index];
-    var clipText = subcreator_trim_string(String(subcreator_extract_text_from_mogrt_item(trackItem) || "").replace(/\s+/g, " "));
-    if (!clipText) {
-      continue;
-    }
-    textEditableItems.push(trackItem);
-  }
-
-  return textEditableItems;
-}
-
 function subcreator_sort_track_items_by_time(items) {
   // // Keep subtitle text operations deterministic by sorting selected MOGRT clips in timeline order.
   var sortedItems = (items || []).slice(0);
@@ -922,6 +905,20 @@ function subcreator_find_track_item_video_track_index(sequence, trackItem) {
   }
 
   return -1;
+}
+
+function subcreator_collect_resolved_selected_mogrt_items(sequence) {
+  // // Drop selected MOGRT references that Premiere can no longer map to one real track item after rebuild operations.
+  var rawSelection = subcreator_sort_track_items_by_time(subcreator_collect_selected_mogrt_items(sequence));
+  var resolvedSelection = [];
+
+  for (var index = 0; index < rawSelection.length; index += 1) {
+    if (subcreator_find_track_item_video_track_index(sequence, rawSelection[index]) >= 0) {
+      resolvedSelection.push(rawSelection[index]);
+    }
+  }
+
+  return resolvedSelection;
 }
 
 function subcreator_build_selected_mogrt_text_signature(sequence, trackItems) {
@@ -4905,7 +4902,7 @@ function subcreator_list_selected_mogrt_text_items() {
 
     var sequence = app.project.activeSequence;
     var sequenceIdentity = subcreator_get_sequence_identity(sequence);
-    var mogrtItems = subcreator_sort_track_items_by_time(subcreator_collect_selected_text_editable_mogrt_items(sequence));
+    var mogrtItems = subcreator_collect_resolved_selected_mogrt_items(sequence);
     if (!mogrtItems.length) {
       return subcreator_ok({
         selectedCount: 0,
@@ -4967,7 +4964,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
     var payload = JSON.parse(decodedPayload || "{}");
     var editedItems = payload && payload.items && typeof payload.items.length === "number" ? payload.items : [];
-    var currentSelection = subcreator_sort_track_items_by_time(subcreator_collect_selected_text_editable_mogrt_items(sequence));
+    var currentSelection = subcreator_collect_resolved_selected_mogrt_items(sequence);
     var currentSignature = subcreator_build_selected_mogrt_text_signature(sequence, currentSelection);
     var expectedSignature = subcreator_trim_string(String(payload.selectionSignature || ""));
 
@@ -5183,7 +5180,6 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     }
 
     var selectionAfterApply = subcreator_sort_track_items_by_time(untouchedSelectedTrackItems.concat(selectedTrackItems));
-    subcreator_clear_sequence_selection(sequence);
     for (var selectIndex = 0; selectIndex < selectionAfterApply.length; selectIndex += 1) {
       subcreator_try_select_track_item(selectionAfterApply[selectIndex], selectIndex === 0);
     }
@@ -5697,25 +5693,6 @@ function subcreator_is_non_textual_mogrt_label(text) {
   );
 }
 
-function subcreator_is_path_like_text(text) {
-  // // Reject file-system and media-path strings that some MOGRT controls expose but that are not subtitle content.
-  var normalized = subcreator_trim_string(String(text || ""));
-  if (!normalized) {
-    return false;
-  }
-
-  var looksAbsolutePath =
-    normalized.indexOf("/Volumes/") === 0 ||
-    normalized.indexOf("/") === 0 ||
-    normalized.indexOf("~/") === 0 ||
-    /^[a-z]:[\\/]/i.test(normalized) ||
-    /^\\\\/.test(normalized);
-  var looksMediaFile =
-    /\.(mp4|mov|mxf|mp3|wav|aif|aiff|m4a|avi|mkv|jpg|jpeg|png|webp|psd|mogrt)$/i.test(normalized);
-
-  return looksAbsolutePath && looksMediaFile;
-}
-
 function subcreator_extract_text_from_mogrt_item(item) {
   // // Read MOGRT subtitle text from real text-bearing controls and metadata only.
   if (!item) {
@@ -5727,11 +5704,7 @@ function subcreator_extract_text_from_mogrt_item(item) {
     if (!normalizedValue) {
       return "";
     }
-    if (
-      subcreator_is_default_caption_label(normalizedValue) ||
-      subcreator_is_non_textual_mogrt_label(normalizedValue) ||
-      subcreator_is_path_like_text(normalizedValue)
-    ) {
+    if (subcreator_is_default_caption_label(normalizedValue) || subcreator_is_non_textual_mogrt_label(normalizedValue)) {
       return "";
     }
     return normalizedValue;
@@ -7303,38 +7276,6 @@ function subcreator_try_select_track_item(trackItem, deselectOthers) {
   } catch (selectSingleError) {}
 
   return false;
-}
-
-function subcreator_try_deselect_track_item(trackItem) {
-  // // Clear old selected track items before one rebuild reselection so stale removed clips do not stay in Premiere selection.
-  if (!trackItem || typeof trackItem.setSelected !== "function") {
-    return false;
-  }
-
-  try {
-    trackItem.setSelected(false, false);
-    return true;
-  } catch (deselectError) {}
-
-  try {
-    trackItem.setSelected(0, 0);
-    return true;
-  } catch (deselectNumericError) {}
-
-  try {
-    trackItem.setSelected(false);
-    return true;
-  } catch (deselectSingleError) {}
-
-  return false;
-}
-
-function subcreator_clear_sequence_selection(sequence) {
-  // // Deselect every currently selected track item to avoid stale selection references after text rebuild removal/reinsertions.
-  var selectedItems = subcreator_get_selected_track_items(sequence);
-  for (var index = 0; index < selectedItems.length; index += 1) {
-    subcreator_try_deselect_track_item(selectedItems[index]);
-  }
 }
 
 function subcreator_get_video_track_clip_count(track) {

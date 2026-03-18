@@ -7131,7 +7131,7 @@ function subcreator_find_text_rebuild_following_clip(track, replacedItems, range
   var closestCandidate = null;
   var closestStart = Number.POSITIVE_INFINITY;
 
-  if (!Number.isFinite(safeRangeEnd)) {
+  if (isNaN(safeRangeEnd)) {
     return null;
   }
 

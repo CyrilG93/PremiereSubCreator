@@ -2230,6 +2230,14 @@ async function applyTextEditorChanges(): Promise<void> {
         applyPlan.timingRange,
         applyPlan.blocks
       );
+
+      const refreshedSelection = await readSelectedMogrtTextItems();
+      currentSelectionSignature = String(refreshedSelection.signature || currentSelectionSignature || "").trim();
+      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(refreshedSelection) || lastIdentity;
+      if (Number.isFinite(Number(refreshedSelection.videoTrackIndex))) {
+        lastSourceTrackIndex = Number(refreshedSelection.videoTrackIndex);
+        lastRebuildTrackIndex = Number(refreshedSelection.videoTrackIndex);
+      }
     }
 
     setStructuredLog(translate("log.textApplyDone"), {
@@ -2259,8 +2267,7 @@ async function undoLastTextEditorApply(): Promise<void> {
 
   const currentBlocks = cloneTextEditorBlocksForSnapshot(textEditorOriginalBlocks);
   const previousBlocks = cloneTextEditorBlocksForSnapshot(lastTextUndoSnapshot.previousBlocks);
-  const undoPlans = buildTextEditorApplyPlans(currentBlocks, previousBlocks);
-  if (undoPlans.length < 1) {
+  if (currentBlocks.length < 1 || previousBlocks.length < 1) {
     lastTextUndoSnapshot = null;
     refreshTextUndoButtonState();
     return;
@@ -2274,58 +2281,53 @@ async function undoLastTextEditorApply(): Promise<void> {
   textApplyInProgress = true;
   setTextButtonsBusy(true);
   try {
-    const orderedPlans = undoPlans.slice().sort((left, right) => right.selectionStartIndex - left.selectionStartIndex);
-    let currentSelectionSignature = textEditorSelectionSignature;
-    let lastIdentity = textEditorSelectionMetadataIdentity;
-    let lastSourceTrackIndex = textEditorVideoTrackIndex;
-    let lastRebuildTrackIndex = textEditorVideoTrackIndex;
-    const rangeResults: ApplySelectedMogrtTextResult[] = [];
+    const undoTimingRange = {
+      startSeconds: currentBlocks.reduce(
+        (lowestValue, block) => Math.min(lowestValue, Number(block.startSeconds || 0)),
+        Number.POSITIVE_INFINITY
+      ),
+      endSeconds: currentBlocks.reduce(
+        (highestValue, block) => Math.max(highestValue, Number(block.endSeconds || 0)),
+        Number.NEGATIVE_INFINITY
+      )
+    };
+    const payload: TextEditorApplyPayload = {
+      selectionSignature: textEditorSelectionSignature,
+      replaceSelectionStartIndex: 0,
+      replaceSelectionEndIndex: Math.max(0, currentBlocks.length - 1),
+      items: previousBlocks.map((block, blockIndex) => ({
+        sourceSelectionIndex: Math.min(blockIndex, Math.max(0, currentBlocks.length - 1)),
+        startSeconds: block.startSeconds,
+        endSeconds: block.endSeconds,
+        text: block.text
+      })),
+      options
+    };
 
-    for (const undoPlan of orderedPlans) {
-      const payload: TextEditorApplyPayload = {
-        selectionSignature: currentSelectionSignature,
-        replaceSelectionStartIndex: undoPlan.selectionStartIndex,
-        replaceSelectionEndIndex: undoPlan.selectionEndIndex,
-        items: undoPlan.blocks.map((block, blockIndex) => ({
-          sourceSelectionIndex: Math.min(
-            undoPlan.selectionEndIndex,
-            undoPlan.selectionStartIndex + Math.min(blockIndex, Math.max(0, undoPlan.selectionEndIndex - undoPlan.selectionStartIndex))
-          ),
-          startSeconds: block.startSeconds,
-          endSeconds: block.endSeconds,
-          text: block.text
-        })),
-        options
-      };
-
-      const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
-      rangeResults.unshift(result);
-      if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== undoPlan.blocks.length) {
-        throw new Error(translate("error.textApplyPartialFailure"));
-      }
-
-      currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
-      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
-      lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
-        ? Number(result.sourceTrackIndex)
-        : lastSourceTrackIndex;
-      lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
-        ? Number(result.rebuildTrackIndex)
-        : lastRebuildTrackIndex;
-      persistTextEditorCaptionMetadata(
-        lastIdentity,
-        lastSourceTrackIndex,
-        lastRebuildTrackIndex,
-        undoPlan.timingRange,
-        undoPlan.blocks
-      );
+    const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
+    if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== previousBlocks.length) {
+      throw new Error(translate("error.textApplyPartialFailure"));
     }
 
+    const lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || textEditorSelectionMetadataIdentity;
+    const lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
+      ? Number(result.sourceTrackIndex)
+      : textEditorVideoTrackIndex;
+    const lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
+      ? Number(result.rebuildTrackIndex)
+      : textEditorVideoTrackIndex;
+    persistTextEditorCaptionMetadata(
+      lastIdentity,
+      lastSourceTrackIndex,
+      lastRebuildTrackIndex,
+      undoTimingRange,
+      previousBlocks
+    );
+
     setStructuredLog(translate("log.textUndoDone"), {
-      rangeCount: rangeResults.length,
-      rebuiltCount: rangeResults.reduce((total, result) => total + Number(result.rebuiltCount || 0), 0),
-      failedCount: rangeResults.reduce((total, result) => total + Number(result.failedCount || 0), 0),
-      ranges: rangeResults
+      rebuiltCount: Number(result.rebuiltCount || 0),
+      failedCount: Number(result.failedCount || 0),
+      result
     });
     await loadTextItemsFromSelection();
   } catch (error) {

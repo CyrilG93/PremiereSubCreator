@@ -262,6 +262,7 @@ UI note:
 
 Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
+- the `Text editor` ignores selected MOGRTs that do not expose a real editable subtitle text payload
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
 - when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection
 - when several disjoint regions were changed, Sub Creator rebuilds one safe combined span that covers the edited areas instead of risking a partial multi-pass apply

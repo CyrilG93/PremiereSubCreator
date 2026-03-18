@@ -5053,7 +5053,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     debugLines.push("text_apply source_track=" + String(targetTrackIndex));
 
     // Keep the full current selection exempt from overlap checks so untouched selected subtitles do not trigger a false fallback track.
-    var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems);
+    var overlapConflict = subcreator_find_text_rebuild_overlap(track, currentSelection, editedItems, selectionItemsToReplace);
     if (overlapConflict) {
       var fallbackTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
       if (fallbackTrackInfo && fallbackTrackInfo.index >= 0) {
@@ -6984,6 +6984,66 @@ function subcreator_do_ranges_overlap(leftStart, leftEnd, rightStart, rightEnd) 
   return safeLeftStart < safeRightEnd - overlapToleranceSeconds && safeLeftEnd > safeRightStart + overlapToleranceSeconds;
 }
 
+function subcreator_build_overlap_range(leftStart, leftEnd, rightStart, rightEnd) {
+  // // Build the exact intersecting interval so overlap checks can distinguish one new collision from time already occupied by rebuilt clips.
+  var overlapStart = Math.max(Number(leftStart), Number(rightStart));
+  var overlapEnd = Math.min(Number(leftEnd), Number(rightEnd));
+  if (!subcreator_do_ranges_overlap(leftStart, leftEnd, rightStart, rightEnd)) {
+    return null;
+  }
+  return {
+    startSeconds: overlapStart,
+    endSeconds: overlapEnd
+  };
+}
+
+function subcreator_is_range_fully_covered_by_track_items(rangeStart, rangeEnd, trackItems) {
+  // // Treat overlap as safe when the whole conflicting interval was already occupied by the clips that will be removed and rebuilt.
+  var coverageSegments = [];
+  var safeRangeStart = Number(rangeStart);
+  var safeRangeEnd = Number(rangeEnd);
+  var coverageToleranceSeconds = 0.01;
+  if (!(safeRangeEnd > safeRangeStart) || !trackItems || typeof trackItems.length !== "number") {
+    return false;
+  }
+
+  for (var itemIndex = 0; itemIndex < trackItems.length; itemIndex += 1) {
+    var trackItem = trackItems[itemIndex];
+    if (!trackItem) {
+      continue;
+    }
+    var itemStart = subcreator_to_seconds(trackItem.start || trackItem.inPoint || trackItem.startTime);
+    var itemEnd = subcreator_to_seconds(trackItem.end || trackItem.outPoint || trackItem.endTime);
+    var overlapRange = subcreator_build_overlap_range(itemStart, itemEnd, safeRangeStart, safeRangeEnd);
+    if (!overlapRange) {
+      continue;
+    }
+    coverageSegments.push(overlapRange);
+  }
+
+  if (coverageSegments.length < 1) {
+    return false;
+  }
+
+  coverageSegments.sort(function (left, right) {
+    return Number(left.startSeconds || 0) - Number(right.startSeconds || 0);
+  });
+
+  var coveredUntil = safeRangeStart;
+  for (var segmentIndex = 0; segmentIndex < coverageSegments.length; segmentIndex += 1) {
+    var segment = coverageSegments[segmentIndex];
+    if (Number(segment.startSeconds || 0) > coveredUntil + coverageToleranceSeconds) {
+      return false;
+    }
+    coveredUntil = Math.max(coveredUntil, Number(segment.endSeconds || 0));
+    if (coveredUntil >= safeRangeEnd - coverageToleranceSeconds) {
+      return true;
+    }
+  }
+
+  return coveredUntil >= safeRangeEnd - coverageToleranceSeconds;
+}
+
 function subcreator_is_selected_track_item_reference(trackItem, selectedItems) {
   // // Keep reference-based selection matching isolated so overlap checks can safely skip the clips being rebuilt.
   for (var index = 0; index < selectedItems.length; index += 1) {
@@ -6994,8 +7054,8 @@ function subcreator_is_selected_track_item_reference(trackItem, selectedItems) {
   return false;
 }
 
-function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems) {
-  // // Abort risky text rebuilds before removal when rebuilt timings would overlap one non-selected clip.
+function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems, replacedItems) {
+  // // Abort risky text rebuilds only when they create one new overlap beyond the area already occupied by the clips being replaced.
   var trackItems = subcreator_collection_to_array(track ? track.clips : null);
   for (var trackIndex = 0; trackIndex < trackItems.length; trackIndex += 1) {
     var candidate = trackItems[trackIndex];
@@ -7017,7 +7077,11 @@ function subcreator_find_text_rebuild_overlap(track, selectedItems, editedItems)
         continue;
       }
 
-      if (subcreator_do_ranges_overlap(candidateStart, candidateEnd, editedStart, editedEnd)) {
+      var overlapRange = subcreator_build_overlap_range(candidateStart, candidateEnd, editedStart, editedEnd);
+      if (overlapRange) {
+        if (subcreator_is_range_fully_covered_by_track_items(overlapRange.startSeconds, overlapRange.endSeconds, replacedItems)) {
+          continue;
+        }
         return {
           clipName: subcreator_trim_string(
             String((candidate.projectItem && candidate.projectItem.name) || candidate.name || "Clip")

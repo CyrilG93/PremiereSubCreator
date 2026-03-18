@@ -34,6 +34,14 @@ interface PersistedCaptionClipMetadata {
   words: CaptionWord[];
 }
 
+export interface CaptionMetadataClipMatchSource {
+  trackIndex: number;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+  words: CaptionWord[];
+}
+
 interface PersistedSequenceCaptionMetadata {
   identity: CaptionMetadataIdentity;
   updatedAtIso: string;
@@ -133,6 +141,23 @@ function normalizeMetadataText(value: string): string {
     .trim();
 }
 
+function buildMetadataWordSignatureFromText(text: string): string {
+  // // Reduce text to one normalized word signature so persisted timings can survive harmless whitespace and track moves.
+  return normalizeMetadataText(text)
+    .toLowerCase()
+    .split(" ")
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildMetadataWordSignatureFromWords(words: CaptionWord[]): string {
+  // // Derive the same normalized signature from stored word-timing payloads for fallback metadata matching.
+  return words
+    .map((word) => normalizeMetadataText(String(word.text || "")).toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
 function cloneCaptionWords(words: CaptionWord[]): CaptionWord[] {
   // // Clone word timings to keep store reads/writes immutable and predictable.
   return words.map((word) => ({
@@ -223,30 +248,44 @@ export function persistGeneratedCaptionMetadata(
   writeCaptionMetadataStore(modules, store);
 }
 
-function findBestCaptionMetadataMatch(
-  clips: PersistedCaptionClipMetadata[],
+export function findBestCaptionMetadataMatchForItem(
+  clips: CaptionMetadataClipMatchSource[],
   item: SelectedMogrtTextItem
-): PersistedCaptionClipMetadata | null {
-  // // Match one timeline subtitle item against persisted metadata by track, timing, and normalized text.
+): CaptionMetadataClipMatchSource | null {
+  // // Match one timeline subtitle item against persisted metadata with fallback across tracks so timing survives safe track moves.
   const targetText = normalizeMetadataText(item.text);
+  const targetWordSignature = buildMetadataWordSignatureFromText(item.text);
   const targetTrackIndex = Number(item.videoTrackIndex);
   const targetStart = Number(item.startSeconds || 0);
   const targetEnd = Number(item.endSeconds || 0);
-  let bestMatch: PersistedCaptionClipMetadata | null = null;
+  let bestMatch: CaptionMetadataClipMatchSource | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
 
   for (const clip of clips) {
-    if (clip.trackIndex !== targetTrackIndex) {
-      continue;
-    }
-    if (normalizeMetadataText(clip.text) !== targetText) {
+    const normalizedClipText = normalizeMetadataText(clip.text);
+    const clipWordSignature = buildMetadataWordSignatureFromWords(Array.isArray(clip.words) ? clip.words : []);
+    const sameTrack = clip.trackIndex === targetTrackIndex;
+    const sameText = normalizedClipText === targetText;
+    const sameWordSignature = clipWordSignature.length > 0 && clipWordSignature === targetWordSignature;
+    if (!sameText && !sameWordSignature) {
       continue;
     }
 
     const startDelta = Math.abs(Number(clip.startSeconds || 0) - targetStart);
     const endDelta = Math.abs(Number(clip.endSeconds || 0) - targetEnd);
-    const score = startDelta + endDelta;
-    if (score < bestScore && startDelta <= 0.15 && endDelta <= 0.15) {
+    if (startDelta > 0.6 || endDelta > 0.6) {
+      continue;
+    }
+
+    let score = startDelta + endDelta;
+    if (!sameTrack) {
+      score += 0.2;
+    }
+    if (!sameText) {
+      score += 0.25;
+    }
+
+    if (score < bestScore) {
       bestScore = score;
       bestMatch = clip;
     }
@@ -273,7 +312,7 @@ export function resolveCaptionMetadataForSelection(
   }
 
   return items.map((item) => {
-    const match = findBestCaptionMetadataMatch(sequenceEntry.clips, item);
+    const match = findBestCaptionMetadataMatchForItem(sequenceEntry.clips, item);
     return match && Array.isArray(match.words) && match.words.length > 0 ? cloneCaptionWords(match.words) : null;
   });
 }

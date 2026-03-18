@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTextEditorApplyPlan,
+  buildTextEditorApplyPlans,
   buildTextEditorBlocks,
   mergeTextEditorBlocks,
   moveTextEditorWord,
@@ -384,6 +385,159 @@ describe("textEditor helpers", () => {
     expect(plan?.blocks[1].text).toBe("three updated");
     expect(plan?.timingRange.startSeconds).toBe(1);
     expect(plan?.timingRange.endSeconds).toBe(3);
+  });
+
+  it("builds separate apply plans for disjoint changed ranges", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four"
+      }
+    ]);
+
+    const edited = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "one updated"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "two"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "three"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "four updated"
+      }
+    ]);
+
+    const plans = buildTextEditorApplyPlans(original, edited);
+    expect(plans).toHaveLength(2);
+    expect(plans[0]?.selectionStartIndex).toBe(0);
+    expect(plans[0]?.selectionEndIndex).toBe(0);
+    expect(plans[0]?.blocks.map((block) => block.text)).toEqual(["one updated"]);
+    expect(plans[1]?.selectionStartIndex).toBe(3);
+    expect(plans[1]?.selectionEndIndex).toBe(3);
+    expect(plans[1]?.blocks.map((block) => block.text)).toEqual(["four updated"]);
+  });
+
+  it("keeps unchanged middle blocks out of a split disjoint apply plan", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "alpha"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 3,
+        text: "beta gamma"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "delta"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 4,
+        endSeconds: 5,
+        text: "epsilon"
+      }
+    ]);
+
+    const edited = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "alpha"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1,
+        endSeconds: 2,
+        text: "beta"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "gamma"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 3,
+        endSeconds: 4,
+        text: "delta"
+      },
+      {
+        sourceSelectionIndex: 3,
+        clipName: "Clip D",
+        startSeconds: 4,
+        endSeconds: 5,
+        text: "epsilon updated"
+      }
+    ]);
+
+    const plans = buildTextEditorApplyPlans(original, edited);
+    expect(plans).toHaveLength(2);
+    expect(plans[0]?.selectionStartIndex).toBe(1);
+    expect(plans[0]?.selectionEndIndex).toBe(1);
+    expect(plans[0]?.blocks.map((block) => block.text)).toEqual(["beta", "gamma"]);
+    expect(plans[1]?.selectionStartIndex).toBe(3);
+    expect(plans[1]?.selectionEndIndex).toBe(3);
+    expect(plans[1]?.blocks.map((block) => block.text)).toEqual(["epsilon updated"]);
   });
 
   it("returns no apply plan when nothing changed", () => {

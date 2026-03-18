@@ -78,6 +78,9 @@
                   <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
                   <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
                 </select>
+                <button id="whisperModelFolderButton" type="button" class="button button--secondary" data-i18n="action.openWhisperModelsFolder">
+                  Ouvrir dossier modeles
+                </button>
               </div>
             </div>
             <p id="whisperModelHint" class="hint" hidden>
@@ -193,9 +196,12 @@
             <p class="hint" data-i18n="text.description">
               Read the selected subtitle MOGRT clips, move words between neighboring subtitles, split or merge blocks, then apply the rebuilt timing.
             </p>
-            <div class="inline-row inline-row--double">
+            <div class="inline-row inline-row--triple">
               <button id="textReadButton" type="button" class="button button--secondary" data-i18n="action.readTextItems">
                 Read selected subtitles
+              </button>
+              <button id="textUndoButton" type="button" class="button button--secondary" data-i18n="action.undoTextApply">
+                Undo last text apply
               </button>
               <button id="textApplyButton" type="button" class="button" data-i18n="action.applyTextItems">
                 Apply text changes

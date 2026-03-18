@@ -3,7 +3,7 @@ import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
 import { parseSrt } from "../core/srt";
 import {
-  buildTextEditorApplyPlan,
+  buildTextEditorApplyPlans,
   mergeTextEditorBlocks,
   moveTextEditorWord,
   retimeTextEditorBlocks,
@@ -30,6 +30,7 @@ import {
   getWhisperRuntimeStatus,
   openExternalUrl,
   openInstalledMogrtFolder,
+  openWhisperModelsFolder,
   pickSrtPath,
   readSelectedMogrtTextItems,
   readInstalledMogrtCatalog,
@@ -115,6 +116,11 @@ interface TextEditorBlockState extends TextEditorBlock {
   selectedWordIndex: number;
 }
 
+interface TextEditorUndoSnapshot {
+  previousBlocks: TextEditorBlock[];
+  postApplySelectionSignature: string;
+}
+
 interface ApplyCaptionPlanHostResult {
   insertedMogrt?: number;
   videoTrackUsed?: number;
@@ -159,6 +165,7 @@ const elements = {
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
   whisperModelRow: document.querySelector<HTMLElement>("#whisperModelRow"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
+  whisperModelFolderButton: document.querySelector<HTMLButtonElement>("#whisperModelFolderButton"),
   whisperModelHint: document.querySelector<HTMLElement>("#whisperModelHint"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
   whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
@@ -180,6 +187,7 @@ const elements = {
   visualSelectionSummary: document.querySelector<HTMLParagraphElement>("#visualSelectionSummary"),
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   textReadButton: document.querySelector<HTMLButtonElement>("#textReadButton"),
+  textUndoButton: document.querySelector<HTMLButtonElement>("#textUndoButton"),
   textApplyButton: document.querySelector<HTMLButtonElement>("#textApplyButton"),
   textSelectionSummary: document.querySelector<HTMLParagraphElement>("#textSelectionSummary"),
   textEditorList: document.querySelector<HTMLElement>("#textEditorList"),
@@ -239,6 +247,7 @@ let generateInProgress = false;
 let textApplyInProgress = false;
 let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
+let whisperModelCachePaths: string[] = [];
 let pendingWhisperModelValue = "base";
 let textEditorBlocks: TextEditorBlockState[] = [];
 let textEditorOriginalBlocks: TextEditorBlock[] = [];
@@ -249,6 +258,7 @@ let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
+let lastTextUndoSnapshot: TextEditorUndoSnapshot | null = null;
 let systemFontCatalog: SystemFontCatalog = {
   available: false,
   source: "unavailable",
@@ -1247,6 +1257,9 @@ function toggleSourceFields(): void {
     elements.whisperSequenceRange.style.display = mode === "whisper_sequence" ? "block" : "none";
     elements.whisperSequenceRange.disabled = mode !== "whisper_sequence";
   }
+  if (elements.whisperModelFolderButton) {
+    elements.whisperModelFolderButton.disabled = mode !== "whisper_sequence" || generateInProgress;
+  }
   if (elements.whisperModelRow) {
     elements.whisperModelRow.classList.toggle("is-single", mode !== "whisper_sequence");
   }
@@ -1272,6 +1285,7 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   try {
     const status = await getWhisperRuntimeStatus();
     availableWhisperModels = Array.isArray(status.installedModels) ? status.installedModels.slice() : [];
+    whisperModelCachePaths = Array.isArray(status.modelCachePaths) ? status.modelCachePaths.slice() : [];
     refreshWhisperModelUi(pendingWhisperModelValue);
     if (status.available) {
       return;
@@ -1286,6 +1300,7 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     toggleSourceFields();
   } catch {
     availableWhisperModels = [];
+    whisperModelCachePaths = [];
     refreshWhisperModelUi(pendingWhisperModelValue);
   }
 }
@@ -1614,6 +1629,9 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   if (elements.whisperModel) {
     elements.whisperModel.disabled = isBusy || availableWhisperModels.length < 1;
   }
+  if (elements.whisperModelFolderButton) {
+    elements.whisperModelFolderButton.disabled = isBusy || getSourceMode() !== "whisper_sequence";
+  }
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled = isBusy || getSourceMode() !== "whisper_sequence";
   }
@@ -1727,6 +1745,37 @@ function getTextEditorSelectionTimingRange(): TextEditorTimingRange | undefined 
   };
 }
 
+function cloneTextEditorBlocksForSnapshot(blocks: TextEditorBlock[]): TextEditorBlock[] {
+  // // Deep-clone text blocks so undo snapshots never share mutable timed-word arrays with live editor state.
+  return blocks.map((block) => ({
+    sourceSelectionIndex: block.sourceSelectionIndex,
+    clipName: block.clipName,
+    startSeconds: block.startSeconds,
+    endSeconds: block.endSeconds,
+    text: block.text,
+    words: block.words.slice(),
+    timedWords: block.timedWords ? block.timedWords.map((word) => ({ ...word })) : undefined
+  }));
+}
+
+function canUndoTextEditorApply(): boolean {
+  // // Enable undo only while the currently loaded selection still matches the last successful text rebuild result.
+  return (
+    !!lastTextUndoSnapshot &&
+    !!textEditorSelectionSignature &&
+    lastTextUndoSnapshot.postApplySelectionSignature === textEditorSelectionSignature &&
+    textEditorSameTrack
+  );
+}
+
+function refreshTextUndoButtonState(): void {
+  // // Keep the one-level undo action available only when the current Text tab selection can be restored safely.
+  if (!elements.textUndoButton) {
+    return;
+  }
+  elements.textUndoButton.disabled = textApplyInProgress || !canUndoTextEditorApply();
+}
+
 function resolveCaptionMetadataIdentityFromHostPayload(payload: {
   projectDocumentId?: string;
   projectPath?: string;
@@ -1761,6 +1810,7 @@ function setTextButtonsBusy(isBusy: boolean): void {
   if (elements.textReadButton) {
     elements.textReadButton.disabled = isBusy;
   }
+  refreshTextUndoButtonState();
   if (elements.textApplyButton) {
     elements.textApplyButton.disabled = isBusy;
   }
@@ -2049,6 +2099,10 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   textEditorSelectionSignature = result.signature;
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
+  if (lastTextUndoSnapshot && lastTextUndoSnapshot.postApplySelectionSignature !== textEditorSelectionSignature) {
+    // // Drop stale undo snapshots as soon as the loaded selection no longer matches the last rebuilt result.
+    lastTextUndoSnapshot = null;
+  }
   const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, result.items);
   textEditorOriginalBlocks = result.items.map((item, itemIndex) => ({
     sourceSelectionIndex: Number(item.selectionIndex || 0),
@@ -2078,6 +2132,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
         )
       : 0;
   renderTextEditor();
+  refreshTextUndoButtonState();
 
   if (emitHostLog) {
     setStructuredLog(translate("log.hostResult"), result);
@@ -2118,41 +2173,165 @@ async function applyTextEditorChanges(): Promise<void> {
   }
 
   const editableBlocks = buildTextEditorBlocksFromState(textEditorBlocks);
-  const applyPlan = buildTextEditorApplyPlan(textEditorOriginalBlocks, editableBlocks);
-  if (!applyPlan) {
+  const applyPlans = buildTextEditorApplyPlans(textEditorOriginalBlocks, editableBlocks);
+  if (applyPlans.length < 1) {
     setLog(translate("log.textNoChanges"));
     return;
   }
 
   const options = collectBuildOptions();
-  const payload: TextEditorApplyPayload = {
-    selectionSignature: textEditorSelectionSignature,
-    replaceSelectionStartIndex: applyPlan.selectionStartIndex,
-    replaceSelectionEndIndex: applyPlan.selectionEndIndex,
-    items: applyPlan.blocks.map((block) => ({
-      sourceSelectionIndex: block.sourceSelectionIndex,
-      startSeconds: block.startSeconds,
-      endSeconds: block.endSeconds,
-      text: block.text
-    })),
-    options
+  const undoSnapshot: TextEditorUndoSnapshot = {
+    previousBlocks: cloneTextEditorBlocksForSnapshot(textEditorOriginalBlocks),
+    postApplySelectionSignature: ""
   };
 
   textApplyInProgress = true;
   setTextButtonsBusy(true);
   try {
-    const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
-    setStructuredLog(translate("log.textApplyDone"), result);
-    if (Number(result.failedCount || 0) === 0 && Number(result.rebuiltCount || 0) === applyPlan.blocks.length) {
+    const orderedPlans = applyPlans.slice().sort((left, right) => right.selectionStartIndex - left.selectionStartIndex);
+    let currentSelectionSignature = textEditorSelectionSignature;
+    let lastIdentity = textEditorSelectionMetadataIdentity;
+    let lastSourceTrackIndex = textEditorVideoTrackIndex;
+    let lastRebuildTrackIndex = textEditorVideoTrackIndex;
+    const rangeResults: ApplySelectedMogrtTextResult[] = [];
+
+    for (const applyPlan of orderedPlans) {
+      const payload: TextEditorApplyPayload = {
+        selectionSignature: currentSelectionSignature,
+        replaceSelectionStartIndex: applyPlan.selectionStartIndex,
+        replaceSelectionEndIndex: applyPlan.selectionEndIndex,
+        items: applyPlan.blocks.map((block) => ({
+          sourceSelectionIndex: block.sourceSelectionIndex,
+          startSeconds: block.startSeconds,
+          endSeconds: block.endSeconds,
+          text: block.text
+        })),
+        options
+      };
+
+      const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
+      rangeResults.unshift(result);
+      if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== applyPlan.blocks.length) {
+        throw new Error(translate("error.textApplyPartialFailure"));
+      }
+
+      currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
+      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
+      lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
+        ? Number(result.sourceTrackIndex)
+        : lastSourceTrackIndex;
+      lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
+        ? Number(result.rebuildTrackIndex)
+        : lastRebuildTrackIndex;
       persistTextEditorCaptionMetadata(
-        resolveCaptionMetadataIdentityFromHostPayload(result) || textEditorSelectionMetadataIdentity,
-        Number.isFinite(Number(result.sourceTrackIndex)) ? Number(result.sourceTrackIndex) : textEditorVideoTrackIndex,
-        Number.isFinite(Number(result.rebuildTrackIndex)) ? Number(result.rebuildTrackIndex) : textEditorVideoTrackIndex,
+        lastIdentity,
+        lastSourceTrackIndex,
+        lastRebuildTrackIndex,
         applyPlan.timingRange,
         applyPlan.blocks
       );
     }
+
+    setStructuredLog(translate("log.textApplyDone"), {
+      rangeCount: rangeResults.length,
+      rebuiltCount: rangeResults.reduce((total, result) => total + Number(result.rebuiltCount || 0), 0),
+      failedCount: rangeResults.reduce((total, result) => total + Number(result.failedCount || 0), 0),
+      ranges: rangeResults
+    });
     await loadTextItemsFromSelection();
+    undoSnapshot.postApplySelectionSignature = textEditorSelectionSignature;
+    lastTextUndoSnapshot = undoSnapshot.postApplySelectionSignature ? undoSnapshot : null;
+    refreshTextUndoButtonState();
+  } finally {
+    textApplyInProgress = false;
+    setTextButtonsBusy(false);
+  }
+}
+
+async function undoLastTextEditorApply(): Promise<void> {
+  // // Restore the previous Text editor selection state by rebuilding the current selection back to the last saved snapshot.
+  if (textApplyInProgress) {
+    return;
+  }
+  if (!canUndoTextEditorApply() || !lastTextUndoSnapshot) {
+    throw new Error(translate("error.textUndoUnavailable"));
+  }
+
+  const currentBlocks = cloneTextEditorBlocksForSnapshot(textEditorOriginalBlocks);
+  const previousBlocks = cloneTextEditorBlocksForSnapshot(lastTextUndoSnapshot.previousBlocks);
+  const undoPlans = buildTextEditorApplyPlans(currentBlocks, previousBlocks);
+  if (undoPlans.length < 1) {
+    lastTextUndoSnapshot = null;
+    refreshTextUndoButtonState();
+    return;
+  }
+
+  const previousUndoSnapshot = lastTextUndoSnapshot;
+  lastTextUndoSnapshot = null;
+  refreshTextUndoButtonState();
+  const options = collectBuildOptions();
+
+  textApplyInProgress = true;
+  setTextButtonsBusy(true);
+  try {
+    const orderedPlans = undoPlans.slice().sort((left, right) => right.selectionStartIndex - left.selectionStartIndex);
+    let currentSelectionSignature = textEditorSelectionSignature;
+    let lastIdentity = textEditorSelectionMetadataIdentity;
+    let lastSourceTrackIndex = textEditorVideoTrackIndex;
+    let lastRebuildTrackIndex = textEditorVideoTrackIndex;
+    const rangeResults: ApplySelectedMogrtTextResult[] = [];
+
+    for (const undoPlan of orderedPlans) {
+      const payload: TextEditorApplyPayload = {
+        selectionSignature: currentSelectionSignature,
+        replaceSelectionStartIndex: undoPlan.selectionStartIndex,
+        replaceSelectionEndIndex: undoPlan.selectionEndIndex,
+        items: undoPlan.blocks.map((block, blockIndex) => ({
+          sourceSelectionIndex: Math.min(
+            undoPlan.selectionEndIndex,
+            undoPlan.selectionStartIndex + Math.min(blockIndex, Math.max(0, undoPlan.selectionEndIndex - undoPlan.selectionStartIndex))
+          ),
+          startSeconds: block.startSeconds,
+          endSeconds: block.endSeconds,
+          text: block.text
+        })),
+        options
+      };
+
+      const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
+      rangeResults.unshift(result);
+      if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== undoPlan.blocks.length) {
+        throw new Error(translate("error.textApplyPartialFailure"));
+      }
+
+      currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
+      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
+      lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
+        ? Number(result.sourceTrackIndex)
+        : lastSourceTrackIndex;
+      lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
+        ? Number(result.rebuildTrackIndex)
+        : lastRebuildTrackIndex;
+      persistTextEditorCaptionMetadata(
+        lastIdentity,
+        lastSourceTrackIndex,
+        lastRebuildTrackIndex,
+        undoPlan.timingRange,
+        undoPlan.blocks
+      );
+    }
+
+    setStructuredLog(translate("log.textUndoDone"), {
+      rangeCount: rangeResults.length,
+      rebuiltCount: rangeResults.reduce((total, result) => total + Number(result.rebuiltCount || 0), 0),
+      failedCount: rangeResults.reduce((total, result) => total + Number(result.failedCount || 0), 0),
+      ranges: rangeResults
+    });
+    await loadTextItemsFromSelection();
+  } catch (error) {
+    lastTextUndoSnapshot = previousUndoSnapshot;
+    refreshTextUndoButtonState();
+    throw error;
   } finally {
     textApplyInProgress = false;
     setTextButtonsBusy(false);
@@ -3953,6 +4132,13 @@ async function initialize(): Promise<void> {
       setLog(String(error), true);
     }
   });
+  elements.whisperModelFolderButton?.addEventListener("click", async () => {
+    try {
+      await openWhisperModelsFolder(whisperModelCachePaths);
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
 
   elements.animationMode?.addEventListener("change", () => {
     persistPanelState();
@@ -4061,8 +4247,19 @@ async function initialize(): Promise<void> {
       setLog(String(error), true);
     }
   });
+  elements.textUndoButton?.addEventListener("click", async () => {
+    try {
+      if (textApplyInProgress) {
+        return;
+      }
+      await undoLastTextEditorApply();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
 
   setLog(translate("log.ready"));
+  refreshTextUndoButtonState();
 
   void enforceWhisperSourceAvailability()
     .then(() => {

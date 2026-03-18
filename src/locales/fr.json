@@ -66,9 +66,11 @@
   "action.liveUpdateOn": "Modification en direct ON",
   "action.applyMogrtProps": "Appliquer modifications",
   "action.applyTextItems": "Appliquer changements texte",
+  "action.undoTextApply": "Annuler dernier apply texte",
   "action.splitSelectedWord": "Couper au mot selectionne",
   "action.mergePrevious": "Fusionner precedent",
   "action.mergeNext": "Fusionner suivant",
+  "action.openWhisperModelsFolder": "Ouvrir dossier modeles Whisper",
   "action.openMogrtFolder": "Ouvrir dossier MOGRT",
   "action.refreshMogrtGallery": "Rafraichir galerie",
   "action.showLogs": "Afficher logs",
@@ -84,6 +86,7 @@
   "log.whisperDone": "Whisper termine, modele:",
   "log.visualApplyDone": "Resultat application editeur visuel:",
   "log.textApplyDone": "Resultat application editeur texte:",
+  "log.textUndoDone": "Resultat annulation editeur texte:",
   "log.textNoChanges": "Aucun changement texte detecte.",
   "error.missingSrtPath": "Selectionne un fichier SRT via Parcourir.",
   "error.emptySrt": "Le fichier SRT ne contient aucun sous-titre valide.",
@@ -93,5 +96,7 @@
   "error.mogrtCatalogMissing": "Catalogue MOGRT introuvable. Lance npm run subcreator:build puis reinstalle l'extension.",
   "error.textSelectionMissing": "Lis d'abord les MOGRT de sous-titres selectionnes avant d'appliquer des changements texte.",
   "error.textMixedTracks": "L'editeur texte V1 supporte actuellement les MOGRT de sous-titres selectionnes sur une seule piste video.",
-  "error.textEmptyBlocks": "Au moins un bloc de sous-titre non vide est requis pour appliquer les changements texte."
+  "error.textEmptyBlocks": "Au moins un bloc de sous-titre non vide est requis pour appliquer les changements texte.",
+  "error.textApplyPartialFailure": "L'application de l'editeur texte a partiellement echoue. Recharge la selection et verifie les logs avant de continuer.",
+  "error.textUndoUnavailable": "L'annulation est indisponible car la selection actuelle de l'editeur texte ne correspond plus au dernier rebuild applique."
 }

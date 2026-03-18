@@ -153,6 +153,7 @@ export interface ApplySelectedMogrtTextResult {
   selectedCount: number;
   rebuiltCount: number;
   failedCount: number;
+  selectionSignature?: string;
   sourceTrackIndex?: number;
   rebuildTrackIndex?: number;
   projectDocumentId?: string;
@@ -361,6 +362,30 @@ function listWhisperModelCacheDirectories(modules: CepNodeModules): string[] {
   }
 
   return directories.filter((directory) => modules.fs.existsSync(directory));
+}
+
+function resolvePreferredWhisperModelCacheDirectory(modules: CepNodeModules, preferredPaths?: string[]): string {
+  // // Reuse an existing Whisper cache path when possible, otherwise fall back to the standard per-user cache location.
+  const explicitCandidates = Array.isArray(preferredPaths)
+    ? preferredPaths.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const discoveredCandidates = listWhisperModelCacheDirectories(modules);
+  const allCandidates = explicitCandidates.concat(discoveredCandidates);
+  if (allCandidates.length > 0) {
+    return allCandidates[0];
+  }
+
+  const env = modules.process.env || {};
+  const xdgCacheHome = String(env.XDG_CACHE_HOME || "").trim();
+  const userProfile = String(env.USERPROFILE || "").trim();
+  const homeDir = typeof modules.os.homedir === "function" ? String(modules.os.homedir() || "").trim() : "";
+  if (xdgCacheHome) {
+    return modules.path.join(xdgCacheHome, "whisper");
+  }
+  if (userProfile) {
+    return modules.path.join(userProfile, ".cache", "whisper");
+  }
+  return modules.path.join(homeDir, ".cache", "whisper");
 }
 
 function detectInstalledWhisperModelsViaCepNode(modules: CepNodeModules): {
@@ -2659,6 +2684,37 @@ export async function openInstalledMogrtFolder(extensionRootPath: string): Promi
   }
 
   throw new Error(`Unable to open installed MOGRT folder: ${templatesRoot}`);
+}
+
+export async function openWhisperModelsFolder(modelCachePaths: string[] = []): Promise<string> {
+  // // Open the local Whisper model-cache folder in Finder/Explorer so users can add or inspect installed `.pt` files.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    throw new Error("CEP Node runtime unavailable. Unable to open Whisper models folder.");
+  }
+
+  const modelsRoot = resolvePreferredWhisperModelCacheDirectory(modules, modelCachePaths);
+  modules.fs.mkdirSync(modelsRoot, { recursive: true });
+
+  const commandCandidates = detectWindowsRuntime()
+    ? [{ command: "explorer", args: [modelsRoot] }]
+    : [
+        { command: "/usr/bin/open", args: [modelsRoot] },
+        { command: "open", args: [modelsRoot] }
+      ];
+
+  for (const candidate of commandCandidates) {
+    const result = modules.childProcess.spawnSync(candidate.command, candidate.args, {
+      encoding: "utf8",
+      timeout: 15000,
+      env: modules.process.env
+    });
+    if (!result.error && (result.status === 0 || result.status === null)) {
+      return modelsRoot;
+    }
+  }
+
+  throw new Error(`Unable to open Whisper models folder: ${modelsRoot}`);
 }
 
 export async function openExternalUrl(url: string): Promise<void> {

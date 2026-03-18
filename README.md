@@ -129,6 +129,7 @@ Basic flow:
 1. Open the `Creation` tab.
 2. Choose `Whisper` as source.
 3. Choose one of the Whisper models already available locally.
+   If needed, use `Open Whisper models folder` to inspect or add `.pt` files.
 4. Choose whether to analyze:
    - `Entire sequence`
    - `In/Out points`
@@ -148,6 +149,10 @@ If the release package includes bundled models, the installer copies them there 
 That gives you at least one working model without a separate download step.
 
 If the model dropdown is empty, read the manual section below and add a model yourself.
+
+Useful panel behavior:
+- the model dropdown shows only models already detected locally
+- `Open Whisper models folder` opens the cache location used by the panel
 
 Common choices:
 - `tiny`: fastest, lowest quality
@@ -249,6 +254,9 @@ Current `V1` workflow:
    - `Merge next`
 6. Click `Apply text changes`.
 
+You also have:
+- `Undo last text apply` for a one-level rollback of the latest successful rebuild
+
 UI note:
 - hovering `Split` or `Merge` previews the subtitle block(s) affected by that action
 
@@ -256,6 +264,7 @@ Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
 - when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection
+- when several disjoint regions were changed, Sub Creator rebuilds those changed slices independently from right to left instead of forcing one large middle rebuild
 - the rebuilt clips keep the full original time span of the selected subtitle range, even after merges reduce the number of blocks
 - if the rebuilt subtitle timing would overlap non-selected clips on the same track, Sub Creator rebuilds on the first empty video track above
 - if no empty video track exists above, Sub Creator creates a new top video track and rebuilds there instead

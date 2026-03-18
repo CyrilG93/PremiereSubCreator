@@ -25,6 +25,13 @@ export interface TextEditorApplyPlan {
   blocks: TextEditorBlock[];
 }
 
+interface TextEditorChangedRange {
+  originalStartIndex: number;
+  originalEndIndexExclusive: number;
+  editedStartIndex: number;
+  editedEndIndexExclusive: number;
+}
+
 function normalizeTextEditorWords(text: string): string[] {
   // // Split one subtitle text into compact word tokens while preserving punctuation on each token.
   return String(text || "")
@@ -378,54 +385,147 @@ export function sanitizeTextEditorBlocksForApply(
   return retimeTextEditorBlocks(blocks, timingRange);
 }
 
+function buildTextEditorChangedRanges(
+  originalBlocks: TextEditorBlock[],
+  editedBlocks: TextEditorBlock[]
+): TextEditorChangedRange[] {
+  // // Compute minimal changed block ranges so disjoint edits can be rebuilt independently from right to left.
+  const normalizedOriginalBlocks = cloneTextEditorBlocks(originalBlocks);
+  const normalizedEditedBlocks = filterNonEmptyTextEditorBlocks(editedBlocks);
+  if (normalizedOriginalBlocks.length < 1 && normalizedEditedBlocks.length < 1) {
+    return [];
+  }
+
+  const originalLength = normalizedOriginalBlocks.length;
+  const editedLength = normalizedEditedBlocks.length;
+  const lcsLengths: number[][] = Array.from({ length: originalLength + 1 }, () => Array<number>(editedLength + 1).fill(0));
+
+  for (let originalIndex = originalLength - 1; originalIndex >= 0; originalIndex -= 1) {
+    for (let editedIndex = editedLength - 1; editedIndex >= 0; editedIndex -= 1) {
+      if (areTextEditorBlocksEquivalent(normalizedOriginalBlocks[originalIndex], normalizedEditedBlocks[editedIndex])) {
+        lcsLengths[originalIndex][editedIndex] = lcsLengths[originalIndex + 1][editedIndex + 1] + 1;
+        continue;
+      }
+
+      lcsLengths[originalIndex][editedIndex] = Math.max(
+        lcsLengths[originalIndex + 1][editedIndex],
+        lcsLengths[originalIndex][editedIndex + 1]
+      );
+    }
+  }
+
+  const changedRanges: TextEditorChangedRange[] = [];
+  let currentRange: TextEditorChangedRange | null = null;
+  let originalCursor = 0;
+  let editedCursor = 0;
+
+  while (originalCursor < originalLength || editedCursor < editedLength) {
+    if (
+      originalCursor < originalLength &&
+      editedCursor < editedLength &&
+      areTextEditorBlocksEquivalent(normalizedOriginalBlocks[originalCursor], normalizedEditedBlocks[editedCursor])
+    ) {
+      if (
+        currentRange &&
+        (currentRange.originalEndIndexExclusive > currentRange.originalStartIndex ||
+          currentRange.editedEndIndexExclusive > currentRange.editedStartIndex)
+      ) {
+        changedRanges.push(currentRange);
+      }
+      currentRange = null;
+      originalCursor += 1;
+      editedCursor += 1;
+      continue;
+    }
+
+    if (!currentRange) {
+      currentRange = {
+        originalStartIndex: originalCursor,
+        originalEndIndexExclusive: originalCursor,
+        editedStartIndex: editedCursor,
+        editedEndIndexExclusive: editedCursor
+      };
+    }
+
+    const preferInsertion =
+      editedCursor < editedLength &&
+      (originalCursor >= originalLength || lcsLengths[originalCursor][editedCursor + 1] >= lcsLengths[originalCursor + 1][editedCursor]);
+    if (preferInsertion) {
+      editedCursor += 1;
+      currentRange.editedEndIndexExclusive = editedCursor;
+      continue;
+    }
+
+    if (originalCursor < originalLength) {
+      originalCursor += 1;
+      currentRange.originalEndIndexExclusive = originalCursor;
+      continue;
+    }
+  }
+
+  if (
+    currentRange &&
+    (currentRange.originalEndIndexExclusive > currentRange.originalStartIndex ||
+      currentRange.editedEndIndexExclusive > currentRange.editedStartIndex)
+  ) {
+    changedRanges.push(currentRange);
+  }
+
+  return changedRanges;
+}
+
+export function buildTextEditorApplyPlans(
+  originalBlocks: TextEditorBlock[],
+  editedBlocks: TextEditorBlock[]
+): TextEditorApplyPlan[] {
+  // // Build one rebuild plan per contiguous changed range so disjoint edits do not force one large replacement.
+  const normalizedOriginalBlocks = cloneTextEditorBlocks(originalBlocks);
+  const normalizedEditedBlocks = filterNonEmptyTextEditorBlocks(editedBlocks);
+  if (normalizedOriginalBlocks.length < 1) {
+    return [];
+  }
+
+  const plans: TextEditorApplyPlan[] = [];
+  const changedRanges = buildTextEditorChangedRanges(normalizedOriginalBlocks, normalizedEditedBlocks);
+  for (const changedRange of changedRanges) {
+    if (changedRange.originalStartIndex >= normalizedOriginalBlocks.length) {
+      continue;
+    }
+
+    const selectionStartIndex = Math.max(0, Math.min(normalizedOriginalBlocks.length - 1, changedRange.originalStartIndex));
+    const selectionEndIndex = Math.max(
+      selectionStartIndex,
+      Math.min(normalizedOriginalBlocks.length - 1, changedRange.originalEndIndexExclusive - 1)
+    );
+    const changedEditedBlocks = normalizedEditedBlocks.slice(
+      changedRange.editedStartIndex,
+      changedRange.editedEndIndexExclusive
+    );
+    const timingRange = {
+      startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex].startSeconds || 0),
+      endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex].endSeconds || 0)
+    };
+
+    plans.push({
+      selectionStartIndex,
+      selectionEndIndex,
+      timingRange,
+      blocks: retimeTextEditorBlocks(changedEditedBlocks, timingRange)
+    });
+  }
+
+  return plans;
+}
+
 export function buildTextEditorApplyPlan(
   originalBlocks: TextEditorBlock[],
   editedBlocks: TextEditorBlock[]
 ): TextEditorApplyPlan | null {
-  // // Limit rebuilds to the smallest changed subtitle slice by trimming common prefix/suffix around the edit region.
-  const normalizedOriginalBlocks = cloneTextEditorBlocks(originalBlocks);
-  const normalizedEditedBlocks = filterNonEmptyTextEditorBlocks(editedBlocks);
-  if (normalizedOriginalBlocks.length < 1) {
+  // // Preserve the legacy single-range helper by returning the first changed plan when callers only expect one range.
+  const plans = buildTextEditorApplyPlans(originalBlocks, editedBlocks);
+  if (plans.length < 1) {
     return null;
   }
 
-  let prefixLength = 0;
-  while (
-    prefixLength < normalizedOriginalBlocks.length &&
-    prefixLength < normalizedEditedBlocks.length &&
-    areTextEditorBlocksEquivalent(normalizedOriginalBlocks[prefixLength], normalizedEditedBlocks[prefixLength])
-  ) {
-    prefixLength += 1;
-  }
-
-  let originalSuffixIndex = normalizedOriginalBlocks.length - 1;
-  let editedSuffixIndex = normalizedEditedBlocks.length - 1;
-  while (
-    originalSuffixIndex >= prefixLength &&
-    editedSuffixIndex >= prefixLength &&
-    areTextEditorBlocksEquivalent(normalizedOriginalBlocks[originalSuffixIndex], normalizedEditedBlocks[editedSuffixIndex])
-  ) {
-    originalSuffixIndex -= 1;
-    editedSuffixIndex -= 1;
-  }
-
-  if (prefixLength >= normalizedOriginalBlocks.length && prefixLength >= normalizedEditedBlocks.length) {
-    return null;
-  }
-
-  const selectionStartIndex = Math.min(prefixLength, normalizedOriginalBlocks.length - 1);
-  const selectionEndIndex = Math.max(selectionStartIndex, originalSuffixIndex);
-  const changedEditedBlocks =
-    editedSuffixIndex >= prefixLength ? normalizedEditedBlocks.slice(prefixLength, editedSuffixIndex + 1) : [];
-  const timingRange = {
-    startSeconds: Number(normalizedOriginalBlocks[selectionStartIndex].startSeconds || 0),
-    endSeconds: Number(normalizedOriginalBlocks[selectionEndIndex].endSeconds || 0)
-  };
-
-  return {
-    selectionStartIndex,
-    selectionEndIndex,
-    timingRange,
-    blocks: retimeTextEditorBlocks(changedEditedBlocks, timingRange)
-  };
+  return plans[0];
 }

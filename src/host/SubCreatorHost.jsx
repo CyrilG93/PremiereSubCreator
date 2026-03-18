@@ -5181,6 +5181,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       selectedCount: currentSelection.length,
       rebuiltCount: rebuiltCount,
       failedCount: failedCount,
+      selectionSignature: subcreator_build_selected_mogrt_text_signature(sequence, selectionAfterApply),
       sourceTrackIndex: sourceTrackIndex,
       rebuildTrackIndex: targetTrackIndex,
       projectDocumentId: sequenceIdentity.projectDocumentId,

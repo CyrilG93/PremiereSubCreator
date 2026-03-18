@@ -318,6 +318,38 @@ function resolveTextEditorTimingRange(
   };
 }
 
+function buildWeightedRetimedTextEditorBlocks(
+  blocks: TextEditorBlock[],
+  startSeconds: number,
+  endSeconds: number
+): TextEditorBlock[] {
+  // // Rebuild one contiguous block range with weighted word timings when precise timed-word anchors are unavailable.
+  const allWords = blocks.flatMap((block) => block.words);
+  if (allWords.length < 1) {
+    return blocks;
+  }
+
+  const weightedWords = buildWeightedCaptionWords(allWords, startSeconds, endSeconds);
+  let wordCursor = 0;
+  return blocks.map((block, blockIndex) => {
+    const wordCount = block.words.length;
+    const blockWords = weightedWords.slice(wordCursor, wordCursor + wordCount);
+    wordCursor += wordCount;
+    if (blockWords.length < 1) {
+      return block;
+    }
+
+    return {
+      ...block,
+      startSeconds: blockWords[0].startSeconds,
+      endSeconds: blockIndex === blocks.length - 1 ? endSeconds : blockWords[blockWords.length - 1].endSeconds,
+      text: block.words.join(" "),
+      words: block.words.slice(),
+      timedWords: blockWords
+    };
+  });
+}
+
 export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: TextEditorTimingRange): TextEditorBlock[] {
   // // Redistribute the selected subtitle time span across edited blocks using weighted per-word timing.
   const sourceBlocks = cloneTextEditorBlocks(blocks);
@@ -332,8 +364,15 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: 
   }
   const { startSeconds, endSeconds } = resolvedTimingRange;
 
-  const canReuseTimedWords = normalizedBlocks.every((block) => areTimedWordsCompatible(block.words, block.timedWords));
-  if (canReuseTimedWords) {
+  const timedWordPayloads = normalizedBlocks.map((block) =>
+    areTimedWordsCompatible(block.words, block.timedWords) ? cloneTimedWords(block.timedWords || []) : null
+  );
+  const compatibleTimedBlockCount = timedWordPayloads.filter((payload) => Array.isArray(payload) && payload.length > 0).length;
+  if (compatibleTimedBlockCount < 1) {
+    return buildWeightedRetimedTextEditorBlocks(normalizedBlocks, startSeconds, endSeconds);
+  }
+
+  if (compatibleTimedBlockCount === normalizedBlocks.length) {
     return normalizedBlocks.map((block, blockIndex) => {
       const timedWords = cloneTimedWords(block.timedWords || []);
       if (timedWords.length < 1) {
@@ -351,30 +390,74 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: 
     });
   }
 
-  const allWords = normalizedBlocks.flatMap((block) => block.words);
-  if (allWords.length < 1) {
-    return normalizedBlocks;
-  }
+  const retimedBlocks = normalizedBlocks.map((block) => ({
+    ...block,
+    text: block.words.join(" "),
+    words: block.words.slice(),
+    timedWords: undefined as CaptionWord[] | undefined
+  }));
+  let previousAnchorEnd = startSeconds;
+  let incompatibleRunStartIndex = -1;
 
-  const weightedWords = buildWeightedCaptionWords(allWords, startSeconds, endSeconds);
-  let wordCursor = 0;
-  return normalizedBlocks.map((block, blockIndex) => {
-    const wordCount = block.words.length;
-    const blockWords = weightedWords.slice(wordCursor, wordCursor + wordCount);
-    wordCursor += wordCount;
-    if (blockWords.length < 1) {
-      return block;
+  const applyWeightedRun = (runStartIndex: number, runEndIndex: number, rangeStart: number, rangeEnd: number): boolean => {
+    // // Rebuild only the incompatible block run between two timing anchors while keeping surrounding precise timings intact.
+    if (runStartIndex > runEndIndex) {
+      return true;
+    }
+    if (!(rangeEnd > rangeStart)) {
+      return false;
     }
 
-    return {
-      ...block,
-      startSeconds: blockWords[0].startSeconds,
-      endSeconds: blockIndex === normalizedBlocks.length - 1 ? endSeconds : blockWords[blockWords.length - 1].endSeconds,
-      text: block.words.join(" "),
-      words: block.words.slice(),
-      timedWords: blockWords
+    const weightedRun = buildWeightedRetimedTextEditorBlocks(
+      normalizedBlocks.slice(runStartIndex, runEndIndex + 1),
+      rangeStart,
+      rangeEnd
+    );
+    for (let runIndex = 0; runIndex < weightedRun.length; runIndex += 1) {
+      retimedBlocks[runStartIndex + runIndex] = weightedRun[runIndex];
+    }
+    return true;
+  };
+
+  for (let blockIndex = 0; blockIndex < normalizedBlocks.length; blockIndex += 1) {
+    const timedWords = timedWordPayloads[blockIndex];
+    if (!timedWords || timedWords.length < 1) {
+      if (incompatibleRunStartIndex < 0) {
+        incompatibleRunStartIndex = blockIndex;
+      }
+      continue;
+    }
+
+    if (incompatibleRunStartIndex >= 0) {
+      if (!applyWeightedRun(incompatibleRunStartIndex, blockIndex - 1, previousAnchorEnd, timedWords[0].startSeconds)) {
+        return buildWeightedRetimedTextEditorBlocks(normalizedBlocks, startSeconds, endSeconds);
+      }
+      incompatibleRunStartIndex = -1;
+    }
+
+    retimedBlocks[blockIndex] = {
+      ...normalizedBlocks[blockIndex],
+      startSeconds: blockIndex === 0 ? startSeconds : timedWords[0].startSeconds,
+      endSeconds: blockIndex === normalizedBlocks.length - 1 ? endSeconds : timedWords[timedWords.length - 1].endSeconds,
+      text: normalizedBlocks[blockIndex].words.join(" "),
+      words: normalizedBlocks[blockIndex].words.slice(),
+      timedWords
     };
-  });
+    previousAnchorEnd = timedWords[timedWords.length - 1].endSeconds;
+  }
+
+  if (incompatibleRunStartIndex >= 0) {
+    if (!applyWeightedRun(incompatibleRunStartIndex, normalizedBlocks.length - 1, previousAnchorEnd, endSeconds)) {
+      return buildWeightedRetimedTextEditorBlocks(normalizedBlocks, startSeconds, endSeconds);
+    }
+  }
+
+  if (retimedBlocks.length > 0) {
+    retimedBlocks[0].startSeconds = startSeconds;
+    retimedBlocks[retimedBlocks.length - 1].endSeconds = endSeconds;
+  }
+
+  return retimedBlocks;
 }
 
 export function sanitizeTextEditorBlocksForApply(

@@ -6971,16 +6971,17 @@ function subcreator_remove_track_item_without_ripple(trackItem) {
 }
 
 function subcreator_do_ranges_overlap(leftStart, leftEnd, rightStart, rightEnd) {
-  // // Detect timeline overlap with a tiny tolerance so rebuilt MOGRTs never cover unrelated clips.
+  // // Detect timeline overlap with a small tolerance so rebuilt MOGRTs do not fallback because of sub-frame rounding noise.
   var safeLeftStart = Number(leftStart);
   var safeLeftEnd = Number(leftEnd);
   var safeRightStart = Number(rightStart);
   var safeRightEnd = Number(rightEnd);
+  var overlapToleranceSeconds = 0.01;
   if (isNaN(safeLeftStart) || isNaN(safeLeftEnd) || isNaN(safeRightStart) || isNaN(safeRightEnd)) {
     return false;
   }
 
-  return safeLeftStart < safeRightEnd - 0.0005 && safeLeftEnd > safeRightStart + 0.0005;
+  return safeLeftStart < safeRightEnd - overlapToleranceSeconds && safeLeftEnd > safeRightStart + overlapToleranceSeconds;
 }
 
 function subcreator_is_selected_track_item_reference(trackItem, selectedItems) {

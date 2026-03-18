@@ -222,6 +222,53 @@ describe("textEditor helpers", () => {
     expect(retimed[1].endSeconds).toBe(3);
   });
 
+  it("keeps compatible timed-word blocks precise while retiming only the edited gap blocks", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1.1,
+        text: "go now",
+        timedWords: [
+          { text: "go", startSeconds: 0, endSeconds: 0.2 },
+          { text: "now", startSeconds: 0.2, endSeconds: 1.1 }
+        ]
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 1.1,
+        endSeconds: 2,
+        text: "edited words"
+      },
+      {
+        sourceSelectionIndex: 2,
+        clipName: "Clip C",
+        startSeconds: 2,
+        endSeconds: 3,
+        text: "final block",
+        timedWords: [
+          { text: "final", startSeconds: 2, endSeconds: 2.6 },
+          { text: "block", startSeconds: 2.6, endSeconds: 3 }
+        ]
+      }
+    ]);
+
+    const retimed = retimeTextEditorBlocks(blocks, {
+      startSeconds: 0,
+      endSeconds: 3
+    });
+
+    expect(retimed[0].startSeconds).toBe(0);
+    expect(retimed[0].endSeconds).toBe(1.1);
+    expect(retimed[1].startSeconds).toBe(1.1);
+    expect(retimed[1].endSeconds).toBe(2);
+    expect(retimed[2].startSeconds).toBe(2);
+    expect(retimed[2].endSeconds).toBe(3);
+    expect(retimed[2].timedWords?.map((word) => word.text)).toEqual(["final", "block"]);
+  });
+
   it("keeps the original selected span when a merge removes the last block", () => {
     const blocks = buildTextEditorBlocks([
       {

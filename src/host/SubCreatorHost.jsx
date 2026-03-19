@@ -140,6 +140,25 @@ function subcreator_pick_srt_file() {
   }
 }
 
+function subcreator_pick_corrected_transcript_file() {
+  // // Open native picker for corrected transcript sources used by WhisperX alignment.
+  try {
+    var selected = File.openDialog("Select corrected transcript file", function (candidate) {
+      if (candidate instanceof Folder) {
+        return true;
+      }
+      return /\.(srt|txt)$/i.test(String(candidate.name || ""));
+    });
+    if (!selected) {
+      return subcreator_ok({ path: "" });
+    }
+
+    return subcreator_ok({ path: selected.fsName });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_normalize_system_path(value) {
   // // Normalize file-system paths for the current host platform before passing them into export APIs.
   var normalized = String(value || "");

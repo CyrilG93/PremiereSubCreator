@@ -314,6 +314,7 @@ async function subcreatorBuild() {
     mkdir(path.join(distRoot, "host"), { recursive: true }),
     mkdir(path.join(distRoot, "CSXS"), { recursive: true }),
     mkdir(path.join(distRoot, "locales"), { recursive: true }),
+    mkdir(path.join(distRoot, "python"), { recursive: true }),
     mkdir(path.join(distRoot, "assets"), { recursive: true }),
     mkdir(path.join(distRoot, "templates", "mogrt"), { recursive: true })
   ]);
@@ -334,6 +335,7 @@ async function subcreatorBuild() {
     cp(path.join(sourceRoot, "panel", "styles.css"), path.join(distRoot, "styles.css")),
     cp(path.join(sourceRoot, "host", "SubCreatorHost.jsx"), path.join(distRoot, "host", "SubCreatorHost.jsx")),
     cp(path.join(sourceRoot, "host", "manifest.xml"), path.join(distRoot, "CSXS", "manifest.xml")),
+    cp(path.join(sourceRoot, "python", "subcreator_align_corrected.py"), path.join(distRoot, "python", "subcreator_align_corrected.py")),
     cp(path.join(sourceRoot, "locales", "fr.json"), path.join(distRoot, "locales", "fr.json")),
     cp(path.join(sourceRoot, "locales", "en.json"), path.join(distRoot, "locales", "en.json"))
   ]);

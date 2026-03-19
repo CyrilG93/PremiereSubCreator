@@ -346,6 +346,28 @@ subcreator_is_supported_python_version() {
   return 0
 }
 
+subcreator_supports_whisperx_version() {
+  # // WhisperX currently requires CPython 3.10 to 3.13 for the corrected-align workflow.
+  local version="$1"
+  local major="${version%%.*}"
+  local minor="${version#*.}"
+  minor="${minor%%.*}"
+
+  if ! [[ "${major}" =~ ^[0-9]+$ ]] || ! [[ "${minor}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  if [ "${major}" -ne 3 ]; then
+    return 1
+  fi
+
+  if [ "${minor}" -lt 10 ] || [ "${minor}" -gt 13 ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 subcreator_select_python_cmd() {
   # // Prefer explicit minor-version executables before generic python3/python aliases.
   local candidates=(
@@ -411,7 +433,7 @@ if ! subcreator_select_python_cmd; then
   else
     echo "Whisper setup skipped: no supported Python version found (need 3.8 to 3.13). Detected: ${SUBCREATOR_PYTHON_SEEN}"
   fi
-  echo "Whisper source will be hidden in the panel."
+  echo "Whisper and corrected align modes will remain unavailable in the panel until Python is installed."
 else
   subcreator_resolve_python_executable_path || true
   echo "Installing Whisper with ${SUBCREATOR_PYTHON_CMD} (${SUBCREATOR_PYTHON_VERSION})..."
@@ -427,6 +449,18 @@ else
   else
     echo "Whisper package install failed. You can run manually:"
     echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade openai-whisper"
+  fi
+
+  # // Install WhisperX when the selected Python runtime is new enough for corrected transcript alignment.
+  if subcreator_supports_whisperx_version "${SUBCREATOR_PYTHON_VERSION}"; then
+    if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx; then
+      echo "WhisperX Python package installed successfully."
+    else
+      echo "WhisperX package install failed. You can run manually:"
+      echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx"
+    fi
+  else
+    echo "WhisperX setup skipped: Python ${SUBCREATOR_PYTHON_VERSION} detected (need 3.10 to 3.13 for corrected transcript align)."
   fi
 fi
 

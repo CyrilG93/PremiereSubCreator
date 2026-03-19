@@ -59,7 +59,7 @@ if not defined SUBCREATOR_PYTHON_CMD (
   ) else (
     echo Whisper setup skipped: Python not found on this machine.
   )
-  echo Whisper source will be hidden in the panel.
+  echo Whisper and corrected align modes will remain unavailable in the panel until Python is installed.
   goto :subcreator_after_whisper_setup
 )
 
@@ -76,7 +76,7 @@ goto :subcreator_python_supported
 
 :subcreator_python_unsupported
 echo Whisper setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(openai-whisper currently targets Python ^<= 3.13^).
-echo Whisper source will be hidden in the panel.
+echo Whisper and corrected align modes will remain unavailable in the panel until a supported Python version is installed.
 goto :subcreator_after_whisper_setup
 
 :subcreator_python_supported
@@ -95,6 +95,19 @@ if errorlevel 1 (
   echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade openai-whisper
 ) else (
   echo Whisper Python package installed successfully.
+)
+
+REM // Install WhisperX when Python is compatible so corrected transcript align can run without extra setup.
+if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
+  call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade whisperx
+  if errorlevel 1 (
+    echo WhisperX package install failed. You can run manually:
+    echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade whisperx
+  ) else (
+    echo WhisperX Python package installed successfully.
+  )
+) else (
+  echo WhisperX setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(need 3.10 to 3.13 for corrected transcript align^).
 )
 
 :subcreator_after_whisper_setup

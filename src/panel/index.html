@@ -53,6 +53,7 @@
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
               <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper</option>
+              <option value="corrected_align" data-i18n="source.correctedAlign">Corrected align</option>
             </select>
           </label>
 
@@ -69,15 +70,30 @@
             </div>
           </section>
 
+          <section class="field field--full" id="correctedAlignField">
+            <span data-i18n="field.correctedTranscript">Corrected transcript</span>
+            <div class="inline-row">
+              <input
+                id="correctedTranscriptPath"
+                type="text"
+                data-i18n-placeholder="placeholder.correctedTranscriptPath"
+                placeholder="/Users/.../corrected.srt"
+              />
+              <button id="correctedTranscriptBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
+            </div>
+            <p class="hint" data-i18n="help.correctedAlign">
+              Use a corrected .srt or .txt, export the active sequence audio, then align the corrected text with WhisperX.
+            </p>
+            <p id="correctedAlignHint" class="hint" hidden>
+              Corrected align requires Python whisperx. Read the README to install it.
+            </p>
+          </section>
+
           <section class="field field--full" id="whisperField">
             <span data-i18n="field.whisper">Whisper</span>
             <div class="inline-row">
-              <div id="whisperModelRow" class="inline-row inline-row--triple">
+              <div id="whisperModelRow" class="inline-row inline-row--double">
                 <select id="whisperModel" aria-label="Whisper model"></select>
-                <select id="whisperSequenceRange" aria-label="Whisper sequence range">
-                  <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
-                  <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
-                </select>
                 <button id="whisperModelFolderButton" type="button" class="button button--secondary" data-i18n="action.openWhisperModelsFolder">
                   Ouvrir dossier modeles
                 </button>
@@ -91,6 +107,17 @@
             </p>
             <p class="hint" data-i18n="help.whisper">
               Whisper doit etre installe localement et accessible via la commande `whisper`.
+            </p>
+          </section>
+
+          <section class="field field--full" id="sequenceAudioField">
+            <span data-i18n="field.sequenceAudioRange">Sequence audio range</span>
+            <select id="whisperSequenceRange" aria-label="Whisper sequence range">
+              <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
+              <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
+            </select>
+            <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
+              La sequence active est exportee temporairement en WAV puis analysee par Whisper.
             </p>
           </section>
 

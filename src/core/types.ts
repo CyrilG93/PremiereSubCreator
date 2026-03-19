@@ -1,5 +1,5 @@
 // // Define strongly typed structures shared by the panel and host bridge.
-export type SourceMode = "srt" | "whisper_sequence";
+export type SourceMode = "srt" | "whisper_sequence" | "corrected_align";
 export type WhisperSequenceRangeMode = "entire_sequence" | "in_out";
 
 // // Support both per-word and per-line animation strategies.
@@ -38,6 +38,7 @@ export interface CaptionBuildOptions {
   extensionRootPath: string;
   mogrtPath: string;
   mogrtTemplateRelativePath: string;
+  correctedTranscriptPath?: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
   videoTrackIndex: number;

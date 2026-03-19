@@ -36,11 +36,25 @@ interface WhisperTranscriptionRequest {
   model: string;
 }
 
+interface CorrectedAlignmentRequest {
+  audioPath: string;
+  transcriptPath: string;
+  languageCode: string;
+  extensionRootPath: string;
+}
+
 interface WhisperTranscriptionResult {
   srtText: string;
   jsonText?: string;
   model: string;
   audioPath: string;
+  commandOutput?: string;
+}
+
+interface CorrectedAlignmentResult {
+  jsonText: string;
+  audioPath: string;
+  transcriptPath: string;
   commandOutput?: string;
 }
 
@@ -60,6 +74,8 @@ export interface WhisperRuntimeStatus {
   details: string;
   installedModels: string[];
   modelCachePaths: string[];
+  alignmentAvailable: boolean;
+  alignmentDetails: string;
 }
 
 export interface SystemFontCatalog {
@@ -1836,33 +1852,24 @@ function runSpawn(
   };
 }
 
-function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
-  // // Detect local Whisper runtime availability to decide if Whisper source should be shown.
-  const modules = resolveCepNodeModules();
-  if (!modules) {
-    return {
-      available: false,
-      details: "CEP Node runtime unavailable",
-      installedModels: [],
-      modelCachePaths: []
-    };
-  }
-
+function detectPythonModuleAvailabilityViaCepNode(
+  modules: CepNodeModules,
+  moduleName: string,
+  runtimeConfig: SubcreatorRuntimeConfig | null,
+  userExecutables: string[],
+  spawnEnv: Record<string, string | undefined>
+): { available: boolean; details: string } {
+  // // Probe one Python module through the same launcher discovery used for Whisper/WhisperX commands.
   const checks: string[] = [];
-  const runtimeConfig = getRuntimeConfig(modules);
-  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
-  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
-  const installedModels = detectInstalledWhisperModelsViaCepNode(modules);
-
   const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables, runtimeConfig);
+  const importStatement = `import ${moduleName}`;
+
   for (const launcher of pythonLaunchers) {
-    const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", "import whisper"], spawnEnv);
+    const probe = runSpawn(modules, launcher.command, [...launcher.argsPrefix, "-c", importStatement], spawnEnv);
     if (probe.ok) {
       return {
         available: true,
-        details: `Python module detected via ${launcher.label}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`,
-        installedModels: installedModels.installedModels,
-        modelCachePaths: installedModels.modelCachePaths
+        details: `Python module detected via ${launcher.label}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`
       };
     }
 
@@ -1877,6 +1884,57 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     }
   }
 
+  return {
+    available: false,
+    details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`
+  };
+}
+
+function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
+  // // Detect local Whisper runtime availability to decide if Whisper source should be shown.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return {
+      available: false,
+      details: "CEP Node runtime unavailable",
+      installedModels: [],
+      modelCachePaths: [],
+      alignmentAvailable: false,
+      alignmentDetails: "CEP Node runtime unavailable"
+    };
+  }
+
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
+  const installedModels = detectInstalledWhisperModelsViaCepNode(modules);
+  const whisperModuleStatus = detectPythonModuleAvailabilityViaCepNode(
+    modules,
+    "whisper",
+    runtimeConfig,
+    userExecutables,
+    spawnEnv
+  );
+  const alignmentStatus = detectPythonModuleAvailabilityViaCepNode(
+    modules,
+    "whisperx",
+    runtimeConfig,
+    userExecutables,
+    spawnEnv
+  );
+
+  if (whisperModuleStatus.available) {
+    return {
+      available: true,
+      details: whisperModuleStatus.details,
+      installedModels: installedModels.installedModels,
+      modelCachePaths: installedModels.modelCachePaths,
+      alignmentAvailable: alignmentStatus.available,
+      alignmentDetails: alignmentStatus.details
+    };
+  }
+
+  const checks: string[] = [];
   const cliCandidates = [...userExecutables, "whisper"];
   for (const command of cliCandidates) {
     const probe = runSpawn(modules, command, ["--help"], spawnEnv);
@@ -1885,7 +1943,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
         available: true,
         details: `CLI detected via ${command}${runtimeConfig ? ` (config: ${runtimeConfig.sourcePath})` : ""}`,
         installedModels: installedModels.installedModels,
-        modelCachePaths: installedModels.modelCachePaths
+        modelCachePaths: installedModels.modelCachePaths,
+        alignmentAvailable: alignmentStatus.available,
+        alignmentDetails: alignmentStatus.details
       };
     }
 
@@ -1904,7 +1964,9 @@ function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
     available: false,
     details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`,
     installedModels: installedModels.installedModels,
-    modelCachePaths: installedModels.modelCachePaths
+    modelCachePaths: installedModels.modelCachePaths,
+    alignmentAvailable: alignmentStatus.available,
+    alignmentDetails: alignmentStatus.details
   };
 }
 
@@ -1979,6 +2041,21 @@ function normalizeWhisperOutputChunk(chunk: string | Uint8Array): string {
   }
 }
 
+function resolveBundledPythonScriptPath(
+  modules: CepNodeModules,
+  extensionRootPath: string,
+  scriptFileName: string
+): string {
+  // // Resolve one bundled helper script from the installed extension payload so CEP Node can launch it via Python.
+  const normalizedRoot = String(extensionRootPath || "").trim();
+  if (!normalizedRoot) {
+    return "";
+  }
+
+  const candidatePath = modules.path.join(normalizedRoot, "python", scriptFileName);
+  return modules.fs.existsSync(candidatePath) ? candidatePath : "";
+}
+
 function extractWhisperProgressUpdate(output: string): WhisperProgressUpdate | null {
   // // Parse Whisper/tqdm stderr progress like ` 42%|...` into a panel-friendly percentage update.
   const normalized = String(output || "");
@@ -1996,6 +2073,27 @@ function extractWhisperProgressUpdate(output: string): WhisperProgressUpdate | n
   return {
     percent,
     detail: `Whisper ${percent}%`
+  };
+}
+
+function extractCorrectedAlignProgressUpdate(output: string): WhisperProgressUpdate | null {
+  // // Parse helper-script progress markers so corrected alignment can drive the same panel progress bar.
+  const normalized = String(output || "");
+  if (!normalized) {
+    return null;
+  }
+
+  const matches = Array.from(normalized.matchAll(/SUBCREATOR_ALIGN_PROGRESS\t(\d{1,3})\t([^\r\n]*)/g));
+  if (!matches.length) {
+    return null;
+  }
+
+  const lastMatch = matches[matches.length - 1];
+  const percent = Math.max(0, Math.min(100, Number(lastMatch[1] || 0)));
+  const detail = String(lastMatch[2] || "").trim();
+  return {
+    percent,
+    detail
   };
 }
 
@@ -2347,6 +2445,16 @@ export async function pickSrtPath(): Promise<string> {
   const response = await evalHostJson<{ path: string }>("subcreator_pick_srt_file()");
   if (!response.ok) {
     throw new Error(response.error ?? "SRT picker failed.");
+  }
+
+  return String(response.data?.path ?? "");
+}
+
+export async function pickCorrectedTranscriptPath(): Promise<string> {
+  // // Open host-native picker for corrected transcript files used by WhisperX alignment.
+  const response = await evalHostJson<{ path: string }>("subcreator_pick_corrected_transcript_file()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Corrected transcript picker failed.");
   }
 
   return String(response.data?.path ?? "");
@@ -2831,6 +2939,177 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
   };
 }
 
+async function alignCorrectedTranscriptViaCepNodeAsync(
+  request: CorrectedAlignmentRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<CorrectedAlignmentResult> {
+  // // Run the bundled WhisperX helper script with CEP Node so corrected transcripts can be aligned to active-sequence audio.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    throw new Error("CEP Node runtime unavailable. Corrected transcript align requires CEP Node and Python whisperx.");
+  }
+
+  if (typeof modules.childProcess.spawn !== "function") {
+    throw new Error("CEP Node child_process.spawn unavailable. Corrected transcript align cannot start.");
+  }
+
+  const scriptPath = resolveBundledPythonScriptPath(modules, request.extensionRootPath, "subcreator_align_corrected.py");
+  if (!scriptPath) {
+    throw new Error("Bundled corrected transcript align helper is missing from the installed extension.");
+  }
+
+  const outputDir = modules.path.join(
+    modules.os.tmpdir(),
+    "SubCreatorCorrectedAlign",
+    `run-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+  );
+  modules.fs.mkdirSync(outputDir, { recursive: true });
+
+  const outputPath = modules.path.join(outputDir, "aligned.json");
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
+  const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables, runtimeConfig);
+  const attempts: string[] = [];
+  let collectedOutput = "";
+
+  for (const launcher of pythonLaunchers) {
+    let latestProgressPercent = -1;
+    const attemptChunks: string[] = [];
+    let attemptTailOutput = "";
+    if (modules.fs.existsSync(outputPath)) {
+      try {
+        modules.fs.unlinkSync(outputPath);
+      } catch {
+        // // Ignore stale-output cleanup failures and let the attempt report the real execution problem.
+      }
+    }
+    const args = [
+      ...launcher.argsPrefix,
+      scriptPath,
+      "--audio",
+      request.audioPath,
+      "--transcript",
+      request.transcriptPath,
+      "--language",
+      request.languageCode,
+      "--output",
+      outputPath
+    ];
+
+    const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
+      // // Attach stderr listeners before process start so helper progress markers can feed the UI immediately.
+      let settled = false;
+      const child = modules.childProcess.spawn?.(launcher.command, args, {
+        shell: false,
+        env: spawnEnv
+      });
+      if (!child) {
+        resolve({
+          code: null,
+          error: {
+            message: "child_process.spawn unavailable"
+          }
+        });
+        return;
+      }
+
+      const handleChunk = (chunk: string | Uint8Array): void => {
+        // // Parse helper progress output without flooding the panel with duplicate percentages.
+        const normalizedChunk = normalizeWhisperOutputChunk(chunk);
+        if (!normalizedChunk) {
+          return;
+        }
+        attemptChunks.push(normalizedChunk);
+        attemptTailOutput = `${attemptTailOutput}${normalizedChunk}`.slice(-4096);
+        const progress = extractCorrectedAlignProgressUpdate(attemptTailOutput);
+        if (!progress || progress.percent <= latestProgressPercent) {
+          return;
+        }
+        latestProgressPercent = progress.percent;
+        onProgress?.(progress);
+      };
+
+      child.stdout?.on("data", handleChunk);
+      child.stderr?.on("data", handleChunk);
+      child.on("error", (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({
+          code: null,
+          error: error && typeof error === "object" ? (error as { message?: string; code?: string }) : { message: String(error) }
+        });
+      });
+      child.on("close", (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({
+          code: typeof value === "number" ? value : null
+        });
+      });
+    });
+
+    if (attemptResult.error) {
+      attempts.push(`${launcher.label}: ${String(attemptResult.error.message || attemptResult.error)}`);
+      continue;
+    }
+
+    const attemptOutput = attemptChunks.join("").trim();
+    if (attemptOutput && !collectedOutput) {
+      collectedOutput = attemptOutput;
+    }
+
+    if (attemptResult.code !== 0) {
+      const summary = summarizeWhisperErrorOutput(attemptOutput);
+      attempts.push(`${launcher.label}: exit ${attemptResult.code}${summary ? ` (${summary})` : ""}`);
+      continue;
+    }
+
+    if (!modules.fs.existsSync(outputPath)) {
+      attempts.push(`${launcher.label}: no aligned json output`);
+      continue;
+    }
+
+    const jsonText = String(modules.fs.readFileSync(outputPath, "utf8") || "").trim();
+    if (!jsonText) {
+      attempts.push(`${launcher.label}: empty aligned json output`);
+      continue;
+    }
+
+    onProgress?.({
+      percent: 100,
+      detail: "Corrected transcript alignment complete"
+    });
+    return {
+      jsonText,
+      audioPath: request.audioPath,
+      transcriptPath: request.transcriptPath,
+      commandOutput: attemptOutput
+    };
+  }
+
+  let installHint = "";
+  if (runtimeConfig?.pythonPath) {
+    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx`;
+  } else if (runtimeConfig?.pythonCommand) {
+    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx`;
+  } else if (detectWindowsRuntime()) {
+    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx";
+  } else {
+    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx";
+  }
+
+  throw new Error(
+    `Unable to execute corrected transcript align via WhisperX. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
+      runtimeConfig ? `Runtime config: ${runtimeConfig.sourcePath}. ` : ""
+    }${collectedOutput || ""}`
+  );
+}
+
 export async function transcribeWithWhisper(
   request: WhisperTranscriptionRequest,
   onProgress?: (update: WhisperProgressUpdate) => void
@@ -2857,4 +3136,12 @@ export async function transcribeWithWhisper(
     audioPath: String(response.data?.audioPath ?? request.audioPath),
     commandOutput: String(response.data?.commandOutput ?? "")
   };
+}
+
+export async function alignCorrectedTranscript(
+  request: CorrectedAlignmentRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<CorrectedAlignmentResult> {
+  // // Corrected transcript alignment depends on the bundled WhisperX helper and has no ExtendScript fallback path.
+  return alignCorrectedTranscriptViaCepNodeAsync(request, onProgress);
 }

@@ -23,6 +23,7 @@ import type {
 } from "../core/types";
 import {
   applyCaptionPlan,
+  alignCorrectedTranscript,
   applyVisualPropertiesToSelectedMogrts,
   deleteTemporaryWhisperAudio,
   exportActiveSequenceAudioForWhisper,
@@ -31,6 +32,7 @@ import {
   openExternalUrl,
   openInstalledMogrtFolder,
   openWhisperModelsFolder,
+  pickCorrectedTranscriptPath,
   pickSrtPath,
   readSelectedMogrtTextItems,
   readInstalledMogrtCatalog,
@@ -98,6 +100,7 @@ interface PanelStateSnapshot {
   activeMode: PanelMode;
   sourceMode: SourceMode;
   srtPath: string;
+  correctedTranscriptPath: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
   animationMode: AnimationMode;
@@ -157,11 +160,16 @@ const elements = {
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
   srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
+  correctedAlignField: document.querySelector<HTMLElement>("#correctedAlignField"),
+  correctedTranscriptPath: document.querySelector<HTMLInputElement>("#correctedTranscriptPath"),
+  correctedTranscriptBrowseButton: document.querySelector<HTMLButtonElement>("#correctedTranscriptBrowseButton"),
+  correctedAlignHint: document.querySelector<HTMLElement>("#correctedAlignHint"),
   whisperField: document.querySelector<HTMLElement>("#whisperField"),
   whisperModelRow: document.querySelector<HTMLElement>("#whisperModelRow"),
   whisperModel: document.querySelector<HTMLSelectElement>("#whisperModel"),
   whisperModelFolderButton: document.querySelector<HTMLButtonElement>("#whisperModelFolderButton"),
   whisperModelHint: document.querySelector<HTMLElement>("#whisperModelHint"),
+  sequenceAudioField: document.querySelector<HTMLElement>("#sequenceAudioField"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
   whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
@@ -242,6 +250,9 @@ let textApplyInProgress = false;
 let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
 let whisperModelCachePaths: string[] = [];
+let whisperRuntimeAvailable = false;
+let correctedAlignAvailable = false;
+let correctedAlignRuntimeDetails = "";
 let pendingWhisperModelValue = "base";
 let textEditorBlocks: TextEditorBlockState[] = [];
 let textEditorOriginalBlocks: TextEditorBlock[] = [];
@@ -665,11 +676,38 @@ function refreshWhisperModelUi(preferredValue = pendingWhisperModelValue): void 
 
   if (elements.whisperModelHint) {
     const whisperModeActive = getSourceMode() === "whisper_sequence";
-    elements.whisperModelHint.hidden = !whisperModeActive || installedModels.length > 0;
-    elements.whisperModelHint.textContent = translate("help.whisperModelsMissing");
+    const shouldShowMissingModels = whisperModeActive && installedModels.length < 1;
+    const shouldShowMissingRuntime = whisperModeActive && !whisperRuntimeAvailable;
+    elements.whisperModelHint.hidden = !shouldShowMissingModels && !shouldShowMissingRuntime;
+    elements.whisperModelHint.textContent = shouldShowMissingRuntime
+      ? translate("help.whisper")
+      : translate("help.whisperModelsMissing");
   }
 
   pendingWhisperModelValue = String(elements.whisperModel.value || "").trim() || pendingWhisperModelValue;
+}
+
+function refreshCorrectedAlignUi(): void {
+  // // Keep corrected-align availability explicit because it depends on Python WhisperX rather than Whisper CLI/models.
+  if (!elements.correctedAlignHint) {
+    return;
+  }
+
+  const correctedModeActive = getSourceMode() === "corrected_align";
+  elements.correctedAlignHint.hidden = !correctedModeActive || correctedAlignAvailable;
+  elements.correctedAlignHint.textContent = translate("help.correctedAlignMissing");
+}
+
+function isCurrentSourceReady(): boolean {
+  // // Gate generation when the active source mode is missing required runtime pieces.
+  const mode = getSourceMode();
+  if (mode === "whisper_sequence") {
+    return whisperRuntimeAvailable && availableWhisperModels.length > 0;
+  }
+  if (mode === "corrected_align") {
+    return correctedAlignAvailable;
+  }
+  return true;
 }
 
 function readPersistedPanelState(): Partial<PanelStateSnapshot> {
@@ -710,6 +748,7 @@ function persistPanelState(): void {
     activeMode,
     sourceMode: getSourceMode(),
     srtPath: elements.srtPath.value || "",
+    correctedTranscriptPath: elements.correctedTranscriptPath?.value || "",
     whisperModel: elements.whisperModel.value || pendingWhisperModelValue || "base",
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     animationMode: (elements.animationMode.value as AnimationMode) || "line",
@@ -742,6 +781,10 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.srtPath && typeof snapshot.srtPath === "string") {
     elements.srtPath.value = snapshot.srtPath;
+  }
+
+  if (elements.correctedTranscriptPath && typeof snapshot.correctedTranscriptPath === "string") {
+    elements.correctedTranscriptPath.value = snapshot.correctedTranscriptPath;
   }
 
   if (typeof snapshot.whisperModel === "string" && snapshot.whisperModel.trim().length > 0) {
@@ -1190,6 +1233,7 @@ async function loadLocale(languageCode: string): Promise<void> {
   renderCurrentLog();
   refreshMogrtAspectFilterOptions();
   refreshWhisperModelUi();
+  refreshCorrectedAlignUi();
 
   refreshUpdateBanner();
 }
@@ -1287,68 +1331,65 @@ function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
   const whisperModeActive = mode === "whisper_sequence";
+  const correctedAlignModeActive = mode === "corrected_align";
+  const sequenceAudioModeActive = whisperModeActive || correctedAlignModeActive;
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
+  }
+
+  if (elements.correctedAlignField) {
+    elements.correctedAlignField.style.display = correctedAlignModeActive ? "grid" : "none";
   }
 
   if (elements.whisperField) {
     elements.whisperField.style.display = whisperModeActive ? "grid" : "none";
   }
 
+  if (elements.sequenceAudioField) {
+    elements.sequenceAudioField.style.display = sequenceAudioModeActive ? "grid" : "none";
+  }
+
   if (elements.whisperSequenceHint) {
-    elements.whisperSequenceHint.style.display = mode === "whisper_sequence" ? "block" : "none";
+    elements.whisperSequenceHint.style.display = sequenceAudioModeActive ? "block" : "none";
   }
 
   if (elements.whisperSequenceRange) {
-    elements.whisperSequenceRange.style.display = mode === "whisper_sequence" ? "block" : "none";
-    elements.whisperSequenceRange.disabled = mode !== "whisper_sequence";
+    elements.whisperSequenceRange.disabled = !sequenceAudioModeActive;
   }
   if (elements.whisperModelFolderButton) {
-    elements.whisperModelFolderButton.disabled = mode !== "whisper_sequence" || generateInProgress;
+    elements.whisperModelFolderButton.disabled = !whisperModeActive || generateInProgress;
   }
   if (elements.whisperModelRow) {
-    elements.whisperModelRow.classList.toggle("is-single", mode !== "whisper_sequence");
+    elements.whisperModelRow.classList.toggle("is-single", !whisperModeActive);
   }
   refreshWhisperModelUi();
+  refreshCorrectedAlignUi();
   if (elements.generateButton && !generateInProgress) {
-    elements.generateButton.disabled = whisperModeActive && availableWhisperModels.length < 1;
+    elements.generateButton.disabled = !isCurrentSourceReady();
   }
 }
 
 async function enforceWhisperSourceAvailability(): Promise<void> {
-  // // Hide Whisper when runtime is unavailable, otherwise expose only the models already installed in Whisper cache.
-  if (!elements.sourceMode) {
-    return;
-  }
-
-  const whisperOptions = Array.from(
-    elements.sourceMode.querySelectorAll<HTMLOptionElement>('option[value="whisper_sequence"]')
-  );
-  if (!whisperOptions.length) {
-    return;
-  }
-
+  // // Detect Whisper/WhisperX availability and refresh source-specific UI without removing source modes from the panel.
   try {
     const status = await getWhisperRuntimeStatus();
+    whisperRuntimeAvailable = Boolean(status.available);
     availableWhisperModels = Array.isArray(status.installedModels) ? status.installedModels.slice() : [];
     whisperModelCachePaths = Array.isArray(status.modelCachePaths) ? status.modelCachePaths.slice() : [];
+    correctedAlignAvailable = Boolean(status.alignmentAvailable);
+    correctedAlignRuntimeDetails = String(status.alignmentDetails || "");
     refreshWhisperModelUi(pendingWhisperModelValue);
-    if (status.available) {
-      return;
-    }
-
-    for (const whisperOption of whisperOptions) {
-      whisperOption.remove();
-    }
-    if (elements.sourceMode.value === "whisper_sequence") {
-      elements.sourceMode.value = "srt";
-    }
+    refreshCorrectedAlignUi();
     toggleSourceFields();
   } catch {
+    whisperRuntimeAvailable = false;
     availableWhisperModels = [];
     whisperModelCachePaths = [];
+    correctedAlignAvailable = false;
+    correctedAlignRuntimeDetails = "";
     refreshWhisperModelUi(pendingWhisperModelValue);
+    refreshCorrectedAlignUi();
   }
 }
 
@@ -1659,7 +1700,7 @@ function setVisualApplyButtonsBusy(isBusy: boolean): void {
 function setGenerateButtonsBusy(isBusy: boolean): void {
   // // Prevent duplicate generate runs while export/transcription/apply is already active.
   if (elements.generateButton) {
-    elements.generateButton.disabled = isBusy || (getSourceMode() === "whisper_sequence" && availableWhisperModels.length < 1);
+    elements.generateButton.disabled = isBusy || !isCurrentSourceReady();
   }
   if (elements.languageSelect) {
     elements.languageSelect.disabled = isBusy;
@@ -1670,17 +1711,24 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   if (elements.srtPath) {
     elements.srtPath.disabled = isBusy;
   }
+  if (elements.correctedTranscriptPath) {
+    elements.correctedTranscriptPath.disabled = isBusy;
+  }
+  if (elements.correctedTranscriptBrowseButton) {
+    elements.correctedTranscriptBrowseButton.disabled = isBusy;
+  }
   if (elements.sourceMode) {
     elements.sourceMode.disabled = isBusy;
   }
   if (elements.whisperModel) {
-    elements.whisperModel.disabled = isBusy || availableWhisperModels.length < 1;
+    elements.whisperModel.disabled = isBusy || getSourceMode() !== "whisper_sequence" || availableWhisperModels.length < 1;
   }
   if (elements.whisperModelFolderButton) {
     elements.whisperModelFolderButton.disabled = isBusy || getSourceMode() !== "whisper_sequence";
   }
   if (elements.whisperSequenceRange) {
-    elements.whisperSequenceRange.disabled = isBusy || getSourceMode() !== "whisper_sequence";
+    elements.whisperSequenceRange.disabled =
+      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "corrected_align");
   }
   if (elements.animationMode) {
     elements.animationMode.disabled = isBusy;
@@ -3799,6 +3847,19 @@ async function browseSrtPath(): Promise<void> {
   }
 }
 
+async function browseCorrectedTranscriptPath(): Promise<void> {
+  // // Pick a corrected transcript file used by WhisperX alignment.
+  if (!elements.correctedTranscriptPath) {
+    return;
+  }
+
+  const selectedPath = await pickCorrectedTranscriptPath();
+  if (selectedPath) {
+    elements.correctedTranscriptPath.value = selectedPath;
+    persistPanelState();
+  }
+}
+
 function collectBuildOptions(): CaptionBuildOptions {
   // // Collect, normalize, and validate all panel options into a single object.
   if (
@@ -3808,6 +3869,7 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.animationMode ||
+    !elements.correctedTranscriptPath ||
     !elements.whisperModel ||
     !elements.whisperSequenceRange
   ) {
@@ -3820,6 +3882,13 @@ function collectBuildOptions(): CaptionBuildOptions {
 
   if (getSourceMode() === "whisper_sequence" && !String(elements.whisperModel.value || "").trim()) {
     throw new Error(translate("error.whisperModelMissing"));
+  }
+  if (getSourceMode() === "corrected_align" && !String(elements.correctedTranscriptPath.value || "").trim()) {
+    throw new Error(translate("error.missingCorrectedTranscriptPath"));
+  }
+  if (getSourceMode() === "corrected_align" && !correctedAlignAvailable) {
+    const runtimeDetail = correctedAlignRuntimeDetails ? ` ${correctedAlignRuntimeDetails}` : "";
+    throw new Error(`${translate("error.correctedAlignUnavailable")}${runtimeDetail ? ` (${runtimeDetail})` : ""}`);
   }
 
   const extensionRootPath = resolveExtensionRootPath();
@@ -3838,6 +3907,7 @@ function collectBuildOptions(): CaptionBuildOptions {
     extensionRootPath,
     mogrtPath: buildAbsoluteMogrtPath(extensionRootPath, templateRelativePath),
     mogrtTemplateRelativePath: templateRelativePath,
+    correctedTranscriptPath: String(elements.correctedTranscriptPath.value || "").trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     videoTrackIndex: 0,
@@ -3854,6 +3924,19 @@ function mapWhisperPercentToGenerateProgress(progress: WhisperProgressUpdate): n
 function buildWhisperProgressLabel(progress: WhisperProgressUpdate): string {
   // // Keep transcription feedback explicit so a long Whisper run looks active instead of blocked.
   return translateTemplate("progress.whisperAnalysis", {
+    percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
+  });
+}
+
+function mapCorrectedAlignPercentToGenerateProgress(progress: WhisperProgressUpdate): number {
+  // // Reserve the middle of the generate bar for corrected transcript alignment while keeping room for export and apply.
+  const clampedPercent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  return 30 + Math.round((clampedPercent / 100) * 52);
+}
+
+function buildCorrectedAlignProgressLabel(progress: WhisperProgressUpdate): string {
+  // // Make corrected transcript alignment progress explicit so the user sees real activity during WhisperX processing.
+  return translateTemplate("progress.correctedAlignAnalysis", {
     percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
   });
 }
@@ -3889,6 +3972,63 @@ async function loadCuesFromSelectedSource(
     }
 
     return cues;
+  }
+
+  if (options.sourceMode === "corrected_align") {
+    if (!options.correctedTranscriptPath) {
+      throw new Error(translate("error.missingCorrectedTranscriptPath"));
+    }
+
+    if (onProgress) {
+      await onProgress(10, translate("progress.readCorrectedTranscript"), true);
+    }
+    const correctedTranscriptText = await readTextFileFromHost(options.correctedTranscriptPath);
+    if (!String(correctedTranscriptText || "").trim()) {
+      throw new Error(translate("error.emptyCorrectedTranscript"));
+    }
+
+    setLog(translate("log.correctedAlignExport"));
+    if (onProgress) {
+      await onProgress(18, translate("progress.exportSequence"), true);
+    }
+    const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+    const cleanupAudioPath = exportResult.audioPath;
+    if (!cleanupAudioPath) {
+      throw new Error(translate("error.missingActiveSequenceAudio"));
+    }
+
+    try {
+      if (onProgress) {
+        await onProgress(30, translate("progress.correctedAligning"), true);
+      }
+      const alignmentResult = await alignCorrectedTranscript(
+        {
+          audioPath: cleanupAudioPath,
+          transcriptPath: options.correctedTranscriptPath,
+          languageCode: options.languageCode,
+          extensionRootPath: options.extensionRootPath
+        },
+        (progress) => {
+          void updateGenerateProgress(
+            mapCorrectedAlignPercentToGenerateProgress(progress),
+            buildCorrectedAlignProgressLabel(progress)
+          );
+        }
+      );
+
+      if (onProgress) {
+        await onProgress(84, translate("progress.parseWhisper"));
+      }
+      const cues = parseWhisperJson(alignmentResult.jsonText);
+      if (!cues.length) {
+        throw new Error(translate("error.emptyCorrectedAlign"));
+      }
+
+      setLog(translate("log.correctedAlignDone"));
+      return cues;
+    } finally {
+      await deleteTemporaryWhisperAudio(cleanupAudioPath);
+    }
   }
 
   setLog(translate("log.whisperSequenceExport"));
@@ -4050,6 +4190,14 @@ async function initialize(): Promise<void> {
     }
   });
 
+  elements.correctedTranscriptBrowseButton?.addEventListener("click", async () => {
+    try {
+      await browseCorrectedTranscriptPath();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
   elements.mogrtAspectFilter?.addEventListener("change", () => {
     renderMogrtGallery();
     persistPanelState();
@@ -4093,6 +4241,9 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.srtPath?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.correctedTranscriptPath?.addEventListener("change", () => {
     persistPanelState();
   });
   elements.whisperModel?.addEventListener("change", () => {

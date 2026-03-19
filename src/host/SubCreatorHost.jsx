@@ -367,6 +367,12 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       } catch (outPointError) {
         rangeEndSeconds = NaN;
       }
+
+      // // Ignore Premiere sentinel In/Out values when no usable range is actually defined.
+      if (!isFinite(rangeStartSeconds) || !isFinite(rangeEndSeconds) || rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds) {
+        rangeStartSeconds = NaN;
+        rangeEndSeconds = NaN;
+      }
     }
 
     var outputFile = new File(outputPath);
@@ -6378,6 +6384,82 @@ function subcreator_debug_push_limited(debugLines, line, maxLines) {
   debugLines.push(String(line || ""));
 }
 
+function subcreator_debug_scan_text_like_properties(propertyCollection, debugLines, debugPrefix, maxItems) {
+  // // Inspect nearby text-like properties so Premiere-authored templates can reveal which control actually drives the visible text.
+  if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
+    return;
+  }
+
+  var limit = Number(maxItems);
+  if (isNaN(limit) || limit < 1) {
+    limit = 12;
+  }
+
+  var scanned = 0;
+
+  function walk(collection, pathPrefix) {
+    if (!collection || typeof collection.numItems !== "number" || scanned >= limit) {
+      return;
+    }
+
+    for (var propertyIndex = 0; propertyIndex < collection.numItems; propertyIndex += 1) {
+      if (scanned >= limit) {
+        return;
+      }
+
+      var property = collection[propertyIndex];
+      if (!property) {
+        continue;
+      }
+
+      var path = pathPrefix ? pathPrefix + "." + String(propertyIndex) : String(propertyIndex);
+      var displayName = subcreator_trim_string(String(property.displayName || ""));
+      var key = displayName.toLowerCase();
+      var rawValue = "";
+      var hasValue = false;
+
+      if (typeof property.getValue === "function") {
+        try {
+          rawValue = property.getValue();
+          hasValue = true;
+        } catch (readError) {
+          hasValue = false;
+        }
+      }
+
+      var looksInteresting =
+        key.indexOf("text") !== -1 ||
+        key.indexOf("source") !== -1 ||
+        key.indexOf("caption") !== -1 ||
+        key.indexOf("layer") !== -1 ||
+        (hasValue && typeof rawValue === "string" && String(rawValue || "").length > 0 && String(rawValue).length < 80);
+
+      if (looksInteresting) {
+        subcreator_debug_push_limited(
+          debugLines,
+          String(debugPrefix || "") +
+            " candidate path=" +
+            path +
+            " name=" +
+            String(displayName || "<unnamed>") +
+            " rawType=" +
+            typeof rawValue +
+            " raw=" +
+            subcreator_visual_preview_debug_value(rawValue, 120),
+          120
+        );
+        scanned += 1;
+      }
+
+      if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
+        walk(property.properties, path);
+      }
+    }
+  }
+
+  walk(propertyCollection, "");
+}
+
 function subcreator_property_readback_matches_text(property, expectedText) {
   // // Validate text writes by reading the property back, so silent setValue failures do not count as success.
   if (!property || typeof property.getValue !== "function") {
@@ -6465,10 +6547,10 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
   if (typeof rawValue === "string" && rawValue.indexOf("{") === -1) {
     // // Premiere-authored MOGRT text controls often behave like plain string parameters and should keep their existing style untouched.
     var plainTextCandidates = [
-      { value: plainTextString, useRefresh: true },
-      { value: plainTextString, useRefresh: false },
       { value: textString, useRefresh: true },
-      { value: textString, useRefresh: false }
+      { value: textString, useRefresh: false },
+      { value: plainTextString, useRefresh: true },
+      { value: plainTextString, useRefresh: false }
     ];
 
     for (var candidateIndex = 0; candidateIndex < plainTextCandidates.length; candidateIndex += 1) {
@@ -6802,6 +6884,15 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     var component = components[componentIndex];
     if (!component || !component.properties || component.properties.numItems < 1) {
       continue;
+    }
+
+    if (debugLines && typeof debugLines.push === "function") {
+      subcreator_debug_scan_text_like_properties(
+        component.properties,
+        debugLines,
+        debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex),
+        10
+      );
     }
 
     subcreator_try_set_controls_recursively(

@@ -147,6 +147,46 @@ def subcreator_build_plaintext_segments(text: str, total_duration: float) -> Lis
     return segments
 
 
+class SubcreatorSentenceSplitter:
+    # // Replace WhisperX's NLTK punkt dependency with a lightweight local splitter to avoid SSL/download issues.
+    def span_tokenize(self, text: str) -> List[tuple[int, int]]:
+        spans: List[tuple[int, int]] = []
+        for match in re.finditer(r"[^.!?]+[.!?]*\s*", text or ""):
+            start = match.start()
+            end = match.end()
+            while start < end and text[start].isspace():
+                start += 1
+            while end > start and text[end - 1].isspace():
+                end -= 1
+            if start < end:
+                spans.append((start, end))
+        if not spans and text:
+            spans.append((0, len(text)))
+        return spans
+
+
+def subcreator_patch_whisperx_sentence_tokenizer(whisperx_module: Any) -> None:
+    # // Monkeypatch WhisperX sentence splitting so corrected align never depends on downloading NLTK punkt_tab.
+    try:
+        alignment_module = whisperx_module.alignment
+    except Exception:
+        return
+
+    def subcreator_nltk_load(_resource_name: str) -> SubcreatorSentenceSplitter:
+        # // Return the local splitter for every requested punkt resource.
+        return SubcreatorSentenceSplitter()
+
+    try:
+        alignment_module.nltk_load = subcreator_nltk_load
+    except Exception:
+        pass
+
+    try:
+        alignment_module.nltk.download = lambda *args, **kwargs: True
+    except Exception:
+        pass
+
+
 def subcreator_load_corrected_segments(transcript_path: str, total_duration: float) -> List[Dict[str, Any]]:
     # // Parse corrected transcript input and return one seed segment list for WhisperX alignment.
     with open(transcript_path, "r", encoding="utf-8-sig") as handle:
@@ -255,6 +295,7 @@ def main() -> int:
     try:
         subcreator_log_progress(8, "Loading WhisperX dependencies")
         import whisperx  # type: ignore
+        subcreator_patch_whisperx_sentence_tokenizer(whisperx)
     except Exception as error:
         return subcreator_fail(f"Unable to import whisperx. Install it with `python -m pip install --user --upgrade whisperx`. Detail: {error}")
 

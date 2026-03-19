@@ -3062,10 +3062,16 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
     if (attemptOutput && !collectedOutput) {
       collectedOutput = attemptOutput;
     }
+    const authoritativeAttempt =
+      attemptOutput.indexOf("SUBCREATOR_ALIGN_PROGRESS") !== -1 ||
+      (Boolean(runtimeConfig?.pythonPath) && launcher.command === runtimeConfig?.pythonPath && launcher.argsPrefix.length === 0);
 
     if (attemptResult.code !== 0) {
       const summary = summarizeWhisperErrorOutput(attemptOutput);
       attempts.push(`${launcher.label}: exit ${attemptResult.code}${summary ? ` (${summary})` : ""}`);
+      if (authoritativeAttempt) {
+        break;
+      }
       continue;
     }
 

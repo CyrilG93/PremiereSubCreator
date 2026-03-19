@@ -172,6 +172,7 @@ Sub Creator will:
 Notes:
 - a corrected `.srt` is recommended because it already preserves your intended subtitle blocks
 - a corrected `.txt` is also supported, but it is pre-segmented heuristically before alignment
+- the first corrected-align run may download one WhisperX alignment model if it is not already cached
 
 ## Whisper models
 

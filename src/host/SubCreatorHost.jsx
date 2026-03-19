@@ -6355,6 +6355,32 @@ function subcreator_normalize_caption_text(textValue) {
   return String(textValue || "").replace(/\r\n/g, "\n").replace(/\n/g, "\r");
 }
 
+function subcreator_normalize_text_for_compare(textValue) {
+  // // Compare text readback safely across Premiere payload variants that may use LF, CR, or extra whitespace.
+  return subcreator_trim_string(String(textValue || "").replace(/\r/g, "\n").replace(/\s+/g, " "));
+}
+
+function subcreator_property_readback_matches_text(property, expectedText) {
+  // // Validate text writes by reading the property back, so silent setValue failures do not count as success.
+  if (!property || typeof property.getValue !== "function") {
+    return false;
+  }
+
+  var expected = subcreator_normalize_text_for_compare(expectedText);
+  if (!expected) {
+    return false;
+  }
+
+  try {
+    var readbackValue = property.getValue();
+    var extracted = subcreator_extract_text_from_property_value(readbackValue);
+    var normalizedExtracted = subcreator_normalize_text_for_compare(extracted || readbackValue);
+    return normalizedExtracted === expected;
+  } catch (readbackError) {}
+
+  return false;
+}
+
 function subcreator_try_patch_text_json_string(rawValue, textValue) {
   // // Patch text fields directly in JSON-like strings when parsing is not supported.
   var raw = String(rawValue || "");
@@ -6385,21 +6411,46 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
     return false;
   }
 
+  var plainTextString = String(textValue || "");
   var textString = subcreator_normalize_caption_text(textValue);
+
+  if (typeof rawValue === "string" && rawValue.indexOf("{") === -1) {
+    // // Premiere-authored MOGRT text controls often behave like plain string parameters and should keep their existing style untouched.
+    var plainTextCandidates = [
+      { value: plainTextString, useRefresh: true },
+      { value: plainTextString, useRefresh: false },
+      { value: textString, useRefresh: true },
+      { value: textString, useRefresh: false }
+    ];
+
+    for (var candidateIndex = 0; candidateIndex < plainTextCandidates.length; candidateIndex += 1) {
+      var textCandidate = plainTextCandidates[candidateIndex];
+      try {
+        property.setValue(textCandidate.value, textCandidate.useRefresh);
+        if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          return true;
+        }
+      } catch (plainSetError) {}
+    }
+  }
 
   if (rawValue && typeof rawValue === "object") {
     try {
       var objectCopy = JSON.parse(JSON.stringify(rawValue));
       if (subcreator_try_set_json_text_payload(objectCopy, textString)) {
         property.setValue(objectCopy, true);
-        return true;
+        if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          return true;
+        }
       }
     } catch (objectJsonError) {}
 
     try {
       if (subcreator_try_set_json_text_payload(rawValue, textString)) {
         property.setValue(rawValue, true);
-        return true;
+        if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          return true;
+        }
       }
     } catch (objectDirectError) {}
   }
@@ -6409,7 +6460,9 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       var parsed = JSON.parse(rawValue);
       if (subcreator_try_set_json_text_payload(parsed, textString)) {
         property.setValue(JSON.stringify(parsed), true);
-        return true;
+        if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          return true;
+        }
       }
     } catch (jsonError) {}
 
@@ -6417,14 +6470,18 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       var patchedRaw = subcreator_try_patch_text_json_string(rawValue, textString);
       if (patchedRaw) {
         property.setValue(patchedRaw, true);
-        return true;
+        if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          return true;
+        }
       }
     } catch (patchError) {}
   }
 
   try {
-    property.setValue(textString, true);
-    return true;
+    property.setValue(plainTextString, true);
+    if (subcreator_property_readback_matches_text(property, plainTextString)) {
+      return true;
+    }
   } catch (setError) {}
 
   return false;
@@ -6995,6 +7052,8 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
 
         if (insertedItem && subcreator_track_item_starts_near_seconds(insertedItem, startSeconds, 0.2)) {
           resolvedItem = insertedItem;
+        } else if (insertedItem && subcreator_try_set_mogrt_start(insertedItem, startSeconds)) {
+          resolvedItem = insertedItem;
         } else if (targetTrack) {
           resolvedItem = subcreator_find_inserted_track_item(
             targetTrack,
@@ -7066,6 +7125,57 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
   } catch (outPointError) {}
 
   return applied;
+}
+
+function subcreator_try_set_mogrt_start(trackItem, startSeconds) {
+  // // Reposition imported MOGRT clips when Premiere returns them at the wrong insertion time for a given template.
+  if (!trackItem) {
+    return false;
+  }
+
+  var safeStart = Number(startSeconds);
+  if (isNaN(safeStart)) {
+    return false;
+  }
+
+  var applied = false;
+  var startTime = null;
+  try {
+    startTime = new Time();
+    startTime.seconds = safeStart;
+  } catch (createTimeError) {
+    startTime = null;
+  }
+
+  if (startTime) {
+    try {
+      trackItem.start = startTime;
+      applied = true;
+    } catch (startAssignError) {}
+
+    try {
+      if (trackItem.start && typeof trackItem.start.seconds !== "undefined") {
+        trackItem.start.seconds = safeStart;
+        applied = true;
+      }
+    } catch (startSecondsError) {}
+  }
+
+  try {
+    if (typeof trackItem.move === "function") {
+      trackItem.move(subcreator_seconds_to_ticks(safeStart));
+      applied = true;
+    }
+  } catch (moveTicksError) {}
+
+  try {
+    if (typeof trackItem.move === "function") {
+      trackItem.move(safeStart);
+      applied = true;
+    }
+  } catch (moveSecondsError) {}
+
+  return applied && subcreator_track_item_starts_near_seconds(trackItem, safeStart, 0.2);
 }
 
 function subcreator_remove_track_item_without_ripple(trackItem) {

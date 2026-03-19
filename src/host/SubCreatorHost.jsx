@@ -809,26 +809,45 @@ function subcreator_get_selected_track_items(sequence) {
 
 function subcreator_get_mogrt_component_from_track_item(trackItem) {
   // // Resolve Essential Graphics component from a track item when available.
+  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  return components.length > 0 ? components[0] : null;
+}
+
+function subcreator_get_mogrt_components_from_track_item(trackItem) {
+  // // Collect every usable Essential Graphics component because Premiere-authored MOGRTs do not always expose text on the first component.
   if (!trackItem) {
-    return null;
+    return [];
   }
 
-  var component = null;
+  var components = [];
+
+  function rememberComponent(candidate) {
+    if (!candidate || !candidate.properties || typeof candidate.properties.numItems !== "number") {
+      return;
+    }
+
+    for (var index = 0; index < components.length; index += 1) {
+      if (components[index] === candidate) {
+        return;
+      }
+    }
+
+    components.push(candidate);
+  }
+
   try {
     if (typeof trackItem.getMGTComponent === "function") {
-      component = trackItem.getMGTComponent();
+      rememberComponent(trackItem.getMGTComponent());
     }
   } catch (mgtError) {}
 
-  if (!component && trackItem.components && trackItem.components.numItems > 0) {
-    component = trackItem.components[0];
+  if (trackItem.components && typeof trackItem.components.numItems === "number" && trackItem.components.numItems > 0) {
+    for (var componentIndex = 0; componentIndex < trackItem.components.numItems; componentIndex += 1) {
+      rememberComponent(trackItem.components[componentIndex]);
+    }
   }
 
-  if (!component || !component.properties || typeof component.properties.numItems !== "number") {
-    return null;
-  }
-
-  return component;
+  return components;
 }
 
 function subcreator_collect_selected_mogrt_items(sequence) {
@@ -5741,22 +5760,20 @@ function subcreator_extract_text_from_item_components(item) {
     return "";
   }
 
-  var component = null;
-  try {
-    if (typeof item.getMGTComponent === "function") {
-      component = item.getMGTComponent();
+  var components = subcreator_get_mogrt_components_from_track_item(item);
+  for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+    var component = components[componentIndex];
+    if (!component || !component.properties) {
+      continue;
     }
-  } catch (mgtError) {}
 
-  if (!component && item.components && item.components.numItems > 0) {
-    component = item.components[0];
+    var extracted = subcreator_extract_text_from_component_properties(component.properties);
+    if (extracted) {
+      return extracted;
+    }
   }
 
-  if (!component || !component.properties) {
-    return "";
-  }
-
-  return subcreator_extract_text_from_component_properties(component.properties);
+  return "";
 }
 
 function subcreator_is_non_textual_mogrt_label(text) {
@@ -6653,16 +6670,8 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     };
   }
 
-  var component = null;
-  if (typeof trackItem.getMGTComponent === "function") {
-    component = trackItem.getMGTComponent();
-  }
-
-  if (!component && trackItem.components && trackItem.components.numItems > 0) {
-    component = trackItem.components[0];
-  }
-
-  if (!component || !component.properties || component.properties.numItems < 1) {
+  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  if (components.length < 1) {
     return {
       textUpdates: 0,
       animationUpdates: 0,
@@ -6675,7 +6684,16 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     animationUpdates: 0,
     layoutUpdates: 0
   };
-  subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, styleConfig, stats);
+
+  for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+    var component = components[componentIndex];
+    if (!component || !component.properties || component.properties.numItems < 1) {
+      continue;
+    }
+
+    subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, styleConfig, stats);
+  }
+
   return stats;
 }
 
@@ -6899,6 +6917,22 @@ function subcreator_seconds_to_ticks(seconds) {
   }
 }
 
+function subcreator_track_item_starts_near_seconds(trackItem, startSeconds, toleranceSeconds) {
+  // // Validate imported clips against the requested insertion time so importMGT mismatches do not get accepted silently.
+  var candidateStart = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
+  var requestedStart = Number(startSeconds);
+  var tolerance = Number(toleranceSeconds);
+  if (isNaN(candidateStart) || isNaN(requestedStart)) {
+    return false;
+  }
+
+  if (isNaN(tolerance) || tolerance <= 0) {
+    tolerance = 0.2;
+  }
+
+  return Math.abs(candidateStart - requestedStart) <= tolerance;
+}
+
 function subcreator_push_unique_path(list, value) {
   // // Keep only distinct non-empty candidate paths for import attempts.
   if (!value) {
@@ -6945,6 +6979,7 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
     { mode: "ticks", value: startTicks },
     { mode: "seconds", value: Number(startSeconds) }
   ];
+  var targetTrack = sequence && sequence.videoTracks ? sequence.videoTracks[videoTrackIndex] : null;
 
   for (var pathIndex = 0; pathIndex < pathCandidates.length; pathIndex += 1) {
     var pathCandidate = pathCandidates[pathIndex];
@@ -6952,14 +6987,32 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
     for (var timeIndex = 0; timeIndex < timeModes.length; timeIndex += 1) {
       var timeMode = timeModes[timeIndex];
       importResult.attempted += 1;
+      var beforeItems = subcreator_collection_to_array(targetTrack ? targetTrack.clips : null);
 
       try {
         var insertedItem = sequence.importMGT(pathCandidate, timeMode.value, videoTrackIndex, audioTrackIndex);
-        if (insertedItem) {
-          importResult.trackItem = insertedItem;
+        var resolvedItem = null;
+
+        if (insertedItem && subcreator_track_item_starts_near_seconds(insertedItem, startSeconds, 0.2)) {
+          resolvedItem = insertedItem;
+        } else if (targetTrack) {
+          resolvedItem = subcreator_find_inserted_track_item(
+            targetTrack,
+            beforeItems,
+            startSeconds,
+            insertedItem && insertedItem.projectItem ? insertedItem.projectItem : null
+          );
+        }
+
+        if (resolvedItem && subcreator_track_item_starts_near_seconds(resolvedItem, startSeconds, 0.2)) {
+          importResult.trackItem = resolvedItem;
           importResult.usedPath = pathCandidate;
           importResult.usedTimeMode = timeMode.mode;
           return importResult;
+        }
+
+        if (insertedItem && !resolvedItem) {
+          subcreator_remove_track_item_without_ripple(insertedItem);
         }
       } catch (importError) {}
     }

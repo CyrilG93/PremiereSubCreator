@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 import os
@@ -168,7 +169,7 @@ class SubcreatorSentenceSplitter:
 def subcreator_patch_whisperx_sentence_tokenizer(whisperx_module: Any) -> None:
     # // Monkeypatch WhisperX sentence splitting so corrected align never depends on downloading NLTK punkt_tab.
     try:
-        alignment_module = whisperx_module.alignment
+        alignment_module = importlib.import_module("whisperx.alignment")
     except Exception:
         return
 

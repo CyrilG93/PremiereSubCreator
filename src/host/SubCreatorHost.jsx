@@ -6360,6 +6360,24 @@ function subcreator_normalize_text_for_compare(textValue) {
   return subcreator_trim_string(String(textValue || "").replace(/\r/g, "\n").replace(/\s+/g, " "));
 }
 
+function subcreator_debug_push_limited(debugLines, line, maxLines) {
+  // // Keep host debug output compact while still exposing the first useful diagnostics for problematic templates.
+  if (!debugLines || typeof debugLines.push !== "function") {
+    return;
+  }
+
+  var limit = Number(maxLines);
+  if (isNaN(limit) || limit < 1) {
+    limit = 80;
+  }
+
+  if (debugLines.length >= limit) {
+    return;
+  }
+
+  debugLines.push(String(line || ""));
+}
+
 function subcreator_property_readback_matches_text(property, expectedText) {
   // // Validate text writes by reading the property back, so silent setValue failures do not count as success.
   if (!property || typeof property.getValue !== "function") {
@@ -6402,7 +6420,7 @@ function subcreator_try_patch_text_json_string(rawValue, textValue) {
   return patched;
 }
 
-function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawValue, textValue) {
+function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawValue, textValue, debugLines, debugPrefix) {
   // // Apply text using a provided source payload so text-document styles can be preserved during clip rebuilds.
   var displayName = property.displayName || "";
   var rawValue = sourceRawValue;
@@ -6413,6 +6431,36 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
 
   var plainTextString = String(textValue || "");
   var textString = subcreator_normalize_caption_text(textValue);
+  var beforePreview = subcreator_visual_preview_debug_value(rawValue, 140);
+  var prefix = subcreator_trim_string(String(debugPrefix || ""));
+
+  function debugAttempt(label, applied) {
+    // // Capture text property readback to distinguish real text writes from writes that only touch a hidden control.
+    var afterPreview = "";
+    try {
+      afterPreview = subcreator_visual_preview_debug_value(property.getValue(), 140);
+    } catch (readbackError) {
+      afterPreview = "<readback unavailable>";
+    }
+
+    subcreator_debug_push_limited(
+      debugLines,
+      prefix +
+        " textprop name=" +
+        String(displayName) +
+        " mode=" +
+        String(label) +
+        " applied=" +
+        (applied ? "true" : "false") +
+        " rawType=" +
+        typeof rawValue +
+        " before=" +
+        beforePreview +
+        " after=" +
+        afterPreview,
+      120
+    );
+  }
 
   if (typeof rawValue === "string" && rawValue.indexOf("{") === -1) {
     // // Premiere-authored MOGRT text controls often behave like plain string parameters and should keep their existing style untouched.
@@ -6428,6 +6476,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       try {
         property.setValue(textCandidate.value, textCandidate.useRefresh);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          debugAttempt("plain_string_" + String(candidateIndex), true);
           return true;
         }
       } catch (plainSetError) {}
@@ -6440,6 +6489,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       if (subcreator_try_set_json_text_payload(objectCopy, textString)) {
         property.setValue(objectCopy, true);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          debugAttempt("object_copy", true);
           return true;
         }
       }
@@ -6449,6 +6499,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       if (subcreator_try_set_json_text_payload(rawValue, textString)) {
         property.setValue(rawValue, true);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          debugAttempt("object_direct", true);
           return true;
         }
       }
@@ -6461,6 +6512,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       if (subcreator_try_set_json_text_payload(parsed, textString)) {
         property.setValue(JSON.stringify(parsed), true);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          debugAttempt("json_string", true);
           return true;
         }
       }
@@ -6471,6 +6523,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
       if (patchedRaw) {
         property.setValue(patchedRaw, true);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
+          debugAttempt("json_patch", true);
           return true;
         }
       }
@@ -6480,14 +6533,17 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
   try {
     property.setValue(plainTextString, true);
     if (subcreator_property_readback_matches_text(property, plainTextString)) {
+      debugAttempt("fallback_plain", true);
       return true;
     }
   } catch (setError) {}
 
+  debugAttempt("failed", false);
+
   return false;
 }
 
-function subcreator_try_set_mogrt_text_property(property, textValue) {
+function subcreator_try_set_mogrt_text_property(property, textValue, debugLines, debugPrefix) {
   // // Apply text to a property, supporting strings, JSON strings, and object payloads.
   var rawValue = "";
 
@@ -6499,7 +6555,7 @@ function subcreator_try_set_mogrt_text_property(property, textValue) {
     }
   }
 
-  return subcreator_try_apply_mogrt_text_property_raw_value(property, rawValue, textValue);
+  return subcreator_try_apply_mogrt_text_property_raw_value(property, rawValue, textValue, debugLines, debugPrefix);
 }
 
 function subcreator_collect_mogrt_text_payload_snapshots_recursive(propertyCollection, pathPrefix, outList) {
@@ -6588,7 +6644,7 @@ function subcreator_apply_text_clone_changes_to_track_item(trackItem, changes, t
 
     var applied = false;
     try {
-      applied = subcreator_try_apply_mogrt_text_property_raw_value(property, change.rawValue, textValue);
+      applied = subcreator_try_apply_mogrt_text_property_raw_value(property, change.rawValue, textValue, debugLines, "text_clone path=" + path);
     } catch (textCloneError) {
       applied = false;
     }
@@ -6685,7 +6741,7 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   return false;
 }
 
-function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, stats) {
+function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, stats, debugLines, debugPrefix) {
   // // Traverse nested Essential Graphics property groups and apply text/animation updates.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
@@ -6698,7 +6754,7 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (typeof property.setValue === "function") {
-      if (subcreator_try_set_mogrt_text_property(property, textValue)) {
+      if (subcreator_try_set_mogrt_text_property(property, textValue, debugLines, debugPrefix)) {
         stats.textUpdates += 1;
       }
 
@@ -6712,12 +6768,12 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
-      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, styleConfig, stats);
+      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, styleConfig, stats, debugLines, debugPrefix);
     }
   }
 }
 
-function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig) {
+function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig, debugLines, debugPrefix) {
   // // Update text + animation related controls on inserted MOGRT components.
   if (!trackItem || !textValue) {
     return {
@@ -6748,8 +6804,24 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
       continue;
     }
 
-    subcreator_try_set_controls_recursively(component.properties, textValue, animationMode, styleConfig, stats);
+    subcreator_try_set_controls_recursively(
+      component.properties,
+      textValue,
+      animationMode,
+      styleConfig,
+      stats,
+      debugLines,
+      debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex)
+    );
   }
+
+  subcreator_debug_push_limited(
+    debugLines,
+    String(debugPrefix || "") +
+      " extracted_text=" +
+      subcreator_visual_preview_debug_value(subcreator_extract_text_from_mogrt_item(trackItem), 180),
+    120
+  );
 
   return stats;
 }
@@ -7022,7 +7094,7 @@ function subcreator_build_mogrt_path_candidates(mogrtPath) {
   return candidates;
 }
 
-function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, videoTrackIndex, audioTrackIndex) {
+function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, videoTrackIndex, audioTrackIndex, debugLines, debugPrefix) {
   // // Try importMGT with both tick and second timing modes and multiple path formats.
   var importResult = {
     trackItem: null,
@@ -7049,6 +7121,7 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
       try {
         var insertedItem = sequence.importMGT(pathCandidate, timeMode.value, videoTrackIndex, audioTrackIndex);
         var resolvedItem = null;
+        var insertedStart = subcreator_to_seconds(insertedItem && (insertedItem.start || insertedItem.inPoint || insertedItem.startTime));
 
         if (insertedItem && subcreator_track_item_starts_near_seconds(insertedItem, startSeconds, 0.2)) {
           resolvedItem = insertedItem;
@@ -7062,6 +7135,24 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
             insertedItem && insertedItem.projectItem ? insertedItem.projectItem : null
           );
         }
+
+        subcreator_debug_push_limited(
+          debugLines,
+          String(debugPrefix || "") +
+            " import path=" +
+            pathCandidate +
+            " mode=" +
+            String(timeMode.mode) +
+            " requested=" +
+            String(Number(startSeconds || 0)) +
+            " insertedStart=" +
+            String(insertedStart) +
+            " resolvedStart=" +
+            String(subcreator_to_seconds(resolvedItem && (resolvedItem.start || resolvedItem.inPoint || resolvedItem.startTime))) +
+            " accepted=" +
+            (resolvedItem && subcreator_track_item_starts_near_seconds(resolvedItem, startSeconds, 0.2) ? "true" : "false"),
+          120
+        );
 
         if (resolvedItem && subcreator_track_item_starts_near_seconds(resolvedItem, startSeconds, 0.2)) {
           importResult.trackItem = resolvedItem;
@@ -7727,15 +7818,28 @@ function subcreator_apply_captions(payloadEncoded) {
     var mogrtAttempted = 0;
     var lastImportMode = "";
     var lastImportPath = "";
+    var debugLines = [];
 
     for (var i = 0; i < cues.length; i += 1) {
       var cue = cues[i];
       var startSeconds = Number(cue.startSeconds);
       var endSeconds = Number(cue.endSeconds);
       var text = cue.text || "";
+      var cueDebugEnabled = i < 4;
+      var cueDebugPrefix = cueDebugEnabled
+        ? "cue=" + String(i) + " start=" + String(startSeconds) + " end=" + String(endSeconds) + " text=" + subcreator_visual_preview_debug_value(text, 80)
+        : "";
 
       if (hasMogrt && typeof sequence.importMGT === "function") {
-        var importAttempt = subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, videoTrackIndex, audioTrackIndex);
+        var importAttempt = subcreator_try_import_mogrt(
+          sequence,
+          pathCandidates,
+          startSeconds,
+          videoTrackIndex,
+          audioTrackIndex,
+          cueDebugEnabled ? debugLines : null,
+          cueDebugPrefix
+        );
         mogrtAttempted += importAttempt.attempted;
         if (importAttempt.trackItem) {
           insertedMogrt += 1;
@@ -7745,7 +7849,9 @@ function subcreator_apply_captions(payloadEncoded) {
             importAttempt.trackItem,
             text,
             options.style ? options.style.animationMode : "line",
-            options.style || {}
+            options.style || {},
+            cueDebugEnabled ? debugLines : null,
+            cueDebugPrefix
           );
           if (controlStats.textUpdates > 0) {
             updatedText += controlStats.textUpdates;
@@ -7759,6 +7865,15 @@ function subcreator_apply_captions(payloadEncoded) {
           if (subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
             durationAdjusted += 1;
           }
+          subcreator_debug_push_limited(
+            cueDebugEnabled ? debugLines : null,
+            cueDebugPrefix +
+              " finalStart=" +
+              String(subcreator_to_seconds(importAttempt.trackItem.start || importAttempt.trackItem.inPoint || importAttempt.trackItem.startTime)) +
+              " finalEnd=" +
+              String(subcreator_to_seconds(importAttempt.trackItem.end || importAttempt.trackItem.outPoint || importAttempt.trackItem.endTime)),
+            120
+          );
           continue;
         }
       }
@@ -7797,7 +7912,8 @@ function subcreator_apply_captions(payloadEncoded) {
       projectDocumentId: sequenceIdentity.projectDocumentId,
       projectPath: sequenceIdentity.projectPath,
       sequenceID: sequenceIdentity.sequenceID,
-      sequenceName: sequenceIdentity.sequenceName
+      sequenceName: sequenceIdentity.sequenceName,
+      debug: debugLines
     });
   } catch (error) {
     return JSON.stringify({ ok: false, error: error.toString() });

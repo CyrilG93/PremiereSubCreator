@@ -6271,6 +6271,8 @@ function subcreator_should_try_text_property(displayName, rawValue) {
     key.indexOf("texte source") !== -1 ||
     key.indexOf("caption text") !== -1 ||
     key.indexOf("subtitle text") !== -1 ||
+    key.indexOf("text layer") !== -1 ||
+    key.indexOf("textlayer") !== -1 ||
     key === "text" ||
     key === "texte"
   ) {

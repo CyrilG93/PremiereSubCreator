@@ -242,6 +242,7 @@ Recommended flow:
 4. Click `Refresh gallery`.
 
 Top-level folders become gallery categories automatically.
+Premiere-authored `.mogrt` files that expose standard `TextLayer` controls can also be used for subtitle text replacement.
 
 ### Add preview images/videos
 

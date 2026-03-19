@@ -5672,6 +5672,231 @@ function subcreator_extract_text_from_json_payload(payload) {
   return "";
 }
 
+function subcreator_binary_string_to_byte_array(binaryValue) {
+  // // Convert ExtendScript binary-like strings into byte arrays so Premiere flatbuffer text payloads can be inspected safely.
+  var rawText = String(binaryValue || "");
+  var bytes = [];
+  for (var index = 0; index < rawText.length; index += 1) {
+    bytes.push(rawText.charCodeAt(index) & 255);
+  }
+  return bytes;
+}
+
+function subcreator_byte_array_to_binary_string(bytes) {
+  // // Rebuild a binary-safe ExtendScript string from byte values without truncating embedded null bytes.
+  if (!bytes || typeof bytes.length !== "number" || bytes.length < 1) {
+    return "";
+  }
+
+  var result = "";
+  var chunkSize = 8192;
+  for (var index = 0; index < bytes.length; index += chunkSize) {
+    var slice = bytes.slice(index, index + chunkSize);
+    result += String.fromCharCode.apply(null, slice);
+  }
+  return result;
+}
+
+function subcreator_utf8_text_to_byte_array(textValue) {
+  // // Encode user text as UTF-8 bytes so Premiere-authored Source Text payloads keep their document styling blob intact.
+  var encoded = "";
+  try {
+    encoded = unescape(encodeURIComponent(String(textValue || "")));
+  } catch (encodeError) {
+    encoded = String(textValue || "");
+  }
+  return subcreator_binary_string_to_byte_array(encoded);
+}
+
+function subcreator_utf8_byte_array_to_text(bytes) {
+  // // Decode UTF-8 byte slices extracted from Premiere text-document buffers back into readable subtitle text.
+  if (!bytes || typeof bytes.length !== "number" || bytes.length < 1) {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(escape(subcreator_byte_array_to_binary_string(bytes)));
+  } catch (decodeError) {
+    var fallback = "";
+    for (var index = 0; index < bytes.length; index += 1) {
+      fallback += String.fromCharCode(bytes[index] & 255);
+    }
+    return fallback;
+  }
+}
+
+function subcreator_is_probably_binary_text_payload(rawValue) {
+  // // Detect Premiere text-document blobs so the host does not accidentally replace them with plain strings and lose styling.
+  if (typeof rawValue !== "string" || rawValue.length < 8 || rawValue.indexOf("{") !== -1) {
+    return false;
+  }
+
+  var controlByteCount = 0;
+  for (var index = 0; index < rawValue.length; index += 1) {
+    var code = rawValue.charCodeAt(index);
+    if (code === 0) {
+      return true;
+    }
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+      controlByteCount += 1;
+      if (controlByteCount >= 4) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function subcreator_score_binary_text_candidate(textValue, offset, totalLength, hasOnlyZeroPaddingAfter) {
+  // // Prefer later and more sentence-like strings so flatbuffer scans pick the visible subtitle text instead of font names.
+  var normalized = String(textValue || "");
+  if (!normalized) {
+    return -9999;
+  }
+
+  var score = 0;
+  score += Math.max(Number(offset || 0), 0) / Math.max(Number(totalLength || 1), 1) * 5;
+  score += normalized.split(/\s+/).filter(Boolean).length * 2;
+  score += Math.min(normalized.length, 120) / 20;
+
+  if (/[.,!?;:]/.test(normalized)) {
+    score += 1;
+  }
+
+  if (/[\r\n]/.test(normalized)) {
+    score += 1;
+  }
+
+  if (hasOnlyZeroPaddingAfter) {
+    score += 3;
+  }
+
+  if (normalized.length < 3) {
+    score -= 10;
+  }
+
+  return score;
+}
+
+function subcreator_find_binary_text_payload_candidate(rawValue) {
+  // // Locate the likely visible text string inside a Premiere flatbuffer-style text payload so only the text bytes change.
+  if (!subcreator_is_probably_binary_text_payload(rawValue)) {
+    return null;
+  }
+
+  var bytes = subcreator_binary_string_to_byte_array(rawValue);
+  if (!bytes || bytes.length < 8) {
+    return null;
+  }
+
+  var bestCandidate = null;
+  for (var index = 0; index <= bytes.length - 5; index += 1) {
+    var byteLength =
+      (bytes[index] & 255) |
+      ((bytes[index + 1] & 255) << 8) |
+      ((bytes[index + 2] & 255) << 16) |
+      ((bytes[index + 3] & 255) << 24);
+
+    if (byteLength < 1 || byteLength > 2000) {
+      continue;
+    }
+
+    var textStart = index + 4;
+    var textEnd = textStart + byteLength;
+    if (textEnd >= bytes.length || bytes[textEnd] !== 0) {
+      continue;
+    }
+
+    var candidateBytes = bytes.slice(textStart, textEnd);
+    var candidateText = subcreator_utf8_byte_array_to_text(candidateBytes);
+    if (!candidateText) {
+      continue;
+    }
+
+    var printableCount = 0;
+    for (var printableIndex = 0; printableIndex < candidateBytes.length; printableIndex += 1) {
+      var candidateByte = candidateBytes[printableIndex] & 255;
+      if ((candidateByte >= 32 && candidateByte <= 126) || candidateByte === 9 || candidateByte === 10 || candidateByte === 13 || candidateByte >= 128) {
+        printableCount += 1;
+      }
+    }
+
+    if (printableCount / candidateBytes.length < 0.8) {
+      continue;
+    }
+
+    var zeroPaddingLength = 0;
+    var suffixHasOnlyZeroPadding = true;
+    for (var suffixIndex = textEnd + 1; suffixIndex < bytes.length; suffixIndex += 1) {
+      if (bytes[suffixIndex] !== 0) {
+        suffixHasOnlyZeroPadding = false;
+        break;
+      }
+      zeroPaddingLength += 1;
+    }
+
+    var score = subcreator_score_binary_text_candidate(candidateText, index, bytes.length, suffixHasOnlyZeroPadding);
+    if (!bestCandidate || score > bestCandidate.score) {
+      bestCandidate = {
+        score: score,
+        offset: index,
+        byteLength: byteLength,
+        text: String(candidateText || "").replace(/\r/g, "\n"),
+        hasOnlyZeroPaddingAfter: suffixHasOnlyZeroPadding,
+        zeroPaddingLength: zeroPaddingLength
+      };
+    }
+  }
+
+  return bestCandidate;
+}
+
+function subcreator_try_patch_binary_text_payload(rawValue, textValue) {
+  // // Rewrite only the terminal UTF-8 text segment of Premiere Source Text blobs so font/style data stays untouched.
+  var candidate = subcreator_find_binary_text_payload_candidate(rawValue);
+  if (!candidate) {
+    return "";
+  }
+
+  var replacementBytes = subcreator_utf8_text_to_byte_array(subcreator_normalize_caption_text(textValue));
+  if (!candidate.hasOnlyZeroPaddingAfter && replacementBytes.length !== candidate.byteLength) {
+    return "";
+  }
+
+  var sourceBytes = subcreator_binary_string_to_byte_array(rawValue);
+  var replacementLengthOffset = candidate.offset;
+  var replacementTextOffset = candidate.offset + 4;
+  var patchedBytes = sourceBytes.slice(0, replacementLengthOffset);
+
+  patchedBytes.push(replacementBytes.length & 255);
+  patchedBytes.push((replacementBytes.length >> 8) & 255);
+  patchedBytes.push((replacementBytes.length >> 16) & 255);
+  patchedBytes.push((replacementBytes.length >> 24) & 255);
+
+  for (var byteIndex = 0; byteIndex < replacementBytes.length; byteIndex += 1) {
+    patchedBytes.push(replacementBytes[byteIndex] & 255);
+  }
+
+  patchedBytes.push(0);
+
+  if (candidate.hasOnlyZeroPaddingAfter) {
+    for (var zeroIndex = 0; zeroIndex < candidate.zeroPaddingLength; zeroIndex += 1) {
+      patchedBytes.push(0);
+    }
+  } else {
+    for (var padIndex = 0; padIndex < candidate.byteLength - replacementBytes.length; padIndex += 1) {
+      patchedBytes.push(0);
+    }
+
+    for (var suffixIndex = replacementTextOffset + candidate.byteLength + 1; suffixIndex < sourceBytes.length; suffixIndex += 1) {
+      patchedBytes.push(sourceBytes[suffixIndex] & 255);
+    }
+  }
+
+  return subcreator_byte_array_to_binary_string(patchedBytes);
+}
+
 function subcreator_extract_text_from_property_value(rawValue) {
   // // Convert property values (plain/object/JSON string) into readable caption text.
   if (rawValue === undefined || rawValue === null) {
@@ -5680,6 +5905,11 @@ function subcreator_extract_text_from_property_value(rawValue) {
 
   if (typeof rawValue === "string") {
     var rawText = String(rawValue || "");
+    var binaryCandidate = subcreator_find_binary_text_payload_candidate(rawText);
+    if (binaryCandidate && binaryCandidate.text) {
+      return String(binaryCandidate.text || "");
+    }
+
     if (rawText.indexOf("{") !== -1) {
       try {
         var parsed = JSON.parse(rawText);
@@ -6515,6 +6745,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
   var textString = subcreator_normalize_caption_text(textValue);
   var beforePreview = subcreator_visual_preview_debug_value(rawValue, 140);
   var prefix = subcreator_trim_string(String(debugPrefix || ""));
+  var binaryPayloadCandidate = typeof rawValue === "string" ? subcreator_find_binary_text_payload_candidate(rawValue) : null;
 
   function debugAttempt(label, applied) {
     // // Capture text property readback to distinguish real text writes from writes that only touch a hidden control.
@@ -6544,24 +6775,42 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
     );
   }
 
-  if (typeof rawValue === "string" && rawValue.indexOf("{") === -1) {
-    // // Premiere-authored MOGRT text controls often behave like plain string parameters and should keep their existing style untouched.
-    var plainTextCandidates = [
-      { value: textString, useRefresh: true },
-      { value: textString, useRefresh: false },
-      { value: plainTextString, useRefresh: true },
-      { value: plainTextString, useRefresh: false }
-    ];
-
-    for (var candidateIndex = 0; candidateIndex < plainTextCandidates.length; candidateIndex += 1) {
-      var textCandidate = plainTextCandidates[candidateIndex];
-      try {
-        property.setValue(textCandidate.value, textCandidate.useRefresh);
+  if (binaryPayloadCandidate) {
+    try {
+      var patchedBinaryPayload = subcreator_try_patch_binary_text_payload(rawValue, textValue);
+      if (patchedBinaryPayload) {
+        property.setValue(patchedBinaryPayload, true);
         if (subcreator_property_readback_matches_text(property, plainTextString)) {
-          debugAttempt("plain_string_" + String(candidateIndex), true);
+          debugAttempt("binary_payload", true);
           return true;
         }
-      } catch (plainSetError) {}
+      }
+    } catch (binaryPayloadError) {}
+  }
+
+  if (typeof rawValue === "string" && rawValue.indexOf("{") === -1) {
+    // // Premiere-authored MOGRT text controls often behave like plain string parameters and should keep their existing style untouched.
+    if (!binaryPayloadCandidate) {
+      var plainTextCandidates = [
+        { value: textString, useRefresh: true },
+        { value: textString, useRefresh: false },
+        { value: plainTextString, useRefresh: true },
+        { value: plainTextString, useRefresh: false }
+      ];
+
+      for (var candidateIndex = 0; candidateIndex < plainTextCandidates.length; candidateIndex += 1) {
+        var textCandidate = plainTextCandidates[candidateIndex];
+        try {
+          property.setValue(textCandidate.value, textCandidate.useRefresh);
+          if (subcreator_property_readback_matches_text(property, plainTextString)) {
+            debugAttempt("plain_string_" + String(candidateIndex), true);
+            return true;
+          }
+        } catch (plainSetError) {}
+      }
+    } else {
+      debugAttempt("binary_payload_failed", false);
+      return false;
     }
   }
 

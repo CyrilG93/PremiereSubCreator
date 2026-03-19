@@ -242,7 +242,7 @@ Recommended flow:
 4. Click `Refresh gallery`.
 
 Top-level folders become gallery categories automatically.
-Premiere-authored `.mogrt` files that expose standard `TextLayer` controls can also be used for subtitle text replacement.
+Premiere-authored `.mogrt` files that expose standard `TextLayer` / `Source Text` controls can also be used for subtitle text replacement, including style-preserving text updates on common Premiere text-document payloads.
 
 ### Add preview images/videos
 

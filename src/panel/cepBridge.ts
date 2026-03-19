@@ -41,6 +41,8 @@ interface CorrectedAlignmentRequest {
   transcriptPath: string;
   languageCode: string;
   extensionRootPath: string;
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
 }
 
 interface WhisperTranscriptionResult {
@@ -67,6 +69,8 @@ interface WhisperSequenceExportResult {
   audioPath: string;
   presetPath: string;
   sequenceName?: string;
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
 }
 
 export interface WhisperRuntimeStatus {
@@ -2496,7 +2500,11 @@ export async function exportActiveSequenceAudioForWhisper(
   return {
     audioPath: String(response.data?.audioPath ?? outputPath),
     presetPath: String(response.data?.presetPath ?? presetPath),
-    sequenceName: String(response.data?.sequenceName ?? "")
+    sequenceName: String(response.data?.sequenceName ?? ""),
+    rangeStartSeconds: Number.isFinite(Number(response.data?.rangeStartSeconds))
+      ? Number(response.data?.rangeStartSeconds)
+      : undefined,
+    rangeEndSeconds: Number.isFinite(Number(response.data?.rangeEndSeconds)) ? Number(response.data?.rangeEndSeconds) : undefined
   };
 }
 
@@ -2996,6 +3004,12 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
       "--output",
       outputPath
     ];
+    if (Number.isFinite(Number(request.rangeStartSeconds))) {
+      args.push("--range-start-seconds", String(Number(request.rangeStartSeconds)));
+    }
+    if (Number.isFinite(Number(request.rangeEndSeconds))) {
+      args.push("--range-end-seconds", String(Number(request.rangeEndSeconds)));
+    }
 
     const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
       // // Attach stderr listeners before process start so helper progress markers can feed the UI immediately.

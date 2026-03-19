@@ -1,7 +1,7 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
-import { parseSrt } from "../core/srt";
+import { parseSrt, shiftCaptionCues } from "../core/srt";
 import {
   buildTextEditorSafeApplyPlans,
   mergeTextEditorBlocks,
@@ -3941,6 +3941,24 @@ function buildCorrectedAlignProgressLabel(progress: WhisperProgressUpdate): stri
   });
 }
 
+function getSequenceRangeOffsetSeconds(
+  options: CaptionBuildOptions,
+  exportResult: { rangeStartSeconds?: number; rangeEndSeconds?: number }
+): number {
+  // // Use the exported sequence In point as the timeline offset for Whisper/WhisperX results generated from an In/Out excerpt.
+  if (options.whisperSequenceRange !== "in_out") {
+    return 0;
+  }
+
+  const rangeStartSeconds = Number(exportResult.rangeStartSeconds);
+  const rangeEndSeconds = Number(exportResult.rangeEndSeconds);
+  if (!Number.isFinite(rangeStartSeconds) || !Number.isFinite(rangeEndSeconds) || rangeEndSeconds <= rangeStartSeconds) {
+    return 0;
+  }
+
+  return rangeStartSeconds;
+}
+
 async function updateGenerateProgress(done: number, label: string, waitForPaint = false): Promise<void> {
   // // Centralize generate progress updates and optionally yield a frame before the next expensive step.
   setGenerateProgressState(true, done, GENERATE_PROGRESS_MAX, label);
@@ -4006,7 +4024,9 @@ async function loadCuesFromSelectedSource(
           audioPath: cleanupAudioPath,
           transcriptPath: options.correctedTranscriptPath,
           languageCode: options.languageCode,
-          extensionRootPath: options.extensionRootPath
+          extensionRootPath: options.extensionRootPath,
+          rangeStartSeconds: exportResult.rangeStartSeconds,
+          rangeEndSeconds: exportResult.rangeEndSeconds
         },
         (progress) => {
           void updateGenerateProgress(
@@ -4025,7 +4045,7 @@ async function loadCuesFromSelectedSource(
       }
 
       setLog(translate("log.correctedAlignDone"));
-      return cues;
+      return shiftCaptionCues(cues, getSequenceRangeOffsetSeconds(options, exportResult));
     } finally {
       await deleteTemporaryWhisperAudio(cleanupAudioPath);
     }
@@ -4073,7 +4093,7 @@ async function loadCuesFromSelectedSource(
     }
 
     setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
-    return fallbackCues;
+    return shiftCaptionCues(fallbackCues, getSequenceRangeOffsetSeconds(options, exportResult));
   } finally {
     if (cleanupAudioPath) {
       await deleteTemporaryWhisperAudio(cleanupAudioPath);

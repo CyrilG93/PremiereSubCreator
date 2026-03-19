@@ -85,6 +85,33 @@ def subcreator_parse_srt_segments(text: str) -> List[Dict[str, Any]]:
     return segments
 
 
+def subcreator_trim_srt_segments_to_range(
+    segments: List[Dict[str, Any]],
+    range_start_seconds: Optional[float],
+    range_end_seconds: Optional[float]
+) -> List[Dict[str, Any]]:
+    # // Keep only corrected SRT cues that intersect the exported In/Out range, then rebase them to the audio excerpt.
+    if range_start_seconds is None or range_end_seconds is None or range_end_seconds <= range_start_seconds:
+        return segments
+
+    trimmed_segments: List[Dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        start_seconds = subcreator_to_float(segment.get("start"))
+        end_seconds = subcreator_to_float(segment.get("end"))
+        if start_seconds is None or end_seconds is None:
+            continue
+        if end_seconds <= range_start_seconds or start_seconds >= range_end_seconds:
+            continue
+
+        trimmed_segments.append({
+            "id": index,
+            "start": max(start_seconds, range_start_seconds) - range_start_seconds,
+            "end": min(end_seconds, range_end_seconds) - range_start_seconds,
+            "text": subcreator_normalize_text(segment.get("text") or ""),
+        })
+    return trimmed_segments
+
+
 def subcreator_split_plaintext_segments(text: str) -> List[str]:
     # // Prefer user line breaks first, then sentence-like punctuation, so corrected TXT remains reasonably segmented.
     normalized_text = text.replace("\r\n", "\n")
@@ -188,7 +215,12 @@ def subcreator_patch_whisperx_sentence_tokenizer(whisperx_module: Any) -> None:
         pass
 
 
-def subcreator_load_corrected_segments(transcript_path: str, total_duration: float) -> List[Dict[str, Any]]:
+def subcreator_load_corrected_segments(
+    transcript_path: str,
+    total_duration: float,
+    range_start_seconds: Optional[float] = None,
+    range_end_seconds: Optional[float] = None
+) -> List[Dict[str, Any]]:
     # // Parse corrected transcript input and return one seed segment list for WhisperX alignment.
     with open(transcript_path, "r", encoding="utf-8-sig") as handle:
         transcript_text = handle.read()
@@ -198,6 +230,7 @@ def subcreator_load_corrected_segments(transcript_path: str, total_duration: flo
     extension = os.path.splitext(transcript_path)[1].lower()
     if extension == ".srt":
         segments = subcreator_parse_srt_segments(transcript_text)
+        segments = subcreator_trim_srt_segments_to_range(segments, range_start_seconds, range_end_seconds)
         if not segments:
             raise ValueError("Corrected SRT contains no valid subtitle cues.")
         return segments
@@ -279,6 +312,8 @@ def main() -> int:
     parser.add_argument("--transcript", required=True, help="Path to corrected .srt or .txt transcript file")
     parser.add_argument("--language", required=True, help="Language code used to load the alignment model")
     parser.add_argument("--output", required=True, help="Path to the output JSON file")
+    parser.add_argument("--range-start-seconds", type=float, default=None, help="Optional sequence in-point for corrected SRT rebasing")
+    parser.add_argument("--range-end-seconds", type=float, default=None, help="Optional sequence out-point for corrected SRT rebasing")
     args = parser.parse_args()
 
     audio_path = os.path.abspath(args.audio)
@@ -306,7 +341,12 @@ def main() -> int:
         total_duration = max(float(len(audio)) / SAMPLE_RATE, 0.0)
 
         subcreator_log_progress(28, "Loading corrected transcript")
-        transcript_segments = subcreator_load_corrected_segments(transcript_path, total_duration)
+        transcript_segments = subcreator_load_corrected_segments(
+            transcript_path,
+            total_duration,
+            args.range_start_seconds,
+            args.range_end_seconds
+        )
 
         device = subcreator_detect_device()
         subcreator_log_progress(42, f"Loading {language_code} alignment model on {device}")

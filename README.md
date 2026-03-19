@@ -150,6 +150,8 @@ Sub Creator will:
 - send it to Whisper
 - use the resulting timings to generate subtitles
 
+When `In/Out points` is selected, subtitle timing is placed back at the sequence `In` point.
+
 ### Corrected align workflow
 
 Use `Corrected align` if you already have a corrected transcript and want better timings than a plain imported SRT.
@@ -174,6 +176,7 @@ Notes:
 - a corrected `.txt` is also supported, but it is pre-segmented heuristically before alignment
 - the first corrected-align run may download one WhisperX alignment model if it is not already cached
 - corrected align does not require downloading extra NLTK `punkt` data
+- when `In/Out points` is selected with a corrected `.srt`, only cues intersecting that range are aligned
 
 ## Whisper models
 

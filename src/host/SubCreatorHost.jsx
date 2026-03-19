@@ -339,6 +339,35 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
     }
 
     var workAreaType = String(payload.rangeMode || "") === "in_out" ? 1 : 0;
+    var rangeStartSeconds = NaN;
+    var rangeEndSeconds = NaN;
+
+    if (workAreaType === 1) {
+      // // Return the actual sequence In/Out range so panel-side cues can be filtered and offset back onto timeline time.
+      try {
+        rangeStartSeconds = subcreator_to_seconds(
+          typeof sequence.getInPointAsTime === "function"
+            ? sequence.getInPointAsTime()
+            : typeof sequence.getInPoint === "function"
+              ? sequence.getInPoint()
+              : null
+        );
+      } catch (inPointError) {
+        rangeStartSeconds = NaN;
+      }
+
+      try {
+        rangeEndSeconds = subcreator_to_seconds(
+          typeof sequence.getOutPointAsTime === "function"
+            ? sequence.getOutPointAsTime()
+            : typeof sequence.getOutPoint === "function"
+              ? sequence.getOutPoint()
+              : null
+        );
+      } catch (outPointError) {
+        rangeEndSeconds = NaN;
+      }
+    }
 
     var outputFile = new File(outputPath);
     var outputFolder = outputFile.parent;
@@ -383,7 +412,9 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
     return subcreator_ok({
       audioPath: outputFile.fsName,
       presetPath: presetPath,
-      sequenceName: String(sequence.name || "")
+      sequenceName: String(sequence.name || ""),
+      rangeStartSeconds: isFinite(rangeStartSeconds) ? Number(rangeStartSeconds) : null,
+      rangeEndSeconds: isFinite(rangeEndSeconds) ? Number(rangeEndSeconds) : null
     });
   } catch (error) {
     return subcreator_error(error);

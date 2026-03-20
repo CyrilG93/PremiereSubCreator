@@ -1,7 +1,7 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
-import { parseSrt, shiftCaptionCues } from "../core/srt";
+import { parseSrt, shiftCaptionCues, trimSrtCuesToRange } from "../core/srt";
 import {
   buildTextEditorSafeApplyPlans,
   mergeTextEditorBlocks,
@@ -27,6 +27,7 @@ import {
   applyVisualPropertiesToSelectedMogrts,
   deleteTemporaryWhisperAudio,
   exportActiveSequenceAudioForWhisper,
+  getActiveSequenceRange,
   getSelectedMogrtCount,
   getWhisperRuntimeStatus,
   openExternalUrl,
@@ -36,6 +37,7 @@ import {
   pickSrtPath,
   readSelectedMogrtTextItems,
   readInstalledMogrtCatalog,
+  readPremiereTemplateTextPayloads,
   readSelectedMogrtVisualProperties,
   readSystemFontCatalog,
   readTextFileFromHost,
@@ -1330,9 +1332,10 @@ function collectTextEditorBuildOptions(): CaptionBuildOptions {
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
+  const srtModeActive = mode === "srt";
   const whisperModeActive = mode === "whisper_sequence";
   const correctedAlignModeActive = mode === "corrected_align";
-  const sequenceAudioModeActive = whisperModeActive || correctedAlignModeActive;
+  const sequenceRangeModeActive = srtModeActive || whisperModeActive || correctedAlignModeActive;
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
@@ -1347,15 +1350,15 @@ function toggleSourceFields(): void {
   }
 
   if (elements.sequenceAudioField) {
-    elements.sequenceAudioField.style.display = sequenceAudioModeActive ? "grid" : "none";
+    elements.sequenceAudioField.style.display = sequenceRangeModeActive ? "grid" : "none";
   }
 
   if (elements.whisperSequenceHint) {
-    elements.whisperSequenceHint.style.display = sequenceAudioModeActive ? "block" : "none";
+    elements.whisperSequenceHint.style.display = whisperModeActive || correctedAlignModeActive ? "block" : "none";
   }
 
   if (elements.whisperSequenceRange) {
-    elements.whisperSequenceRange.disabled = !sequenceAudioModeActive;
+    elements.whisperSequenceRange.disabled = !sequenceRangeModeActive;
   }
   if (elements.whisperModelFolderButton) {
     elements.whisperModelFolderButton.disabled = !whisperModeActive || generateInProgress;
@@ -3941,22 +3944,25 @@ function buildCorrectedAlignProgressLabel(progress: WhisperProgressUpdate): stri
   });
 }
 
-function getSequenceRangeOffsetSeconds(
-  options: CaptionBuildOptions,
-  exportResult: { rangeStartSeconds?: number; rangeEndSeconds?: number }
-): number {
-  // // Use the exported sequence In point as the timeline offset for Whisper/WhisperX results generated from an In/Out excerpt.
+async function resolveRequestedSequenceRange(
+  options: CaptionBuildOptions
+): Promise<{ rangeStartSeconds?: number; rangeEndSeconds?: number }> {
+  // // Read the active sequence In/Out only when the user explicitly selected range-limited generation.
   if (options.whisperSequenceRange !== "in_out") {
-    return 0;
+    return {};
   }
 
-  const rangeStartSeconds = Number(exportResult.rangeStartSeconds);
-  const rangeEndSeconds = Number(exportResult.rangeEndSeconds);
+  const range = await getActiveSequenceRange();
+  const rangeStartSeconds = Number(range.rangeStartSeconds);
+  const rangeEndSeconds = Number(range.rangeEndSeconds);
   if (!Number.isFinite(rangeStartSeconds) || !Number.isFinite(rangeEndSeconds) || rangeEndSeconds <= rangeStartSeconds) {
-    return 0;
+    throw new Error(translate("error.invalidSequenceRange"));
   }
 
-  return rangeStartSeconds;
+  return {
+    rangeStartSeconds,
+    rangeEndSeconds
+  };
 }
 
 async function updateGenerateProgress(done: number, label: string, waitForPaint = false): Promise<void> {
@@ -3972,6 +3978,8 @@ async function loadCuesFromSelectedSource(
   onProgress?: (done: number, label: string, waitForPaint?: boolean) => Promise<void>
 ): Promise<CaptionCue[]> {
   // // Build cues from the currently selected source mode.
+  const requestedSequenceRange = await resolveRequestedSequenceRange(options);
+
   if (options.sourceMode === "srt") {
     if (!elements.srtPath || !elements.srtPath.value.trim()) {
       throw new Error(translate("error.missingSrtPath"));
@@ -3989,7 +3997,15 @@ async function loadCuesFromSelectedSource(
       throw new Error(translate("error.emptySrt"));
     }
 
-    return cues;
+    return trimSrtCuesToRange(
+      cues,
+      Number.isFinite(Number(requestedSequenceRange.rangeStartSeconds))
+        ? Number(requestedSequenceRange.rangeStartSeconds)
+        : Number.NaN,
+      Number.isFinite(Number(requestedSequenceRange.rangeEndSeconds))
+        ? Number(requestedSequenceRange.rangeEndSeconds)
+        : Number.NaN
+    );
   }
 
   if (options.sourceMode === "corrected_align") {
@@ -4025,8 +4041,8 @@ async function loadCuesFromSelectedSource(
           transcriptPath: options.correctedTranscriptPath,
           languageCode: options.languageCode,
           extensionRootPath: options.extensionRootPath,
-          rangeStartSeconds: exportResult.rangeStartSeconds,
-          rangeEndSeconds: exportResult.rangeEndSeconds
+          rangeStartSeconds: requestedSequenceRange.rangeStartSeconds,
+          rangeEndSeconds: requestedSequenceRange.rangeEndSeconds
         },
         (progress) => {
           void updateGenerateProgress(
@@ -4045,7 +4061,7 @@ async function loadCuesFromSelectedSource(
       }
 
       setLog(translate("log.correctedAlignDone"));
-      return shiftCaptionCues(cues, getSequenceRangeOffsetSeconds(options, exportResult));
+      return shiftCaptionCues(cues, Number(requestedSequenceRange.rangeStartSeconds) || 0);
     } finally {
       await deleteTemporaryWhisperAudio(cleanupAudioPath);
     }
@@ -4093,7 +4109,7 @@ async function loadCuesFromSelectedSource(
     }
 
     setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
-    return shiftCaptionCues(fallbackCues, getSequenceRangeOffsetSeconds(options, exportResult));
+    return shiftCaptionCues(fallbackCues, Number(requestedSequenceRange.rangeStartSeconds) || 0);
   } finally {
     if (cleanupAudioPath) {
       await deleteTemporaryWhisperAudio(cleanupAudioPath);
@@ -4116,9 +4132,13 @@ async function generate(): Promise<void> {
     const cues = await loadCuesFromSelectedSource(options, updateGenerateProgress);
     await updateGenerateProgress(90, translate("progress.planCaptions"), true);
     const plannedCues = buildCaptionPlan(cues, options);
+    const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
 
     const payload: HostApplyPayload = {
-      options,
+      options: {
+        ...options,
+        premiereTemplateTextPayloads
+      },
       cues: plannedCues
     };
 

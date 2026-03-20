@@ -1,6 +1,6 @@
 # Sub Creator
 
-Sub Creator is an Adobe Premiere Pro extension for creating animated subtitles from an `SRT` file, a `Whisper` transcription, or a corrected transcript aligned against the active sequence audio.
+Sub Creator is an Adobe Premiere Pro extension for creating animated subtitles from an `SRT` file, a `Whisper` transcription, or `Whisper + SRT` alignment against the active sequence audio.
 
 It is designed to be simple to use inside Premiere:
 - choose a subtitle source
@@ -16,7 +16,7 @@ A backup of the previous technical README is kept here:
 
 - Import subtitles from an `SRT` file.
 - Transcribe the active Premiere sequence with `Whisper`.
-- Align a corrected `.srt` or `.txt` transcript against the active Premiere sequence audio with `WhisperX`.
+- Align a corrected `.srt` or `.txt` transcript against the active Premiere sequence audio with `WhisperX` in `Whisper + SRT` mode.
 - Analyze either:
   - the full active sequence
   - only the current `In/Out` range
@@ -50,7 +50,7 @@ A backup of the previous technical README is kept here:
 - `ffmpeg`
 - at least one Whisper model available in the local cache
 
-### Required only for Corrected align mode
+### Required only for Whisper + SRT mode
 
 - Python `3.10` to `3.13`
 - `whisperx`
@@ -115,7 +115,7 @@ The installer:
 - preserves your custom MOGRT files during reinstall/update
 
 If Whisper cannot be configured, the extension still installs.
-In that case, `SRT` still works, while `Whisper` and `Corrected align` stay unavailable until the runtime is fixed.
+In that case, `SRT` still works, while `Whisper` and `Whisper + SRT` stay unavailable until the runtime is fixed.
 
 ## First use
 
@@ -127,8 +127,13 @@ Basic flow:
 1. Open the `Creation` tab.
 2. Choose `SRT` as source.
 3. Select your `.srt` file.
-4. Choose a MOGRT in the gallery.
-5. Click `Generate subtitles`.
+4. Choose whether to generate:
+   - `Entire sequence`
+   - `In/Out points`
+5. Choose a MOGRT in the gallery.
+6. Click `Generate subtitles`.
+
+When `In/Out points` is selected, only cues intersecting the current sequence range are generated.
 
 ### Whisper workflow
 
@@ -152,13 +157,13 @@ Sub Creator will:
 
 When `In/Out points` is selected, subtitle timing is placed back at the sequence `In` point.
 
-### Corrected align workflow
+### Whisper + SRT workflow
 
-Use `Corrected align` if you already have a corrected transcript and want better timings than a plain imported SRT.
+Use `Whisper + SRT` if you already have a corrected transcript and want better timings than a plain imported SRT.
 
 Basic flow:
 1. Open the `Creation` tab.
-2. Choose `Corrected align` as source.
+2. Choose `Whisper + SRT` as source.
 3. Select a corrected `.srt` or `.txt` file.
 4. Choose whether to analyze:
    - `Entire sequence`
@@ -175,7 +180,7 @@ Notes:
 - a corrected `.srt` is recommended because it already preserves your intended subtitle blocks
 - a corrected `.txt` is also supported, but it is pre-segmented heuristically before alignment
 - the first corrected-align run may download one WhisperX alignment model if it is not already cached
-- corrected align does not require downloading extra NLTK `punkt` data
+- Whisper + SRT does not require downloading extra NLTK `punkt` data
 - when `In/Out points` is selected with a corrected `.srt`, only cues intersecting that range are aligned
 
 ## Whisper models
@@ -191,7 +196,7 @@ Useful panel behavior:
 - the model dropdown shows only models already detected locally
 - `Open Whisper models folder` opens the cache location used by the panel
 
-`Corrected align` does not use the Whisper model dropdown.
+`Whisper + SRT` does not use the Whisper model dropdown.
 It depends on `whisperx` instead of a selected `.pt` model.
 
 Common choices:

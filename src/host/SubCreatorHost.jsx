@@ -14,6 +14,41 @@ function subcreator_decode_payload(input) {
   }
 }
 
+function subcreator_decode_base64_to_binary_string(input) {
+  // // Decode base64 text into a binary-safe ExtendScript string so template Source Text payloads can be restored in host.
+  var sanitized = String(input || "").replace(/\s+/g, "");
+  if (!sanitized) {
+    return "";
+  }
+
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  var buffer = 0;
+  var bits = 0;
+  var bytes = [];
+
+  for (var index = 0; index < sanitized.length; index += 1) {
+    var character = sanitized.charAt(index);
+    if (character === "=") {
+      break;
+    }
+
+    var alphabetIndex = alphabet.indexOf(character);
+    if (alphabetIndex < 0) {
+      continue;
+    }
+
+    buffer = (buffer << 6) | alphabetIndex;
+    bits += 6;
+
+    while (bits >= 8) {
+      bits -= 8;
+      bytes.push((buffer >> bits) & 255);
+    }
+  }
+
+  return subcreator_byte_array_to_binary_string(bytes);
+}
+
 function subcreator_ok(data) {
   // // Normalize successful host responses for panel-side parsing.
   return JSON.stringify({ ok: true, data: data });
@@ -163,6 +198,65 @@ function subcreator_normalize_system_path(value) {
   // // Normalize file-system paths for the current host platform before passing them into export APIs.
   var normalized = String(value || "");
   return subcreator_is_windows() ? normalized.replace(/\//g, "\\") : normalized.replace(/\\/g, "/");
+}
+
+function subcreator_read_sequence_in_out_range(sequence) {
+  // // Centralize active-sequence In/Out extraction so SRT, Whisper, and corrected-align use the same Premiere range lookup.
+  var rangeStartSeconds = NaN;
+  var rangeEndSeconds = NaN;
+
+  try {
+    rangeStartSeconds = subcreator_to_seconds(
+      typeof sequence.getInPointAsTime === "function"
+        ? sequence.getInPointAsTime()
+        : typeof sequence.getInPoint === "function"
+          ? sequence.getInPoint()
+          : null
+    );
+  } catch (inPointError) {
+    rangeStartSeconds = NaN;
+  }
+
+  try {
+    rangeEndSeconds = subcreator_to_seconds(
+      typeof sequence.getOutPointAsTime === "function"
+        ? sequence.getOutPointAsTime()
+        : typeof sequence.getOutPoint === "function"
+          ? sequence.getOutPoint()
+          : null
+    );
+  } catch (outPointError) {
+    rangeEndSeconds = NaN;
+  }
+
+  if (!isFinite(rangeStartSeconds) || !isFinite(rangeEndSeconds) || rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds) {
+    rangeStartSeconds = NaN;
+    rangeEndSeconds = NaN;
+  }
+
+  return {
+    rangeStartSeconds: isFinite(rangeStartSeconds) ? Number(rangeStartSeconds) : null,
+    rangeEndSeconds: isFinite(rangeEndSeconds) ? Number(rangeEndSeconds) : null
+  };
+}
+
+function subcreator_get_active_sequence_range() {
+  // // Expose the current sequence In/Out range to CEP so non-audio sources can respect the same user-selected range.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var range = subcreator_read_sequence_in_out_range(sequence);
+    return subcreator_ok({
+      rangeStartSeconds: range.rangeStartSeconds,
+      rangeEndSeconds: range.rangeEndSeconds,
+      sequenceName: String(sequence.name || "")
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
 }
 
 function subcreator_build_audio_preset_candidates() {
@@ -339,41 +433,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
     }
 
     var workAreaType = String(payload.rangeMode || "") === "in_out" ? 1 : 0;
-    var rangeStartSeconds = NaN;
-    var rangeEndSeconds = NaN;
-
-    if (workAreaType === 1) {
-      // // Return the actual sequence In/Out range so panel-side cues can be filtered and offset back onto timeline time.
-      try {
-        rangeStartSeconds = subcreator_to_seconds(
-          typeof sequence.getInPointAsTime === "function"
-            ? sequence.getInPointAsTime()
-            : typeof sequence.getInPoint === "function"
-              ? sequence.getInPoint()
-              : null
-        );
-      } catch (inPointError) {
-        rangeStartSeconds = NaN;
-      }
-
-      try {
-        rangeEndSeconds = subcreator_to_seconds(
-          typeof sequence.getOutPointAsTime === "function"
-            ? sequence.getOutPointAsTime()
-            : typeof sequence.getOutPoint === "function"
-              ? sequence.getOutPoint()
-              : null
-        );
-      } catch (outPointError) {
-        rangeEndSeconds = NaN;
-      }
-
-      // // Ignore Premiere sentinel In/Out values when no usable range is actually defined.
-      if (!isFinite(rangeStartSeconds) || !isFinite(rangeEndSeconds) || rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds) {
-        rangeStartSeconds = NaN;
-        rangeEndSeconds = NaN;
-      }
-    }
+    var activeRange = workAreaType === 1 ? subcreator_read_sequence_in_out_range(sequence) : { rangeStartSeconds: null, rangeEndSeconds: null };
 
     var outputFile = new File(outputPath);
     var outputFolder = outputFile.parent;
@@ -419,8 +479,8 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       audioPath: outputFile.fsName,
       presetPath: presetPath,
       sequenceName: String(sequence.name || ""),
-      rangeStartSeconds: isFinite(rangeStartSeconds) ? Number(rangeStartSeconds) : null,
-      rangeEndSeconds: isFinite(rangeEndSeconds) ? Number(rangeEndSeconds) : null
+      rangeStartSeconds: activeRange.rangeStartSeconds,
+      rangeEndSeconds: activeRange.rangeEndSeconds
     });
   } catch (error) {
     return subcreator_error(error);
@@ -5897,6 +5957,74 @@ function subcreator_try_patch_binary_text_payload(rawValue, textValue) {
   return subcreator_byte_array_to_binary_string(patchedBytes);
 }
 
+function subcreator_decode_template_text_payloads(rawPayloads) {
+  // // Decode CEP-provided Premiere template payloads once per apply so inserted clips can reuse the original Source Text document blob.
+  if (!rawPayloads || typeof rawPayloads.length !== "number") {
+    return [];
+  }
+
+  var decoded = [];
+  for (var index = 0; index < rawPayloads.length; index += 1) {
+    var payload = rawPayloads[index] || {};
+    var sourcePayloadBase64 = subcreator_trim_string(String(payload.sourcePayloadBase64 || ""));
+    if (!sourcePayloadBase64) {
+      continue;
+    }
+
+    decoded.push({
+      displayName: subcreator_trim_string(String(payload.displayName || "")),
+      initialText: subcreator_trim_string(String(payload.initialText || "")).replace(/\r/g, "\n"),
+      rawValue: subcreator_decode_base64_to_binary_string(sourcePayloadBase64)
+    });
+  }
+
+  return decoded;
+}
+
+function subcreator_create_template_text_payload_state(templateTextPayloads) {
+  // // Track per-display-name payload consumption so templates with multiple text layers can reuse payloads in traversal order.
+  return {
+    items: templateTextPayloads || [],
+    usageByDisplayName: {}
+  };
+}
+
+function subcreator_resolve_template_text_payload_raw_value(payloadState, displayName) {
+  // // Prefer a matching template payload over the live property raw value when Premiere only exposes a destructive plain-string shorthand.
+  if (!payloadState || !payloadState.items || !payloadState.items.length) {
+    return "";
+  }
+
+  var normalizedDisplayName = subcreator_trim_string(String(displayName || "")).toLowerCase();
+  var usageKey = normalizedDisplayName || "__fallback__";
+  var usageCount = Number(payloadState.usageByDisplayName[usageKey] || 0);
+  var matchedPayloads = [];
+
+  for (var index = 0; index < payloadState.items.length; index += 1) {
+    var candidate = payloadState.items[index];
+    if (!candidate || !candidate.rawValue) {
+      continue;
+    }
+
+    var candidateDisplayName = subcreator_trim_string(String(candidate.displayName || "")).toLowerCase();
+    if (!normalizedDisplayName || candidateDisplayName === normalizedDisplayName) {
+      matchedPayloads.push(candidate);
+    }
+  }
+
+  if (!matchedPayloads.length && payloadState.items.length === 1) {
+    matchedPayloads = payloadState.items.slice(0);
+  }
+
+  if (!matchedPayloads.length) {
+    return "";
+  }
+
+  var resolvedPayload = matchedPayloads[Math.min(usageCount, matchedPayloads.length - 1)];
+  payloadState.usageByDisplayName[usageKey] = usageCount + 1;
+  return String(resolvedPayload.rawValue || "");
+}
+
 function subcreator_extract_text_from_property_value(rawValue) {
   // // Convert property values (plain/object/JSON string) into readable caption text.
   if (rawValue === undefined || rawValue === null) {
@@ -6784,6 +6912,8 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
           debugAttempt("binary_payload", true);
           return true;
         }
+        debugAttempt("binary_payload_no_readback", true);
+        return true;
       }
     } catch (binaryPayloadError) {}
   }
@@ -6874,7 +7004,7 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
   return false;
 }
 
-function subcreator_try_set_mogrt_text_property(property, textValue, debugLines, debugPrefix) {
+function subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix) {
   // // Apply text to a property, supporting strings, JSON strings, and object payloads.
   var rawValue = "";
 
@@ -6886,7 +7016,9 @@ function subcreator_try_set_mogrt_text_property(property, textValue, debugLines,
     }
   }
 
-  return subcreator_try_apply_mogrt_text_property_raw_value(property, rawValue, textValue, debugLines, debugPrefix);
+  var templateRawValue = subcreator_resolve_template_text_payload_raw_value(templatePayloadState, property.displayName || "");
+  var sourceRawValue = templateRawValue || rawValue;
+  return subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawValue, textValue, debugLines, debugPrefix);
 }
 
 function subcreator_collect_mogrt_text_payload_snapshots_recursive(propertyCollection, pathPrefix, outList) {
@@ -7072,7 +7204,7 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   return false;
 }
 
-function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, stats, debugLines, debugPrefix) {
+function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, templatePayloadState, stats, debugLines, debugPrefix) {
   // // Traverse nested Essential Graphics property groups and apply text/animation updates.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
@@ -7085,7 +7217,7 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (typeof property.setValue === "function") {
-      if (subcreator_try_set_mogrt_text_property(property, textValue, debugLines, debugPrefix)) {
+      if (subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix)) {
         stats.textUpdates += 1;
       }
 
@@ -7099,12 +7231,21 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0) {
-      subcreator_try_set_controls_recursively(property.properties, textValue, animationMode, styleConfig, stats, debugLines, debugPrefix);
+      subcreator_try_set_controls_recursively(
+        property.properties,
+        textValue,
+        animationMode,
+        styleConfig,
+        templatePayloadState,
+        stats,
+        debugLines,
+        debugPrefix
+      );
     }
   }
 }
 
-function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig, debugLines, debugPrefix) {
+function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig, templateTextPayloads, debugLines, debugPrefix) {
   // // Update text + animation related controls on inserted MOGRT components.
   if (!trackItem || !textValue) {
     return {
@@ -7128,6 +7269,7 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     animationUpdates: 0,
     layoutUpdates: 0
   };
+  var templatePayloadState = subcreator_create_template_text_payload_state(templateTextPayloads);
 
   for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
     var component = components[componentIndex];
@@ -7149,6 +7291,7 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
       textValue,
       animationMode,
       styleConfig,
+      templatePayloadState,
       stats,
       debugLines,
       debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex)
@@ -8140,6 +8283,7 @@ function subcreator_apply_captions(payloadEncoded) {
     var sequenceIdentity = subcreator_get_sequence_identity(sequence);
     var options = payload.options || {};
     var cues = payload.cues || [];
+    var templateTextPayloads = subcreator_decode_template_text_payloads(options.premiereTemplateTextPayloads || []);
 
     var mogrtPath = subcreator_resolve_mogrt_path(options);
     var pathCandidates = subcreator_build_mogrt_path_candidates(mogrtPath);
@@ -8170,6 +8314,10 @@ function subcreator_apply_captions(payloadEncoded) {
         ? "cue=" + String(i) + " start=" + String(startSeconds) + " end=" + String(endSeconds) + " text=" + subcreator_visual_preview_debug_value(text, 80)
         : "";
 
+      if (cueDebugEnabled && i === 0) {
+        subcreator_debug_push_limited(debugLines, "template_text_payloads=" + String(templateTextPayloads.length), 120);
+      }
+
       if (hasMogrt && typeof sequence.importMGT === "function") {
         var importAttempt = subcreator_try_import_mogrt(
           sequence,
@@ -8190,6 +8338,7 @@ function subcreator_apply_captions(payloadEncoded) {
             text,
             options.style ? options.style.animationMode : "line",
             options.style || {},
+            templateTextPayloads,
             cueDebugEnabled ? debugLines : null,
             cueDebugPrefix
           );

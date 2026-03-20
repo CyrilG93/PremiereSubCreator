@@ -30,6 +30,13 @@ export interface CaptionStyleConfig {
   linesPerCaption: number;
 }
 
+// // Carry raw Premiere-authored text-document payloads extracted from the `.mogrt` package so host-side writes can preserve style.
+export interface PremiereTemplateTextPayload {
+  displayName: string;
+  initialText: string;
+  sourcePayloadBase64: string;
+}
+
 // // Describe full generation options for a build request.
 export interface CaptionBuildOptions {
   sourceMode: SourceMode;
@@ -41,6 +48,7 @@ export interface CaptionBuildOptions {
   correctedTranscriptPath?: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  premiereTemplateTextPayloads?: PremiereTemplateTextPayload[];
   videoTrackIndex: number;
   audioTrackIndex: number;
 }

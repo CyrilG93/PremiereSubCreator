@@ -53,7 +53,7 @@
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
               <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper</option>
-              <option value="corrected_align" data-i18n="source.correctedAlign">Corrected align</option>
+              <option value="corrected_align" data-i18n="source.correctedAlign">Whisper + SRT</option>
             </select>
           </label>
 
@@ -85,7 +85,7 @@
               Use a corrected .srt or .txt, export the active sequence audio, then align the corrected text with WhisperX.
             </p>
             <p id="correctedAlignHint" class="hint" hidden>
-              Corrected align requires Python whisperx. Read the README to install it.
+              Whisper + SRT requires Python whisperx. Read the README to install it.
             </p>
           </section>
 
@@ -111,7 +111,7 @@
           </section>
 
           <section class="field field--full" id="sequenceAudioField">
-            <span data-i18n="field.sequenceAudioRange">Sequence audio range</span>
+            <span data-i18n="field.sequenceAudioRange">Sequence range</span>
             <select id="whisperSequenceRange" aria-label="Whisper sequence range">
               <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
               <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>

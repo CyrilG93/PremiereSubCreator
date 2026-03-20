@@ -1,7 +1,12 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
-import type { CaptionBuildOptions, HostApplyPayload, MogrtTemplateItem } from "../core/types";
-import { unzipSync } from "fflate";
-import type { WhisperSequenceRangeMode } from "../core/types";
+import type {
+  CaptionBuildOptions,
+  HostApplyPayload,
+  MogrtTemplateItem,
+  PremiereTemplateTextPayload,
+  WhisperSequenceRangeMode
+} from "../core/types";
+import { gunzipSync, strFromU8, unzipSync } from "fflate";
 
 declare global {
   interface Window {
@@ -71,6 +76,12 @@ interface WhisperSequenceExportResult {
   sequenceName?: string;
   rangeStartSeconds?: number;
   rangeEndSeconds?: number;
+}
+
+interface ActiveSequenceRangeResult {
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
+  sequenceName?: string;
 }
 
 export interface WhisperRuntimeStatus {
@@ -878,6 +889,142 @@ function extractRuntimeMogrtPreviewFiles(
   }
 
   return { imageFileUrl, videoFileUrl };
+}
+
+function decodePremiereTemplateTextBytes(bytes: Uint8Array): string {
+  // // Mirror the host-side heuristic so CEP can recover the default visible text embedded in Premiere flatbuffer-style Source Text payloads.
+  let bestText = "";
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index <= bytes.length - 5; index += 1) {
+    const byteLength =
+      (bytes[index] ?? 0) |
+      ((bytes[index + 1] ?? 0) << 8) |
+      ((bytes[index + 2] ?? 0) << 16) |
+      ((bytes[index + 3] ?? 0) << 24);
+
+    if (!Number.isFinite(byteLength) || byteLength < 1 || byteLength > 2000) {
+      continue;
+    }
+
+    const textStart = index + 4;
+    const textEnd = textStart + byteLength;
+    if (textEnd >= bytes.length || bytes[textEnd] !== 0) {
+      continue;
+    }
+
+    const candidateBytes = bytes.slice(textStart, textEnd);
+    let candidateText = "";
+    try {
+      candidateText = Buffer.from(candidateBytes).toString("utf8");
+    } catch {
+      continue;
+    }
+
+    if (!candidateText.trim()) {
+      continue;
+    }
+
+    let printableCount = 0;
+    for (const candidateByte of candidateBytes) {
+      if ((candidateByte >= 32 && candidateByte <= 126) || candidateByte === 9 || candidateByte === 10 || candidateByte === 13 || candidateByte >= 128) {
+        printableCount += 1;
+      }
+    }
+    if (printableCount / candidateBytes.length < 0.8) {
+      continue;
+    }
+
+    let hasOnlyZeroPaddingAfter = true;
+    for (let suffixIndex = textEnd + 1; suffixIndex < bytes.length; suffixIndex += 1) {
+      if (bytes[suffixIndex] !== 0) {
+        hasOnlyZeroPaddingAfter = false;
+        break;
+      }
+    }
+
+    let score = (index / Math.max(bytes.length, 1)) * 5;
+    score += candidateText.split(/\s+/).filter(Boolean).length * 2;
+    score += Math.min(candidateText.length, 120) / 20;
+    if (/[.,!?;:]/.test(candidateText)) {
+      score += 1;
+    }
+    if (/[\r\n]/.test(candidateText)) {
+      score += 1;
+    }
+    if (hasOnlyZeroPaddingAfter) {
+      score += 3;
+    }
+    if (candidateText.length < 3) {
+      score -= 10;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestText = candidateText.replace(/\r/g, "\n");
+    }
+  }
+
+  return bestText;
+}
+
+function extractPremiereTemplateTextPayloads(
+  modules: CepNodeModules,
+  mogrtPath: string
+): PremiereTemplateTextPayload[] {
+  // // Read Premiere-authored `.mogrt` packages directly so the host can reuse the original text-document payload instead of flattening style to plain text.
+  try {
+    const outerArchive = unzipSync(new Uint8Array(modules.fs.readFileSync(mogrtPath)));
+    const definitionEntry = outerArchive["definition.json"];
+    const projectEntry = outerArchive["project.prgraphic"];
+    if (!definitionEntry || !projectEntry) {
+      return [];
+    }
+
+    const definitionText = strFromU8(definitionEntry);
+    const definition = JSON.parse(definitionText) as { authorApp?: unknown };
+    if (String(definition?.authorApp || "").toLowerCase() !== "ppro") {
+      return [];
+    }
+
+    const innerArchive = unzipSync(projectEntry);
+    const projectKey = Object.keys(innerArchive).find((entryName) => /\.prproj$/i.test(String(entryName || "")));
+    if (!projectKey) {
+      return [];
+    }
+
+    const projectXml = strFromU8(gunzipSync(innerArchive[projectKey]));
+    const payloads: PremiereTemplateTextPayload[] = [];
+    const pattern = /<ArbVideoComponentParam[\s\S]*?<Name>([^<]+)<\/Name>[\s\S]*?<StartKeyframeValue[^>]*>([A-Za-z0-9+/=\s]+)<\/StartKeyframeValue>/g;
+
+    for (const match of projectXml.matchAll(pattern)) {
+      const displayName = String(match[1] || "").trim();
+      const sourcePayloadBase64 = String(match[2] || "").replace(/\s+/g, "");
+      if (!displayName || !sourcePayloadBase64) {
+        continue;
+      }
+
+      const lowerName = displayName.toLowerCase();
+      if (lowerName.indexOf("source text") === -1 && lowerName.indexOf("text") === -1) {
+        continue;
+      }
+
+      const initialText = decodePremiereTemplateTextBytes(Uint8Array.from(Buffer.from(sourcePayloadBase64, "base64")));
+      if (!initialText) {
+        continue;
+      }
+
+      payloads.push({
+        displayName,
+        initialText,
+        sourcePayloadBase64
+      });
+    }
+
+    return payloads;
+  } catch {
+    return [];
+  }
 }
 
 function resolveRuntimeMogrtPreviewFiles(
@@ -2454,6 +2601,24 @@ export async function pickSrtPath(): Promise<string> {
   return String(response.data?.path ?? "");
 }
 
+export async function getActiveSequenceRange(): Promise<ActiveSequenceRangeResult> {
+  // // Read the active sequence In/Out values directly from ExtendScript so non-Whisper sources can respect the same range control.
+  const response = await evalHostJson<ActiveSequenceRangeResult>("subcreator_get_active_sequence_range()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read active sequence range.");
+  }
+
+  return {
+    rangeStartSeconds: Number.isFinite(Number(response.data?.rangeStartSeconds))
+      ? Number(response.data?.rangeStartSeconds)
+      : undefined,
+    rangeEndSeconds: Number.isFinite(Number(response.data?.rangeEndSeconds))
+      ? Number(response.data?.rangeEndSeconds)
+      : undefined,
+    sequenceName: String(response.data?.sequenceName ?? "")
+  };
+}
+
 export async function pickCorrectedTranscriptPath(): Promise<string> {
   // // Open host-native picker for corrected transcript files used by WhisperX alignment.
   const response = await evalHostJson<{ path: string }>("subcreator_pick_corrected_transcript_file()");
@@ -2506,6 +2671,15 @@ export async function exportActiveSequenceAudioForWhisper(
       : undefined,
     rangeEndSeconds: Number.isFinite(Number(response.data?.rangeEndSeconds)) ? Number(response.data?.rangeEndSeconds) : undefined
   };
+}
+
+export async function readPremiereTemplateTextPayloads(mogrtPath: string): Promise<PremiereTemplateTextPayload[]> {
+  // // Extract Premiere-authored Source Text payloads from the selected template so the host can preserve font/style when replacing subtitle text.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return [];
+  }
+  return extractPremiereTemplateTextPayloads(modules, mogrtPath);
 }
 
 export async function deleteTemporaryWhisperAudio(filePath: string): Promise<void> {

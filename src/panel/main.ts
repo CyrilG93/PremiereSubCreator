@@ -2189,6 +2189,22 @@ function buildTextEditorTextFromTimedWords(words: CaptionWord[] | null | undefin
     .join(" ");
 }
 
+function cleanupTemporaryMogrtPaths(paths: string[]): void {
+  // // Remove temporary baked Premiere `.mogrt` files after the host has imported them into the sequence.
+  const modules = window.cep_node?.require?.("fs") as { unlinkSync?: (path: string) => void } | undefined;
+  if (!modules?.unlinkSync) {
+    return;
+  }
+
+  for (const cleanupPath of paths) {
+    try {
+      modules.unlinkSync(cleanupPath);
+    } catch {
+      // // Ignore cleanup failures because subtitle rebuild already completed.
+    }
+  }
+}
+
 async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
   const result = await readSelectedMogrtTextItems();
@@ -2279,6 +2295,7 @@ async function applyTextEditorChanges(): Promise<void> {
   }
 
   const options = collectTextEditorBuildOptions();
+  const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
 
   textApplyInProgress = true;
   setTextButtonsBusy(true);
@@ -2291,47 +2308,77 @@ async function applyTextEditorChanges(): Promise<void> {
     const rangeResults: ApplySelectedMogrtTextResult[] = [];
 
     for (const applyPlan of orderedPlans) {
-      const payload: TextEditorApplyPayload = {
-        selectionSignature: currentSelectionSignature,
-        replaceSelectionStartIndex: applyPlan.selectionStartIndex,
-        replaceSelectionEndIndex: applyPlan.selectionEndIndex,
-        items: applyPlan.blocks.map((block) => ({
+      let cleanupMogrtPaths: string[] = [];
+      try {
+        let applyItems = applyPlan.blocks.map((block) => ({
           sourceSelectionIndex: block.sourceSelectionIndex,
           startSeconds: block.startSeconds,
           endSeconds: block.endSeconds,
           text: block.text
-        })),
-        options
-      };
+        }));
 
-      const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
-      rangeResults.unshift(result);
-      if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== applyPlan.blocks.length) {
-        throw new Error(translate("error.textApplyPartialFailure"));
-      }
+        if (premiereTemplateTextPayloads.length > 0) {
+          const preparedTemplateBuild = await buildPremiereTemplateCueMogrts(
+            options.mogrtPath,
+            applyPlan.blocks.map((block, blockIndex) => ({
+              id: `text-apply-${blockIndex}`,
+              startSeconds: block.startSeconds,
+              endSeconds: block.endSeconds,
+              text: block.text,
+              words: []
+            })),
+            premiereTemplateTextPayloads
+          );
+          cleanupMogrtPaths = preparedTemplateBuild.cleanupPaths;
+          applyItems = applyItems.map((item, itemIndex) => ({
+            ...item,
+            mogrtPathOverride: preparedTemplateBuild.cues[itemIndex]?.mogrtPathOverride,
+            skipTextApply: preparedTemplateBuild.cues[itemIndex]?.skipTextApply
+          }));
+        }
 
-      currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
-      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
-      lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
-        ? Number(result.sourceTrackIndex)
-        : lastSourceTrackIndex;
-      lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
-        ? Number(result.rebuildTrackIndex)
-        : lastRebuildTrackIndex;
-      persistTextEditorCaptionMetadata(
-        lastIdentity,
-        lastSourceTrackIndex,
-        lastRebuildTrackIndex,
-        applyPlan.timingRange,
-        applyPlan.blocks
-      );
+        const payload: TextEditorApplyPayload = {
+          selectionSignature: currentSelectionSignature,
+          replaceSelectionStartIndex: applyPlan.selectionStartIndex,
+          replaceSelectionEndIndex: applyPlan.selectionEndIndex,
+          items: applyItems,
+          options: {
+            ...options,
+            premiereTemplateTextPayloads
+          }
+        };
 
-      const refreshedSelection = await readSelectedMogrtTextItems();
-      currentSelectionSignature = String(refreshedSelection.signature || currentSelectionSignature || "").trim();
-      lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(refreshedSelection) || lastIdentity;
-      if (Number.isFinite(Number(refreshedSelection.videoTrackIndex))) {
-        lastSourceTrackIndex = Number(refreshedSelection.videoTrackIndex);
-        lastRebuildTrackIndex = Number(refreshedSelection.videoTrackIndex);
+        const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
+        rangeResults.unshift(result);
+        if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== applyPlan.blocks.length) {
+          throw new Error(translate("error.textApplyPartialFailure"));
+        }
+
+        currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
+        lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
+        lastSourceTrackIndex = Number.isFinite(Number(result.sourceTrackIndex))
+          ? Number(result.sourceTrackIndex)
+          : lastSourceTrackIndex;
+        lastRebuildTrackIndex = Number.isFinite(Number(result.rebuildTrackIndex))
+          ? Number(result.rebuildTrackIndex)
+          : lastRebuildTrackIndex;
+        persistTextEditorCaptionMetadata(
+          lastIdentity,
+          lastSourceTrackIndex,
+          lastRebuildTrackIndex,
+          applyPlan.timingRange,
+          applyPlan.blocks
+        );
+
+        const refreshedSelection = await readSelectedMogrtTextItems();
+        currentSelectionSignature = String(refreshedSelection.signature || currentSelectionSignature || "").trim();
+        lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(refreshedSelection) || lastIdentity;
+        if (Number.isFinite(Number(refreshedSelection.videoTrackIndex))) {
+          lastSourceTrackIndex = Number(refreshedSelection.videoTrackIndex);
+          lastRebuildTrackIndex = Number(refreshedSelection.videoTrackIndex);
+        }
+      } finally {
+        cleanupTemporaryMogrtPaths(cleanupMogrtPaths);
       }
     }
 

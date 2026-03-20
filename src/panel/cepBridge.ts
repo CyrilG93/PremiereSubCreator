@@ -171,6 +171,8 @@ export interface TextEditorApplyItemPayload {
   startSeconds: number;
   endSeconds: number;
   text: string;
+  mogrtPathOverride?: string;
+  skipTextApply?: boolean;
 }
 
 export interface TextEditorApplyPayload {

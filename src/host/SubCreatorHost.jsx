@@ -5276,6 +5276,8 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       var startSeconds = Number(editedItem.startSeconds);
       var endSeconds = Number(editedItem.endSeconds);
       var sourceSelectionIndex = Number(editedItem.sourceSelectionIndex);
+      var itemMogrtPathOverride = subcreator_trim_string(String(editedItem.mogrtPathOverride || ""));
+      var itemSkipTextApply = Boolean(editedItem.skipTextApply);
       if (isNaN(sourceSelectionIndex) || sourceSelectionIndex < 0 || sourceSelectionIndex >= sourceSnapshots.length) {
         sourceSelectionIndex = 0;
       }
@@ -5290,9 +5292,10 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         visualChanges: []
       };
       var insertedTrackItem = null;
+      var itemPathCandidates = itemMogrtPathOverride ? subcreator_build_mogrt_path_candidates(itemMogrtPathOverride) : fallbackPathCandidates;
 
-      if (fallbackPathCandidates.length > 0) {
-        var importAttempt = subcreator_try_import_mogrt(sequence, fallbackPathCandidates, startSeconds, targetTrackIndex, 0);
+      if (itemPathCandidates.length > 0) {
+        var importAttempt = subcreator_try_import_mogrt(sequence, itemPathCandidates, startSeconds, targetTrackIndex, 0);
         insertedTrackItem = importAttempt.trackItem;
         if (insertedTrackItem) {
           debugLines.push(
@@ -5314,7 +5317,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       }
 
       var textUpdateCount = 0;
-      if (sourceSnapshot.textChanges && sourceSnapshot.textChanges.length > 0) {
+      if (!itemSkipTextApply && sourceSnapshot.textChanges && sourceSnapshot.textChanges.length > 0) {
         var textCloneStats = subcreator_apply_text_clone_changes_to_track_item(
           insertedTrackItem,
           sourceSnapshot.textChanges,
@@ -5326,12 +5329,14 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         textUpdateCount = textCloneStats.updatedCount;
       }
 
-      if (textUpdateCount < 1) {
+      if (!itemSkipTextApply && textUpdateCount < 1) {
         var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null, [], false, null, null);
         textUpdateCount = textStats && textStats.textUpdates ? textStats.textUpdates : 0;
       }
 
-      if (textUpdateCount < 1) {
+      if (itemSkipTextApply) {
+        debugLines.push("text_apply text_baked index=" + String(editedIndex));
+      } else if (textUpdateCount < 1) {
         debugLines.push("text_apply text_update_missing index=" + String(editedIndex));
       }
 

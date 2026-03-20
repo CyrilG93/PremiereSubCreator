@@ -16,6 +16,7 @@ import type {
   AnimationMode,
   CaptionBuildOptions,
   CaptionCue,
+  CaptionWord,
   HostApplyPayload,
   MogrtTemplateItem,
   SourceMode,
@@ -2176,6 +2177,18 @@ function isTextEditorPathLikeValue(text: string): boolean {
   return looksAbsolutePath && looksMediaFile;
 }
 
+function buildTextEditorTextFromTimedWords(words: CaptionWord[] | null | undefined): string {
+  // // Rebuild the visible subtitle text from persisted word timings when Premiere only returns one opaque placeholder glyph.
+  if (!Array.isArray(words) || words.length < 1) {
+    return "";
+  }
+
+  return words
+    .map((word) => String(word?.text || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
 async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
   const result = await readSelectedMogrtTextItems();
@@ -2185,18 +2198,23 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   textEditorSameTrack = result.sameTrack !== false;
   textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
   const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, filteredSelectionItems);
-  textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => ({
-    sourceSelectionIndex: Number(item.selectionIndex || 0),
-    clipName: String(item.clipName || "").trim(),
-    startSeconds: Number(item.startSeconds || 0),
-    endSeconds: Number(item.endSeconds || 0),
-    text: String(item.text || "").trim(),
-    words: String(item.text || "")
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean),
-    timedWords: Array.isArray(metadataWordsByItem[itemIndex]) ? metadataWordsByItem[itemIndex] || undefined : undefined
-  }));
+  textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => {
+    const resolvedTimedWords = Array.isArray(metadataWordsByItem[itemIndex]) ? metadataWordsByItem[itemIndex] || undefined : undefined;
+    const resolvedText = buildTextEditorTextFromTimedWords(resolvedTimedWords) || String(item.text || "").trim();
+
+    return {
+      sourceSelectionIndex: Number(item.selectionIndex || 0),
+      clipName: String(item.clipName || "").trim(),
+      startSeconds: Number(item.startSeconds || 0),
+      endSeconds: Number(item.endSeconds || 0),
+      text: resolvedText,
+      words: String(resolvedText || "")
+        .split(/\s+/)
+        .map((value) => value.trim())
+        .filter(Boolean),
+      timedWords: resolvedTimedWords
+    };
+  });
   textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
   textEditorSelectionStartSeconds =
     filteredSelectionItems.length > 0

@@ -158,6 +158,20 @@ function buildMetadataWordSignatureFromWords(words: CaptionWord[]): string {
     .join(" ");
 }
 
+function hasReliableSelectedItemText(text: string): boolean {
+  // // Ignore opaque single-glyph host readbacks so Premiere-authored MOGRTs can still recover metadata by timing.
+  const normalizedText = normalizeMetadataText(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  if (normalizedText.length === 1 && normalizedText.charCodeAt(0) > 127) {
+    return false;
+  }
+
+  return true;
+}
+
 function cloneCaptionWords(words: CaptionWord[]): CaptionWord[] {
   // // Clone word timings to keep store reads/writes immutable and predictable.
   return words.map((word) => ({
@@ -255,11 +269,14 @@ export function findBestCaptionMetadataMatchForItem(
   // // Match one timeline subtitle item against persisted metadata with fallback across tracks so timing survives safe track moves.
   const targetText = normalizeMetadataText(item.text);
   const targetWordSignature = buildMetadataWordSignatureFromText(item.text);
+  const hasReliableText = hasReliableSelectedItemText(item.text);
   const targetTrackIndex = Number(item.videoTrackIndex);
   const targetStart = Number(item.startSeconds || 0);
   const targetEnd = Number(item.endSeconds || 0);
   let bestMatch: CaptionMetadataClipMatchSource | null = null;
   let bestScore = Number.POSITIVE_INFINITY;
+  let bestTimingFallbackMatch: CaptionMetadataClipMatchSource | null = null;
+  let bestTimingFallbackScore = Number.POSITIVE_INFINITY;
 
   for (const clip of clips) {
     const normalizedClipText = normalizeMetadataText(clip.text);
@@ -267,13 +284,25 @@ export function findBestCaptionMetadataMatchForItem(
     const sameTrack = clip.trackIndex === targetTrackIndex;
     const sameText = normalizedClipText === targetText;
     const sameWordSignature = clipWordSignature.length > 0 && clipWordSignature === targetWordSignature;
-    if (!sameText && !sameWordSignature) {
-      continue;
-    }
-
     const startDelta = Math.abs(Number(clip.startSeconds || 0) - targetStart);
     const endDelta = Math.abs(Number(clip.endSeconds || 0) - targetEnd);
     if (startDelta > 0.6 || endDelta > 0.6) {
+      continue;
+    }
+
+    if (!hasReliableText && startDelta <= 0.08 && endDelta <= 0.08) {
+      // // Prefer one near-exact timing match when Premiere does not expose the real visible text value back to CEP.
+      let fallbackScore = startDelta + endDelta;
+      if (!sameTrack) {
+        fallbackScore += 0.05;
+      }
+      if (fallbackScore < bestTimingFallbackScore) {
+        bestTimingFallbackScore = fallbackScore;
+        bestTimingFallbackMatch = clip;
+      }
+    }
+
+    if (!sameText && !sameWordSignature) {
       continue;
     }
 
@@ -291,7 +320,7 @@ export function findBestCaptionMetadataMatchForItem(
     }
   }
 
-  return bestMatch;
+  return bestMatch || bestTimingFallbackMatch;
 }
 
 export function resolveCaptionMetadataForSelection(

@@ -67,4 +67,33 @@ describe("captionMetadataStore matching", () => {
     expect(match).not.toBeNull();
     expect(match?.trackIndex).toBe(7);
   });
+
+  it("falls back to exact timing when Premiere only exposes an opaque single-glyph text value", () => {
+    const clips: CaptionMetadataClipMatchSource[] = [
+      {
+        trackIndex: 3,
+        startSeconds: 2.32,
+        endSeconds: 3.88,
+        text: "Disruption and risk are",
+        words: [
+          { text: "Disruption", startSeconds: 2.32, endSeconds: 2.84 },
+          { text: "and", startSeconds: 2.84, endSeconds: 3.08 },
+          { text: "risk", startSeconds: 3.08, endSeconds: 3.42 },
+          { text: "are", startSeconds: 3.42, endSeconds: 3.88 }
+        ]
+      }
+    ];
+    const item: SelectedMogrtTextItem = {
+      selectionIndex: 0,
+      videoTrackIndex: 3,
+      startSeconds: 2.32,
+      endSeconds: 3.88,
+      text: "Ũ",
+      clipName: "Graphic"
+    };
+
+    const match = findBestCaptionMetadataMatchForItem(clips, item);
+    expect(match).not.toBeNull();
+    expect(match?.text).toBe("Disruption and risk are");
+  });
 });

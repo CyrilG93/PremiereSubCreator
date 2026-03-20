@@ -306,6 +306,7 @@ UI note:
 Important notes:
 - `Text editor` currently works on selected subtitle MOGRTs from one video track at a time.
 - the `Text editor` ignores selected MOGRTs that do not expose a real editable subtitle text payload
+- for some Premiere-authored `.mogrt` files, the host may read back only an opaque placeholder glyph instead of the visible subtitle text; in that case, the `Text editor` reuses the generated timing metadata to recover the real text
 - the extension rebuilds and retimes the selected subtitle clips automatically when you apply changes
 - the `Text editor` now tries to resolve the `.mogrt` file from the subtitle clips actually selected on the timeline, instead of depending only on the gallery selection
 - when only one contiguous region was changed, Sub Creator rebuilds only that changed subtitle slice instead of recreating the full selection

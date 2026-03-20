@@ -23,6 +23,7 @@ import type {
 } from "../core/types";
 import {
   applyCaptionPlan,
+  buildPremiereTemplateCueMogrts,
   alignCorrectedTranscript,
   applyVisualPropertiesToSelectedMogrts,
   deleteTemporaryWhisperAudio,
@@ -4131,35 +4132,58 @@ async function generate(): Promise<void> {
     await updateGenerateProgress(4, translate("progress.prepareGeneration"), true);
     const cues = await loadCuesFromSelectedSource(options, updateGenerateProgress);
     await updateGenerateProgress(90, translate("progress.planCaptions"), true);
-    const plannedCues = buildCaptionPlan(cues, options);
+    let plannedCues = buildCaptionPlan(cues, options);
     const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
-
-    const payload: HostApplyPayload = {
-      options: {
-        ...options,
+    let cleanupMogrtPaths: string[] = [];
+    if (premiereTemplateTextPayloads.length) {
+      const preparedTemplateBuild = await buildPremiereTemplateCueMogrts(
+        options.mogrtPath,
+        plannedCues,
         premiereTemplateTextPayloads
-      },
-      cues: plannedCues
-    };
+      );
+      plannedCues = preparedTemplateBuild.cues;
+      cleanupMogrtPaths = preparedTemplateBuild.cleanupPaths;
+    }
 
-    await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
-    const hostResultRaw = await applyCaptionPlan(payload);
-    setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
     try {
-      const hostResult = JSON.parse(String(hostResultRaw || "")) as ApplyCaptionPlanHostResult;
-      if (
-        Number(hostResult.insertedMogrt || 0) === plannedCues.length &&
-        Number.isFinite(Number(hostResult.videoTrackUsed)) &&
-        plannedCues.length > 0
-      ) {
-        persistGeneratedCaptionMetadata(
-          resolveCaptionMetadataIdentityFromHostPayload(hostResult),
-          Number(hostResult.videoTrackUsed),
-          plannedCues
-        );
+      const payload: HostApplyPayload = {
+        options: {
+          ...options,
+          premiereTemplateTextPayloads
+        },
+        cues: plannedCues
+      };
+
+      await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
+      const hostResultRaw = await applyCaptionPlan(payload);
+      setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+      try {
+        const hostResult = JSON.parse(String(hostResultRaw || "")) as ApplyCaptionPlanHostResult;
+        if (
+          Number(hostResult.insertedMogrt || 0) === plannedCues.length &&
+          Number.isFinite(Number(hostResult.videoTrackUsed)) &&
+          plannedCues.length > 0
+        ) {
+          persistGeneratedCaptionMetadata(
+            resolveCaptionMetadataIdentityFromHostPayload(hostResult),
+            Number(hostResult.videoTrackUsed),
+            plannedCues
+          );
+        }
+      } catch {
+        // // Ignore host-result metadata persistence when the host payload is not parseable.
       }
-    } catch {
-      // // Ignore host-result metadata persistence when the host payload is not parseable.
+    } finally {
+      const modules = window.cep_node?.require?.("fs") as { unlinkSync?: (path: string) => void } | undefined;
+      if (modules?.unlinkSync) {
+        for (const cleanupPath of cleanupMogrtPaths) {
+          try {
+            modules.unlinkSync(cleanupPath);
+          } catch {
+            // // Ignore temporary-template cleanup failures because subtitle generation already completed.
+          }
+        }
+      }
     }
   } finally {
     generateInProgress = false;

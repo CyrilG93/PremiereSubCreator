@@ -1,12 +1,13 @@
 // // Wrap CEP evalScript calls and provide a browser fallback for local testing.
 import type {
+  CaptionCue,
   CaptionBuildOptions,
   HostApplyPayload,
   MogrtTemplateItem,
   PremiereTemplateTextPayload,
   WhisperSequenceRangeMode
 } from "../core/types";
-import { gunzipSync, strFromU8, unzipSync } from "fflate";
+import { gunzipSync, gzipSync, strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 declare global {
   interface Window {
@@ -1025,6 +1026,246 @@ function extractPremiereTemplateTextPayloads(
   } catch {
     return [];
   }
+}
+
+function patchPremiereTemplatePayloadBase64(sourcePayloadBase64: string, nextText: string): string {
+  // // Rewrite the UTF-8 text segment inside one Premiere Source Text payload while keeping the rest of the binary style document untouched.
+  const bytes = Uint8Array.from(Buffer.from(String(sourcePayloadBase64 || "").replace(/\s+/g, ""), "base64"));
+  if (!bytes.length) {
+    return sourcePayloadBase64;
+  }
+
+  let bestOffset = -1;
+  let bestByteLength = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestHasOnlyZeroPaddingAfter = false;
+  let bestZeroPaddingLength = 0;
+
+  for (let index = 0; index <= bytes.length - 5; index += 1) {
+    const byteLength =
+      (bytes[index] ?? 0) |
+      ((bytes[index + 1] ?? 0) << 8) |
+      ((bytes[index + 2] ?? 0) << 16) |
+      ((bytes[index + 3] ?? 0) << 24);
+    if (!Number.isFinite(byteLength) || byteLength < 1 || byteLength > 2000) {
+      continue;
+    }
+
+    const textStart = index + 4;
+    const textEnd = textStart + byteLength;
+    if (textEnd >= bytes.length || bytes[textEnd] !== 0) {
+      continue;
+    }
+
+    const candidateBytes = bytes.slice(textStart, textEnd);
+    const candidateText = Buffer.from(candidateBytes).toString("utf8");
+    if (!candidateText.trim()) {
+      continue;
+    }
+
+    let printableCount = 0;
+    for (const candidateByte of candidateBytes) {
+      if ((candidateByte >= 32 && candidateByte <= 126) || candidateByte === 9 || candidateByte === 10 || candidateByte === 13 || candidateByte >= 128) {
+        printableCount += 1;
+      }
+    }
+    if (printableCount / candidateBytes.length < 0.8) {
+      continue;
+    }
+
+    let hasOnlyZeroPaddingAfter = true;
+    let zeroPaddingLength = 0;
+    for (let suffixIndex = textEnd + 1; suffixIndex < bytes.length; suffixIndex += 1) {
+      if (bytes[suffixIndex] !== 0) {
+        hasOnlyZeroPaddingAfter = false;
+        break;
+      }
+      zeroPaddingLength += 1;
+    }
+
+    let score = (index / Math.max(bytes.length, 1)) * 5;
+    score += candidateText.split(/\s+/).filter(Boolean).length * 2;
+    score += Math.min(candidateText.length, 120) / 20;
+    if (/[.,!?;:]/.test(candidateText)) {
+      score += 1;
+    }
+    if (/[\r\n]/.test(candidateText)) {
+      score += 1;
+    }
+    if (hasOnlyZeroPaddingAfter) {
+      score += 3;
+    }
+    if (candidateText.length < 3) {
+      score -= 10;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffset = index;
+      bestByteLength = byteLength;
+      bestHasOnlyZeroPaddingAfter = hasOnlyZeroPaddingAfter;
+      bestZeroPaddingLength = zeroPaddingLength;
+    }
+  }
+
+  if (bestOffset < 0) {
+    return sourcePayloadBase64;
+  }
+
+  const replacementBytes = Uint8Array.from(Buffer.from(String(nextText || "").replace(/\r\n/g, "\n").replace(/\n/g, "\r"), "utf8"));
+  if (!bestHasOnlyZeroPaddingAfter && replacementBytes.length !== bestByteLength) {
+    return sourcePayloadBase64;
+  }
+
+  const patched: number[] = [];
+  const textStart = bestOffset + 4;
+  const suffixStart = textStart + bestByteLength + 1;
+
+  for (let index = 0; index < bestOffset; index += 1) {
+    patched.push(bytes[index]);
+  }
+
+  patched.push(replacementBytes.length & 255);
+  patched.push((replacementBytes.length >> 8) & 255);
+  patched.push((replacementBytes.length >> 16) & 255);
+  patched.push((replacementBytes.length >> 24) & 255);
+
+  for (const replacementByte of replacementBytes) {
+    patched.push(replacementByte);
+  }
+  patched.push(0);
+
+  if (bestHasOnlyZeroPaddingAfter) {
+    for (let zeroIndex = 0; zeroIndex < bestZeroPaddingLength; zeroIndex += 1) {
+      patched.push(0);
+    }
+  } else {
+    for (let padIndex = 0; padIndex < bestByteLength - replacementBytes.length; padIndex += 1) {
+      patched.push(0);
+    }
+    for (let index = suffixStart; index < bytes.length; index += 1) {
+      patched.push(bytes[index]);
+    }
+  }
+
+  return Buffer.from(Uint8Array.from(patched)).toString("base64");
+}
+
+function patchPremiereDefinitionJsonText(definitionText: string, nextText: string): string {
+  // // Keep definition-side client control text aligned with the patched project payload so Premiere metadata stays coherent.
+  try {
+    const definition = JSON.parse(String(definitionText || "")) as {
+      authorApp?: unknown;
+      clientControls?: Array<{
+        type?: unknown;
+        uiName?: { strDB?: Array<{ str?: unknown }> };
+        value?: { strDB?: Array<{ str?: unknown }> };
+      }>;
+    };
+    if (String(definition.authorApp || "").toLowerCase() !== "ppro" || !Array.isArray(definition.clientControls)) {
+      return definitionText;
+    }
+
+    for (const control of definition.clientControls) {
+      if (Number(control?.type) !== 6 || !Array.isArray(control?.value?.strDB)) {
+        continue;
+      }
+      for (const localizedValue of control.value.strDB) {
+        localizedValue.str = nextText;
+      }
+    }
+
+    return JSON.stringify(definition);
+  } catch {
+    return definitionText;
+  }
+}
+
+function patchPremiereProjectGraphicText(
+  projectArchiveBytes: Uint8Array,
+  payloads: PremiereTemplateTextPayload[],
+  nextText: string
+): Uint8Array {
+  // // Rebuild the inner `.prgraphic` archive with patched Source Text payloads so imported Premiere-authored MOGRTs already contain the right text.
+  const innerArchive = unzipSync(projectArchiveBytes);
+  const prprojKey = Object.keys(innerArchive).find((entryName) => /\.prproj$/i.test(String(entryName || "")));
+  if (!prprojKey) {
+    return projectArchiveBytes;
+  }
+
+  let projectXml = strFromU8(gunzipSync(innerArchive[prprojKey]));
+  for (const payload of payloads) {
+    const sourcePayloadBase64 = String(payload.sourcePayloadBase64 || "").replace(/\s+/g, "");
+    if (!sourcePayloadBase64) {
+      continue;
+    }
+    const patchedPayloadBase64 = patchPremiereTemplatePayloadBase64(sourcePayloadBase64, nextText);
+    projectXml = projectXml.replace(sourcePayloadBase64, patchedPayloadBase64);
+  }
+
+  innerArchive[prprojKey] = gzipSync(strToU8(projectXml));
+  return zipSync(innerArchive);
+}
+
+export async function buildPremiereTemplateCueMogrts(
+  mogrtPath: string,
+  cues: CaptionCue[],
+  payloads: PremiereTemplateTextPayload[]
+): Promise<{ cues: CaptionCue[]; cleanupPaths: string[] }> {
+  // // Generate one temporary `.mogrt` per cue for Premiere-authored templates so visible Source Text is correct before import and no destructive text rewrite is needed in host.
+  const modules = resolveCepNodeModules();
+  if (!modules || !payloads.length || !cues.length) {
+    return {
+      cues,
+      cleanupPaths: []
+    };
+  }
+
+  const sourceBytes = new Uint8Array(modules.fs.readFileSync(mogrtPath) as Uint8Array);
+  if (!sourceBytes.length) {
+    return {
+      cues,
+      cleanupPaths: []
+    };
+  }
+
+  const outerArchive = unzipSync(sourceBytes);
+  const definitionEntry = outerArchive["definition.json"];
+  const projectEntry = outerArchive["project.prgraphic"];
+  if (!definitionEntry || !projectEntry) {
+    return {
+      cues,
+      cleanupPaths: []
+    };
+  }
+
+  const tempRoot = modules.path.join(modules.os.tmpdir(), "subcreator-premiere-text-mogrts");
+  modules.fs.mkdirSync(tempRoot, { recursive: true });
+
+  const baseName = modules.path.basename(mogrtPath).replace(/\.mogrt$/i, "");
+  const cleanupPaths: string[] = [];
+  const patchedCues: CaptionCue[] = [];
+
+  for (let cueIndex = 0; cueIndex < cues.length; cueIndex += 1) {
+    const cue = cues[cueIndex];
+    const patchedArchive = { ...outerArchive };
+    patchedArchive["definition.json"] = strToU8(patchPremiereDefinitionJsonText(strFromU8(definitionEntry), cue.text));
+    patchedArchive["project.prgraphic"] = patchPremiereProjectGraphicText(projectEntry, payloads, cue.text);
+
+    const tempPath = modules.path.join(tempRoot, `${baseName}-${Date.now()}-${cueIndex}.mogrt`);
+    modules.fs.writeFileSync(tempPath, zipSync(patchedArchive));
+    cleanupPaths.push(tempPath);
+    patchedCues.push({
+      ...cue,
+      mogrtPathOverride: tempPath,
+      skipTextApply: true
+    });
+  }
+
+  return {
+    cues: patchedCues,
+    cleanupPaths
+  };
 }
 
 function resolveRuntimeMogrtPreviewFiles(

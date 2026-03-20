@@ -229,6 +229,10 @@ function subcreator_read_sequence_in_out_range(sequence) {
     rangeEndSeconds = NaN;
   }
 
+  if ((!isFinite(rangeStartSeconds) || rangeStartSeconds < 0) && isFinite(rangeEndSeconds) && rangeEndSeconds > 0) {
+    rangeStartSeconds = 0;
+  }
+
   if (!isFinite(rangeStartSeconds) || !isFinite(rangeEndSeconds) || rangeStartSeconds < 0 || rangeEndSeconds <= rangeStartSeconds) {
     rangeStartSeconds = NaN;
     rangeEndSeconds = NaN;
@@ -5323,7 +5327,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       }
 
       if (textUpdateCount < 1) {
-        var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null);
+        var textStats = subcreator_try_set_mogrt_controls(insertedTrackItem, textValue, "", null, [], false, null, null);
         textUpdateCount = textStats && textStats.textUpdates ? textStats.textUpdates : 0;
       }
 
@@ -7204,7 +7208,7 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   return false;
 }
 
-function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, templatePayloadState, stats, debugLines, debugPrefix) {
+function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, templatePayloadState, skipTextUpdates, stats, debugLines, debugPrefix) {
   // // Traverse nested Essential Graphics property groups and apply text/animation updates.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
@@ -7217,7 +7221,7 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (typeof property.setValue === "function") {
-      if (subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix)) {
+      if (!skipTextUpdates && subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix)) {
         stats.textUpdates += 1;
       }
 
@@ -7237,6 +7241,7 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
         animationMode,
         styleConfig,
         templatePayloadState,
+        skipTextUpdates,
         stats,
         debugLines,
         debugPrefix
@@ -7245,7 +7250,7 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
   }
 }
 
-function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig, templateTextPayloads, debugLines, debugPrefix) {
+function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, styleConfig, templateTextPayloads, skipTextUpdates, debugLines, debugPrefix) {
   // // Update text + animation related controls on inserted MOGRT components.
   if (!trackItem || !textValue) {
     return {
@@ -7292,6 +7297,7 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
       animationMode,
       styleConfig,
       templatePayloadState,
+      Boolean(skipTextUpdates),
       stats,
       debugLines,
       debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex)
@@ -8319,9 +8325,14 @@ function subcreator_apply_captions(payloadEncoded) {
       }
 
       if (hasMogrt && typeof sequence.importMGT === "function") {
+        var cueMogrtPath = subcreator_trim_string(String(cue.mogrtPathOverride || ""));
+        var cuePathCandidates = cueMogrtPath ? subcreator_build_mogrt_path_candidates(cueMogrtPath) : pathCandidates;
+        if (cueDebugEnabled && cueMogrtPath) {
+          subcreator_debug_push_limited(debugLines, cueDebugPrefix + " override_path=" + cueMogrtPath, 120);
+        }
         var importAttempt = subcreator_try_import_mogrt(
           sequence,
-          pathCandidates,
+          cuePathCandidates,
           startSeconds,
           videoTrackIndex,
           audioTrackIndex,
@@ -8339,10 +8350,13 @@ function subcreator_apply_captions(payloadEncoded) {
             options.style ? options.style.animationMode : "line",
             options.style || {},
             templateTextPayloads,
+            Boolean(cue.skipTextApply),
             cueDebugEnabled ? debugLines : null,
             cueDebugPrefix
           );
-          if (controlStats.textUpdates > 0) {
+          if (Boolean(cue.skipTextApply)) {
+            updatedText += 1;
+          } else if (controlStats.textUpdates > 0) {
             updatedText += controlStats.textUpdates;
           }
           if (controlStats.animationUpdates > 0) {

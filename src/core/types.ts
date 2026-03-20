@@ -19,6 +19,8 @@ export interface CaptionCue {
   endSeconds: number;
   text: string;
   words: CaptionWord[];
+  mogrtPathOverride?: string;
+  skipTextApply?: boolean;
 }
 
 // // Describe the style and animation configuration selected in the UI.

@@ -70,7 +70,7 @@ The package contains:
 - the extension itself
 - the macOS installer
 - the Windows installer
-- bundled Whisper models when the release includes them
+- one bundled Whisper model
 - this README
 
 ### 2. Close Premiere Pro

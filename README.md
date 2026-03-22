@@ -9,9 +9,6 @@ It is designed to be simple to use inside Premiere:
 - optionally fine-tune the selected MOGRTs in the built-in visual editor
 - rebalance subtitle text between selected MOGRTs in the built-in text editor
 
-A backup of the previous technical README is kept here:
-- `README.technical-backup.md`
-
 ## What Sub Creator can do
 
 - Import subtitles from an `SRT` file.

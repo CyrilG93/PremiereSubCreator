@@ -3383,7 +3383,7 @@ function subcreator_collect_mogrt_visual_properties_recursive(
       continue;
     }
 
-    var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
+    var currentPath = subcreator_visual_join_property_path(pathPrefix, index);
     var displayName = subcreator_trim_string(String(property.displayName || ""));
     if (!displayName) {
       displayName = "Property " + currentPath;
@@ -3503,7 +3503,7 @@ function subcreator_collect_text_style_debug_candidates(propertyCollection, path
       continue;
     }
 
-    var currentPath = pathPrefix ? pathPrefix + "." + String(index) : String(index);
+    var currentPath = subcreator_visual_join_property_path(pathPrefix, index);
     var displayName = subcreator_trim_string(String(property.displayName || ""));
     if (!displayName) {
       displayName = "Property " + currentPath;
@@ -3609,6 +3609,59 @@ function subcreator_find_property_by_path(propertyCollection, pathValue) {
   }
 
   return null;
+}
+
+function subcreator_visual_join_property_path(pathPrefix, index) {
+  // // Join nested property indexes while keeping component-prefixed roots like `c1|0.2` stable.
+  var prefix = subcreator_trim_string(String(pathPrefix || ""));
+  if (!prefix) {
+    return String(index);
+  }
+
+  if (prefix.charAt(prefix.length - 1) === "|") {
+    return prefix + String(index);
+  }
+
+  return prefix + "." + String(index);
+}
+
+function subcreator_visual_build_component_path_prefix(componentIndex) {
+  // // Prefix visual-editor paths with the source component index so Premiere-authored MOGRTs can expose multiple components safely.
+  return "c" + String(Math.max(0, Number(componentIndex || 0))) + "|";
+}
+
+function subcreator_visual_parse_component_prefixed_path(pathValue) {
+  // // Decode optional component-prefixed visual-editor paths like `c2|0.4::textstyle.fontSize`.
+  var pathText = subcreator_trim_string(String(pathValue || ""));
+  var match = /^c(\d+)\|([\s\S]*)$/.exec(pathText);
+  if (!match) {
+    return {
+      componentIndex: 0,
+      propertyPath: pathText
+    };
+  }
+
+  return {
+    componentIndex: Number(match[1] || 0),
+    propertyPath: subcreator_trim_string(String(match[2] || ""))
+  };
+}
+
+function subcreator_visual_resolve_property_from_track_item(trackItem, pathValue) {
+  // // Resolve one visual-editor path back to the correct component/property pair on a track item.
+  var parsedPath = subcreator_visual_parse_component_prefixed_path(pathValue);
+  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  var component = components[parsedPath.componentIndex];
+  if (!component || !component.properties) {
+    return null;
+  }
+
+  return {
+    componentIndex: parsedPath.componentIndex,
+    propertyPath: parsedPath.propertyPath,
+    component: component,
+    property: subcreator_find_property_by_path(component.properties, parsedPath.propertyPath)
+  };
 }
 
 function subcreator_visual_parse_text_style_virtual_path(pathValue) {
@@ -4926,21 +4979,26 @@ function subcreator_list_selected_mogrt_properties() {
       });
     }
 
-    var firstComponent = subcreator_get_mogrt_component_from_track_item(mogrtItems[0]);
+    var firstTrackItem = mogrtItems[0];
+    var components = subcreator_get_mogrt_components_from_track_item(firstTrackItem);
     var properties = [];
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
     subcreator_visual_reset_group_sequence_axis_preferences();
     subcreator_visual_reset_text_style_option_cache();
-    subcreator_collect_mogrt_visual_properties_recursive(
-      firstComponent ? firstComponent.properties : null,
-      "",
-      "",
-      properties
-    );
+    for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+      subcreator_collect_mogrt_visual_properties_recursive(
+        components[componentIndex] ? components[componentIndex].properties : null,
+        subcreator_visual_build_component_path_prefix(componentIndex),
+        "",
+        properties
+      );
+    }
 
     var debug = {
       sequenceWidth: sequenceSize.width,
       sequenceHeight: sequenceSize.height,
+      componentCount: components.length,
+      components: [],
       vectorCount: 0,
       colorCount: 0,
       selectCount: 0,
@@ -4964,8 +5022,10 @@ function subcreator_list_selected_mogrt_properties() {
         debug.sample.length < 20 &&
         (item.controlKind === "vector" || item.controlKind === "color" || item.controlKind === "select")
       ) {
+        var samplePathState = subcreator_visual_parse_component_prefixed_path(item.path);
         var sampleEntry = {
           path: item.path,
+          componentIndex: samplePathState.componentIndex,
           name: item.displayName,
           group: item.groupPath,
           kind: item.controlKind,
@@ -4974,13 +5034,15 @@ function subcreator_list_selected_mogrt_properties() {
           vectorMode: item.vectorMode || null
         };
 
-        if (item.controlKind === "color" && firstComponent && firstComponent.properties) {
+        if (item.controlKind === "color") {
           // // Include raw color API/value snapshots to troubleshoot host channel-order inconsistencies.
-          var sampleProperty = subcreator_find_property_by_path(firstComponent.properties, item.path);
-          if (sampleProperty) {
+          var sampleResolved = subcreator_visual_resolve_property_from_track_item(firstTrackItem, item.path);
+          if (sampleResolved && sampleResolved.property) {
             try {
               var sampleColorApiValue =
-                typeof sampleProperty.getColorValue === "function" ? sampleProperty.getColorValue() : "<no getColorValue>";
+                typeof sampleResolved.property.getColorValue === "function"
+                  ? sampleResolved.property.getColorValue()
+                  : "<no getColorValue>";
               sampleEntry.colorApiRaw =
                 typeof sampleColorApiValue === "string" ? sampleColorApiValue : JSON.stringify(sampleColorApiValue);
             } catch (sampleColorApiError) {
@@ -4988,7 +5050,10 @@ function subcreator_list_selected_mogrt_properties() {
             }
 
             try {
-              var sampleRawValue = typeof sampleProperty.getValue === "function" ? sampleProperty.getValue() : "<no getValue>";
+              var sampleRawValue =
+                typeof sampleResolved.property.getValue === "function"
+                  ? sampleResolved.property.getValue()
+                  : "<no getValue>";
               sampleEntry.valueRaw = typeof sampleRawValue === "string" ? sampleRawValue : JSON.stringify(sampleRawValue);
             } catch (sampleRawError) {
               sampleEntry.valueRaw = "<error " + String(sampleRawError) + ">";
@@ -5000,8 +5065,24 @@ function subcreator_list_selected_mogrt_properties() {
       }
     }
 
-    if (firstComponent && firstComponent.properties) {
-      subcreator_collect_text_style_debug_candidates(firstComponent.properties, "", "", debug.textStyleCandidates, 20);
+    for (var debugComponentIndex = 0; debugComponentIndex < components.length; debugComponentIndex += 1) {
+      var debugComponent = components[debugComponentIndex];
+      if (!debugComponent || !debugComponent.properties) {
+        continue;
+      }
+
+      debug.components.push({
+        index: debugComponentIndex,
+        name: subcreator_trim_string(String(debugComponent.displayName || debugComponent.name || "")) || "Component " + String(debugComponentIndex),
+        propertyCount: Number(debugComponent.properties.numItems || 0)
+      });
+      subcreator_collect_text_style_debug_candidates(
+        debugComponent.properties,
+        subcreator_visual_build_component_path_prefix(debugComponentIndex),
+        "",
+        debug.textStyleCandidates,
+        20
+      );
     }
 
     return subcreator_ok({
@@ -5439,8 +5520,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
     for (var clipIndex = clipStartIndex; clipIndex < clipEndIndex; clipIndex += 1) {
       var clip = mogrtItems[clipIndex];
-      var component = subcreator_get_mogrt_component_from_track_item(clip);
-      if (!component || !component.properties) {
+      var clipComponents = subcreator_get_mogrt_components_from_track_item(clip);
+      if (clipComponents.length < 1) {
         failedCount += changes.length;
         continue;
       }
@@ -5463,7 +5544,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           continue;
         }
 
-        var property = subcreator_find_property_by_path(component.properties, resolvedPath);
+        var resolvedProperty = subcreator_visual_resolve_property_from_track_item(clip, resolvedPath);
+        var property = resolvedProperty ? resolvedProperty.property : null;
         if (!property || typeof property.setValue !== "function") {
           failedCount += 1;
           continue;
@@ -7322,15 +7404,22 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
 
 function subcreator_build_visual_clone_changes_from_track_item(trackItem) {
   // // Snapshot editable visual controls from one clip so split/merge can recreate clips without losing style.
-  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
-  if (!component || !component.properties) {
+  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  if (components.length < 1) {
     return [];
   }
 
   var properties = [];
   subcreator_visual_reset_group_sequence_axis_preferences();
   subcreator_visual_reset_text_style_option_cache();
-  subcreator_collect_mogrt_visual_properties_recursive(component.properties, "", "", properties);
+  for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+    subcreator_collect_mogrt_visual_properties_recursive(
+      components[componentIndex] ? components[componentIndex].properties : null,
+      subcreator_visual_build_component_path_prefix(componentIndex),
+      "",
+      properties
+    );
+  }
 
   var changes = [];
   for (var propertyIndex = 0; propertyIndex < properties.length; propertyIndex += 1) {
@@ -7361,8 +7450,8 @@ function subcreator_apply_visual_changes_to_track_item(trackItem, changes, debug
     };
   }
 
-  var component = subcreator_get_mogrt_component_from_track_item(trackItem);
-  if (!component || !component.properties) {
+  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  if (components.length < 1) {
     return {
       updatedCount: 0,
       failedCount: changes.length
@@ -7389,7 +7478,8 @@ function subcreator_apply_visual_changes_to_track_item(trackItem, changes, debug
       continue;
     }
 
-    var property = subcreator_find_property_by_path(component.properties, resolvedPath);
+    var resolvedProperty = subcreator_visual_resolve_property_from_track_item(trackItem, resolvedPath);
+    var property = resolvedProperty ? resolvedProperty.property : null;
     if (!property || typeof property.setValue !== "function") {
       failedCount += 1;
       continue;

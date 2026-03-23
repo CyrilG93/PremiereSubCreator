@@ -281,6 +281,7 @@ Useful notes:
 - `Live update` can apply changes while you tweak values
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
+- Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
 
 ## Text editor
 

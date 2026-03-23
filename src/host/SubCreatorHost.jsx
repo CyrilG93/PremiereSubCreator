@@ -1848,6 +1848,46 @@ function subcreator_visual_build_select_options(displayName, rawValue) {
     return options;
   }
 
+  function buildInferredBlendModeOptions() {
+    // // Adobe documents only expose numeric ComponentParam values here, so these labels are inferred from the common Adobe blend-mode ordering.
+    var labels = [
+      "Normal",
+      "Dissolve",
+      "Darken",
+      "Multiply",
+      "Color Burn",
+      "Linear Burn",
+      "Darker Color",
+      "Lighten",
+      "Screen",
+      "Color Dodge",
+      "Linear Dodge",
+      "Lighter Color",
+      "Overlay",
+      "Soft Light",
+      "Hard Light",
+      "Vivid Light",
+      "Linear Light",
+      "Pin Light",
+      "Hard Mix",
+      "Difference",
+      "Exclusion",
+      "Subtract",
+      "Divide",
+      "Hue",
+      "Saturation",
+      "Color",
+      "Luminosity"
+    ];
+    if (numericValue >= 0 && numericValue < labels.length) {
+      return buildLabeledRange(0, labels);
+    }
+    if (numericValue >= 1 && numericValue <= labels.length) {
+      return buildLabeledRange(1, labels);
+    }
+    return null;
+  }
+
   if (key.indexOf("based on") !== -1 || key.indexOf("highlight based on") !== -1) {
     if (numericValue >= 0 && numericValue <= 1) {
       return buildLabeledRange(0, ["Words", "Lines"]);
@@ -1864,6 +1904,10 @@ function subcreator_visual_build_select_options(displayName, rawValue) {
     if (numericValue >= 1 && numericValue <= 4) {
       return buildLabeledRange(1, ["Left", "Center", "Right", "Justify"]);
     }
+  }
+
+  if (key.indexOf("blend mode") !== -1 || key === "blendmode") {
+    return buildInferredBlendModeOptions();
   }
 
   return null;
@@ -3630,6 +3674,16 @@ function subcreator_visual_build_component_path_prefix(componentIndex) {
   return "c" + String(Math.max(0, Number(componentIndex || 0))) + "|";
 }
 
+function subcreator_visual_get_component_group_label(component, componentIndex) {
+  // // Use the component/layer name as the top-level visual-editor group label when multiple components are exposed.
+  var componentName = subcreator_trim_string(String((component && (component.displayName || component.name)) || ""));
+  if (!componentName) {
+    return "Component " + String(Math.max(0, Number(componentIndex || 0)) + 1);
+  }
+
+  return componentName;
+}
+
 function subcreator_visual_parse_component_prefixed_path(pathValue) {
   // // Decode optional component-prefixed visual-editor paths like `c2|0.4::textstyle.fontSize`.
   var pathText = subcreator_trim_string(String(pathValue || ""));
@@ -4986,10 +5040,11 @@ function subcreator_list_selected_mogrt_properties() {
     subcreator_visual_reset_group_sequence_axis_preferences();
     subcreator_visual_reset_text_style_option_cache();
     for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+      var componentGroupPath = components.length > 1 ? subcreator_visual_get_component_group_label(components[componentIndex], componentIndex) : "";
       subcreator_collect_mogrt_visual_properties_recursive(
         components[componentIndex] ? components[componentIndex].properties : null,
         subcreator_visual_build_component_path_prefix(componentIndex),
-        "",
+        componentGroupPath,
         properties
       );
     }
@@ -5079,7 +5134,7 @@ function subcreator_list_selected_mogrt_properties() {
       subcreator_collect_text_style_debug_candidates(
         debugComponent.properties,
         subcreator_visual_build_component_path_prefix(debugComponentIndex),
-        "",
+        components.length > 1 ? subcreator_visual_get_component_group_label(debugComponent, debugComponentIndex) : "",
         debug.textStyleCandidates,
         20
       );

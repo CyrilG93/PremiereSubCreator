@@ -282,6 +282,7 @@ Useful notes:
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
+- when multiple Premiere components are exposed, the `Visual editor` groups controls by component/layer name instead of flattening everything into `General`
 
 ## Text editor
 

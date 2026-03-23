@@ -3345,13 +3345,13 @@ function resolveVisualTextStyleToken(basePath: string): string {
   return "";
 }
 
-function collectVisualPropertyChanges(): VisualPropertyChange[] {
-  // // Build payload from rendered editor controls for host-side property updates.
-  // // Always include current values so styles can be re-applied to any newly selected MOGRT clips.
+function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }): VisualPropertyChange[] {
+  // // Build host payload from rendered editor controls and skip unchanged values unless a full cross-clip clone is requested.
   if (!elements.visualPropertyList) {
     return [];
   }
 
+  const includeUnchanged = options?.includeUnchanged === true;
   const changes: VisualPropertyChange[] = [];
   const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
     '[data-visual-role="value"]'
@@ -3383,6 +3383,12 @@ function collectVisualPropertyChanges(): VisualPropertyChange[] {
       value = Number(control.value);
     } else {
       value = control.value;
+    }
+
+    const currentCanonical = canonicalizeVisualValue(controlKind, valueType, value);
+    const originalCanonical = String(visualOriginalValuesByPath.get(path) || "");
+    if (!includeUnchanged && currentCanonical === originalCanonical) {
+      return;
     }
 
     const textStylePath = parseTextStyleVirtualPath(path);
@@ -3464,13 +3470,6 @@ function isVisualLiveUpdateEnabled(): boolean {
 async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean }): Promise<void> {
   // // Apply edited visual values; use progressive per-clip mode for multi-selection manual apply.
   const useLiveUpdate = options?.liveUpdate === true;
-  const changes = collectVisualPropertyChanges();
-  if (!changes.length) {
-    if (useLiveUpdate) {
-      return;
-    }
-    throw new Error(translate("visual.noChanges"));
-  }
 
   if (visualApplyInProgress) {
     if (useLiveUpdate) {
@@ -3487,6 +3486,22 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
 
   try {
     const selectedCount = await getSelectedMogrtCount();
+    let changes = collectVisualPropertyChanges();
+    if (!changes.length) {
+      if (useLiveUpdate) {
+        return;
+      }
+
+      // // Keep the one-click "copy first selected clip to the rest" workflow by sending a full clone only for explicit multi-selection applies.
+      if (selectedCount > 1) {
+        changes = collectVisualPropertyChanges({ includeUnchanged: true });
+      }
+    }
+
+    if (!changes.length) {
+      throw new Error(translate("visual.noChanges"));
+    }
+
     if (!useLiveUpdate && selectedCount > 1) {
       let updatedCount = 0;
       let failedCount = 0;

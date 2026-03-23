@@ -283,7 +283,9 @@ Useful notes:
 - logs can be collapsed or switched between compact/full modes
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
 - when multiple Premiere components are exposed, the `Visual editor` groups controls by component/layer name instead of flattening everything into `General`
-- low-signal internal controls such as generic `Property ...`, `Align`, and `Parent Width/Height/Rotation` are hidden to keep Premiere-authored templates more usable
+- low-signal internal controls such as generic `Property ...` and raw `Align` toggles are hidden to keep Premiere-authored templates more usable
+- Premiere-only `Responsive Design` pins such as `Left/Top/Right/Bottom` are grouped separately when they are exposed
+- on a single selected clip, `Apply changes` sends only controls you actually changed in the panel, so ambiguous Premiere-only fields are less likely to be rewritten accidentally
 
 ## Text editor
 

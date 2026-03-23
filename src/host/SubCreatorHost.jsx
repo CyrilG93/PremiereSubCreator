@@ -3683,6 +3683,69 @@ function subcreator_visual_get_component_group_label(component, componentIndex) 
   return componentName;
 }
 
+function subcreator_visual_group_mentions(groupPath, token) {
+  // // Match simple component/group keywords without relying on exact localized group labels.
+  var normalizedGroup = " " + String(groupPath || "").toLowerCase().replace(/[\/|_-]+/g, " ") + " ";
+  var normalizedToken = subcreator_trim_string(String(token || "")).toLowerCase();
+  if (!normalizedToken) {
+    return false;
+  }
+
+  return normalizedGroup.indexOf(" " + normalizedToken + " ") !== -1;
+}
+
+function subcreator_visual_append_group_suffix(groupPath, suffix) {
+  // // Preserve the top-level component label while splitting Premiere-only sections into clearer sub-groups.
+  var baseGroup = subcreator_trim_string(String(groupPath || ""));
+  var groupSuffix = subcreator_trim_string(String(suffix || ""));
+  if (!groupSuffix) {
+    return baseGroup || "General";
+  }
+  if (!baseGroup) {
+    return groupSuffix;
+  }
+  if (String(baseGroup).toLowerCase().indexOf(String(groupSuffix).toLowerCase()) !== -1) {
+    return baseGroup;
+  }
+  return baseGroup + " / " + groupSuffix;
+}
+
+function subcreator_visual_normalize_descriptor(descriptor) {
+  // // Rename a few Premiere-authored internal labels into something closer to the Properties panel wording.
+  if (!descriptor) {
+    return null;
+  }
+
+  var normalized = {};
+  for (var key in descriptor) {
+    if (descriptor.hasOwnProperty(key)) {
+      normalized[key] = descriptor[key];
+    }
+  }
+
+  var displayName = subcreator_trim_string(String(normalized.displayName || ""));
+  var groupPath = subcreator_trim_string(String(normalized.groupPath || ""));
+  var normalizedKey = subcreator_visual_normalize_label_key(displayName);
+  var isShapeGroup = subcreator_visual_group_mentions(groupPath, "shape");
+  var isTextGroup = subcreator_visual_group_mentions(groupPath, "text");
+
+  if ((isShapeGroup || isTextGroup) && normalizedKey === "parentwidth") {
+    normalized.displayName = isShapeGroup ? "Width" : "Parent Width";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+  } else if ((isShapeGroup || isTextGroup) && normalizedKey === "parentheight") {
+    normalized.displayName = isShapeGroup ? "Height" : "Parent Height";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+  } else if (isShapeGroup && normalizedKey === "parentrotation") {
+    // // Premiere's Shape layer exposes roundness through an internal `Parent Rotation` label on this API path.
+    normalized.displayName = "Roundness";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+  } else if ((isShapeGroup || isTextGroup) && /^(left|top|right|bottom)$/.test(normalizedKey)) {
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Responsive Design");
+  }
+
+  return normalized;
+}
+
 function subcreator_visual_should_hide_descriptor(descriptor) {
   // // Hide internal or misleading controls so Premiere-authored templates stay readable in the Visual editor.
   if (!descriptor) {
@@ -3700,10 +3763,14 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
   }
 
   if (
-    normalizedKey === "parentwidth" ||
-    normalizedKey === "parentheight" ||
-    normalizedKey === "parentrotation"
+    (normalizedKey === "parentwidth" || normalizedKey === "parentheight" || normalizedKey === "parentrotation") &&
+    !subcreator_visual_group_mentions(descriptor.groupPath || "", "shape") &&
+    !subcreator_visual_group_mentions(descriptor.groupPath || "", "text")
   ) {
+    return true;
+  }
+
+  if ((normalizedKey === "start" || normalizedKey === "end") && subcreator_visual_group_mentions(descriptor.groupPath || "", "text")) {
     return true;
   }
 
@@ -3711,6 +3778,10 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
     (normalizedKey === "path" || normalizedKey === "appearance" || normalizedKey === "transform") &&
     descriptor.controlKind === "string"
   ) {
+    return true;
+  }
+
+  if (normalizedKey === "transform" && descriptor.controlKind === "boolean") {
     return true;
   }
 
@@ -3727,7 +3798,7 @@ function subcreator_visual_filter_property_descriptors(properties) {
   var seenGroupDisplayKeys = {};
 
   for (var index = 0; index < properties.length; index += 1) {
-    var descriptor = properties[index];
+    var descriptor = subcreator_visual_normalize_descriptor(properties[index]);
     if (subcreator_visual_should_hide_descriptor(descriptor)) {
       continue;
     }

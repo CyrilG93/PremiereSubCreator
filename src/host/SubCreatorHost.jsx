@@ -3730,6 +3730,23 @@ function subcreator_visual_normalize_descriptor(descriptor) {
   var isShapeGroup = subcreator_visual_group_mentions(groupPath, "shape");
   var isTextGroup = subcreator_visual_group_mentions(groupPath, "text");
 
+  if (isShapeGroup && normalizedKey === "parentwidth") {
+    // // Premiere Shape layers expose Width through an internal parent-sized control; surface it under Align and Transform but keep cloning conservative.
+    normalized.displayName = "Width";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+    normalized.cloneOnlyWhenDirty = true;
+  } else if (isShapeGroup && normalizedKey === "parentheight") {
+    // // Premiere Shape layers expose Height through an internal parent-sized control; surface it under Align and Transform but keep cloning conservative.
+    normalized.displayName = "Height";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+    normalized.cloneOnlyWhenDirty = true;
+  } else if (isShapeGroup && normalizedKey === "parentrotation") {
+    // // Premiere stores Shape roundness in one internal rotation-like slot, so expose it with the label users expect from the Properties panel.
+    normalized.displayName = "Roundness";
+    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
+    normalized.cloneOnlyWhenDirty = true;
+  }
+
   if ((isShapeGroup || isTextGroup) && /^(left|top|right|bottom)$/.test(normalizedKey)) {
     normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Responsive Design");
   }

@@ -90,6 +90,7 @@ interface HostVisualProperty {
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
+  cloneOnlyWhenDirty?: boolean;
   options?: Array<{ value: number | string; label: string }>;
   styleOptionsByFamily?: Record<string, string[]>;
   vectorScale?: number[];
@@ -2845,6 +2846,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     ["vector motion", 1],
     ["opacity", 2]
   ]);
+  const clipRootVisualNode: VisualEditorSectionNode = {
+    key: "clip-root",
+    label: "Clip",
+    properties: [],
+    children: []
+  };
 
   const splitVisualGroupPath = (value: string): string[] =>
     String(value || "")
@@ -2936,9 +2943,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     const componentKey = String(componentEntry.componentName || "").trim().toLowerCase();
     const duplicateCount = duplicateComponentCounts.get(componentKey) || 0;
     const duplicateOffset = duplicateComponentRemainders.get(componentKey) || duplicateCount;
-    const baseLabel = isClipLevelComponent(componentEntry.componentName)
-      ? `Clip ${componentEntry.componentName}`
-      : componentEntry.componentName;
+    const baseLabel = componentEntry.componentName;
     const displayLabel =
       duplicateCount > 1 ? `${baseLabel} ${String(duplicateOffset).padStart(2, "0")}` : baseLabel;
     componentLabelByIndex.set(componentEntry.componentIndex, displayLabel);
@@ -3052,7 +3057,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     const normalizedComponentName = componentName.toLowerCase();
 
     if (isClipLevelComponent(componentName)) {
-      topLevelVisualNodes.push(componentNode);
+      clipRootVisualNode.children.push(componentNode);
       continue;
     }
 
@@ -3068,6 +3073,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
 
     topLevelVisualNodes.push(componentNode);
+  }
+
+  if (clipRootVisualNode.children.length > 0) {
+    // // Keep clip-level controls grouped together at the bottom so layer/effect sections stay closer to Premiere ordering.
+    topLevelVisualNodes.push(clipRootVisualNode);
   }
 
   const appendVisualPropertyRows = (targetBody: HTMLElement, groupProperties: HostVisualProperty[]): void => {
@@ -3088,6 +3098,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         checkbox.dataset.visualType = property.valueType;
         checkbox.dataset.visualControlKind = property.controlKind;
         checkbox.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          checkbox.dataset.visualCloneOnlyWhenDirty = "1";
+        }
         bindLiveUpdateEvent(checkbox, "change");
 
         const textStylePath = parseTextStyleVirtualPath(property.path);
@@ -3187,6 +3200,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hiddenInput.dataset.visualType = property.valueType;
         hiddenInput.dataset.visualControlKind = property.controlKind;
         hiddenInput.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
+        }
 
         let syncing = false;
 
@@ -3291,6 +3307,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         numberInput.dataset.visualType = property.valueType;
         numberInput.dataset.visualControlKind = property.controlKind;
         numberInput.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          numberInput.dataset.visualCloneOnlyWhenDirty = "1";
+        }
 
         rangeInput.addEventListener("input", () => {
           numberInput.value = rangeInput.value;
@@ -3316,6 +3335,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         hiddenInput.dataset.visualType = property.valueType;
         hiddenInput.dataset.visualControlKind = property.controlKind;
         hiddenInput.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
+        }
         if (Array.isArray(property.vectorScale) && property.vectorScale.length > 0) {
           hiddenInput.dataset.visualVectorScale = JSON.stringify(property.vectorScale);
         }
@@ -3368,6 +3390,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         select.dataset.visualType = property.valueType;
         select.dataset.visualControlKind = property.controlKind;
         select.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          select.dataset.visualCloneOnlyWhenDirty = "1";
+        }
 
         const textStylePath = parseTextStyleVirtualPath(property.path);
         if (textStylePath) {
@@ -3487,6 +3512,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         input.dataset.visualType = property.valueType;
         input.dataset.visualControlKind = property.controlKind;
         input.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          input.dataset.visualCloneOnlyWhenDirty = "1";
+        }
         bindLiveUpdateEvent(input, "input");
         controlWrap.appendChild(input);
       }
@@ -3616,6 +3644,7 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
     const valueType = (String(control.dataset.visualType || "string") as HostVisualProperty["valueType"]) || "string";
     const controlKind =
       (String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"]) || "string";
+    const cloneOnlyWhenDirty = String(control.dataset.visualCloneOnlyWhenDirty || "") === "1";
     const vectorScaleRaw = String(control.dataset.visualVectorScale || "");
     const vectorScale = vectorScaleRaw
       ? (() => {
@@ -3631,6 +3660,10 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
       return;
     }
     if (restrictToDirtyPaths && !visualDirtyPaths.has(path)) {
+      return;
+    }
+    if (includeUnchanged && cloneOnlyWhenDirty && !visualDirtyPaths.has(path)) {
+      // // Keep ambiguous Premiere-only controls visible, but never clone them across clips unless the user changed them explicitly.
       return;
     }
 

@@ -118,6 +118,7 @@ export interface SelectedMogrtVisualProperty {
   groupPath: string;
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
+  cloneOnlyWhenDirty?: boolean;
   options?: Array<{ value: number | string; label: string }>;
   styleOptionsByFamily?: Record<string, string[]>;
   vectorScale?: number[];
@@ -3016,6 +3017,7 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
       groupPath,
       valueType,
       controlKind,
+      cloneOnlyWhenDirty: item.cloneOnlyWhenDirty === true,
       options: Array.isArray(item.options)
         ? item.options
             .map((option) => {

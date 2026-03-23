@@ -1829,9 +1829,10 @@ function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
   };
 }
 
-function subcreator_visual_build_select_options(displayName, rawValue) {
+function subcreator_visual_build_select_options(displayName, rawValue, groupPath) {
   // // Build known dropdown option sets for menu-like numeric controls.
   var key = String(displayName || "").toLowerCase();
+  var groupKey = String(groupPath || "").toLowerCase();
   var numericValue = Number(rawValue);
   if (isNaN(numericValue)) {
     return null;
@@ -1848,44 +1849,15 @@ function subcreator_visual_build_select_options(displayName, rawValue) {
     return options;
   }
 
-  function buildInferredBlendModeOptions() {
-    // // Adobe documents only expose numeric ComponentParam values here, so these labels are inferred from the common Adobe blend-mode ordering.
-    var labels = [
-      "Normal",
-      "Dissolve",
-      "Darken",
-      "Multiply",
-      "Color Burn",
-      "Linear Burn",
-      "Darker Color",
-      "Lighten",
-      "Screen",
-      "Color Dodge",
-      "Linear Dodge",
-      "Lighter Color",
-      "Overlay",
-      "Soft Light",
-      "Hard Light",
-      "Vivid Light",
-      "Linear Light",
-      "Pin Light",
-      "Hard Mix",
-      "Difference",
-      "Exclusion",
-      "Subtract",
-      "Divide",
-      "Hue",
-      "Saturation",
-      "Color",
-      "Luminosity"
-    ];
-    if (numericValue >= 0 && numericValue < labels.length) {
-      return buildLabeledRange(0, labels);
+  function buildEnumeratedOptions(values, labels) {
+    var options = [];
+    for (var optionIndex = 0; optionIndex < values.length && optionIndex < labels.length; optionIndex += 1) {
+      options.push({
+        value: values[optionIndex],
+        label: labels[optionIndex]
+      });
     }
-    if (numericValue >= 1 && numericValue <= labels.length) {
-      return buildLabeledRange(1, labels);
-    }
-    return null;
+    return options;
   }
 
   if (key.indexOf("based on") !== -1 || key.indexOf("highlight based on") !== -1) {
@@ -1907,7 +1879,34 @@ function subcreator_visual_build_select_options(displayName, rawValue) {
   }
 
   if (key.indexOf("blend mode") !== -1 || key === "blendmode") {
-    return buildInferredBlendModeOptions();
+    if (groupKey.indexOf("opacity") !== -1) {
+      // // Premiere's main clip blend mode behaves like Adobe's classic internal blend-mode enum values rather than a 0-based list.
+      return buildEnumeratedOptions(
+        [
+          12, 13, 15, 16, 17, 18, 19,
+          20, 22, 23, 24, 25,
+          26, 27, 28, 29, 30, 31, 32,
+          33, 34, 35, 36,
+          37, 38, 39, 40
+        ],
+        [
+          "Normal", "Dissolve", "Darken", "Multiply", "Color Burn", "Linear Burn", "Darker Color",
+          "Lighten", "Screen", "Color Dodge", "Linear Dodge (Add)", "Lighter Color",
+          "Overlay", "Soft Light", "Hard Light", "Vivid Light", "Linear Light", "Pin Light", "Hard Mix",
+          "Difference", "Exclusion", "Subtract", "Divide",
+          "Hue", "Saturation", "Color", "Luminosity"
+        ]
+      );
+    }
+
+    if (groupKey.indexOf("wonder glow") !== -1 || groupKey.indexOf("glow") !== -1) {
+      if (numericValue >= 0 && numericValue <= 1) {
+        return buildLabeledRange(0, ["Screen", "Additive"]);
+      }
+      if (numericValue >= 1 && numericValue <= 2) {
+        return buildLabeledRange(1, ["Screen", "Additive"]);
+      }
+    }
   }
 
   return null;
@@ -3330,7 +3329,7 @@ function subcreator_build_visual_property_entry(property, currentPath, displayNa
       value = 0;
     }
 
-    var selectOptions = subcreator_visual_build_select_options(displayName, value);
+    var selectOptions = subcreator_visual_build_select_options(displayName, value, groupPath);
     if (selectOptions && selectOptions.length > 0) {
       return {
         path: currentPath,
@@ -3682,6 +3681,71 @@ function subcreator_visual_get_component_group_label(component, componentIndex) 
   }
 
   return componentName;
+}
+
+function subcreator_visual_should_hide_descriptor(descriptor) {
+  // // Hide internal or misleading controls so Premiere-authored templates stay readable in the Visual editor.
+  if (!descriptor) {
+    return true;
+  }
+
+  var displayName = subcreator_trim_string(String(descriptor.displayName || ""));
+  var normalizedKey = subcreator_visual_normalize_label_key(displayName);
+  if (!displayName || /^Property\s+/i.test(displayName)) {
+    return true;
+  }
+
+  if (normalizedKey === "align") {
+    return true;
+  }
+
+  if (
+    normalizedKey === "parentwidth" ||
+    normalizedKey === "parentheight" ||
+    normalizedKey === "parentrotation"
+  ) {
+    return true;
+  }
+
+  if (
+    (normalizedKey === "path" || normalizedKey === "appearance" || normalizedKey === "transform") &&
+    descriptor.controlKind === "string"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function subcreator_visual_filter_property_descriptors(properties) {
+  // // Remove duplicate or low-signal descriptors from the Visual editor list while keeping host paths stable.
+  if (!properties || typeof properties.length !== "number") {
+    return [];
+  }
+
+  var filtered = [];
+  var seenGroupDisplayKeys = {};
+
+  for (var index = 0; index < properties.length; index += 1) {
+    var descriptor = properties[index];
+    if (subcreator_visual_should_hide_descriptor(descriptor)) {
+      continue;
+    }
+
+    var displayName = subcreator_trim_string(String(descriptor.displayName || ""));
+    var groupPath = subcreator_trim_string(String(descriptor.groupPath || ""));
+    var duplicateKey = String(groupPath).toLowerCase() + "::" + String(displayName).toLowerCase();
+    if (String(displayName).toLowerCase() === "blend mode") {
+      if (seenGroupDisplayKeys[duplicateKey]) {
+        continue;
+      }
+      seenGroupDisplayKeys[duplicateKey] = true;
+    }
+
+    filtered.push(descriptor);
+  }
+
+  return filtered;
 }
 
 function subcreator_visual_parse_component_prefixed_path(pathValue) {
@@ -5048,6 +5112,7 @@ function subcreator_list_selected_mogrt_properties() {
         properties
       );
     }
+    properties = subcreator_visual_filter_property_descriptors(properties);
 
     var debug = {
       sequenceWidth: sequenceSize.width,

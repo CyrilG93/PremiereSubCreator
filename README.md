@@ -283,6 +283,7 @@ Useful notes:
 - logs can be collapsed or switched between compact/full modes
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
 - when multiple Premiere components are exposed, the `Visual editor` groups controls by component/layer name instead of flattening everything into `General`
+- low-signal internal controls such as generic `Property ...`, `Align`, and `Parent Width/Height/Rotation` are hidden to keep Premiere-authored templates more usable
 
 ## Text editor
 

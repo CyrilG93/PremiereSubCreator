@@ -1623,6 +1623,12 @@ function canonicalizeVisualValue(
   return String(value ?? "");
 }
 
+function parseVisualComponentIndex(path: string): number {
+  // // Recover the host component index from `c4|...` visual paths so duplicate Premiere groups do not collapse together.
+  const match = /^c(\d+)\|/.exec(String(path || "").trim());
+  return match ? Number(match[1] || 0) : 0;
+}
+
 function captureOpenVisualGroupsFromDom(): void {
   // // Persist current expand/collapse state before re-rendering the visual editor list.
   if (!elements.visualPropertyList) {
@@ -2817,36 +2823,95 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
   };
 
-  const grouped = new Map<string, HostVisualProperty[]>();
+  const clipLevelSectionOrder = new Map([
+    ["motion", 0],
+    ["vector motion", 1],
+    ["opacity", 2]
+  ]);
+  const grouped = new Map<
+    string,
+    {
+      displayName: string;
+      componentIndex: number;
+      encounterOrder: number;
+      properties: HostVisualProperty[];
+    }
+  >();
   for (const property of renderProperties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
       continue;
     }
 
     const rawGroup = String(property.groupPath || "").trim();
-    const groupKey = rawGroup && !looksLikeGuidList(rawGroup) ? rawGroup : "General";
+    const groupName = rawGroup && !looksLikeGuidList(rawGroup) ? rawGroup : "General";
+    const componentIndex = parseVisualComponentIndex(property.path);
+    const groupKey = `${componentIndex}::${groupName}`;
     visualOriginalValuesByPath.set(
       property.path,
       canonicalizeVisualValue(property.controlKind, property.valueType, property.value)
     );
     const existing = grouped.get(groupKey);
     if (existing) {
-      existing.push(property);
+      existing.properties.push(property);
     } else {
-      grouped.set(groupKey, [property]);
+      grouped.set(groupKey, {
+        displayName: groupName,
+        componentIndex,
+        encounterOrder: grouped.size,
+        properties: [property]
+      });
     }
   }
 
-  for (const [groupName, groupProperties] of grouped.entries()) {
+  const duplicateCounts = new Map<string, number>();
+  for (const groupEntry of grouped.values()) {
+    const normalizedDisplayName = groupEntry.displayName.toLowerCase();
+    duplicateCounts.set(normalizedDisplayName, (duplicateCounts.get(normalizedDisplayName) || 0) + 1);
+  }
+
+  const duplicateOffsets = new Map<string, number>();
+  const orderedGroups = Array.from(grouped.values()).sort((left, right) => {
+    const leftClipOrder = clipLevelSectionOrder.get(left.displayName.toLowerCase());
+    const rightClipOrder = clipLevelSectionOrder.get(right.displayName.toLowerCase());
+    const leftIsClipLevel = typeof leftClipOrder === "number";
+    const rightIsClipLevel = typeof rightClipOrder === "number";
+
+    if (leftIsClipLevel !== rightIsClipLevel) {
+      return leftIsClipLevel ? 1 : -1;
+    }
+
+    if (leftIsClipLevel && rightIsClipLevel) {
+      return Number(leftClipOrder) - Number(rightClipOrder);
+    }
+
+    if (left.componentIndex !== right.componentIndex) {
+      return left.componentIndex - right.componentIndex;
+    }
+
+    return left.encounterOrder - right.encounterOrder;
+  });
+
+  for (const groupEntry of orderedGroups) {
+    const duplicateKey = groupEntry.displayName.toLowerCase();
+    const duplicateCount = duplicateCounts.get(duplicateKey) || 0;
+    const duplicateOffset = (duplicateOffsets.get(duplicateKey) || 0) + 1;
+    duplicateOffsets.set(duplicateKey, duplicateOffset);
+    const groupName =
+      duplicateCount > 1
+        ? `${groupEntry.displayName} ${String(duplicateOffset).padStart(2, "0")}`
+        : groupEntry.displayName;
+    const groupProperties = groupEntry.properties;
+
+    const renderGroupKey = `${groupEntry.componentIndex}::${groupName}`;
     const groupNode = document.createElement("details");
     groupNode.className = "visual-group";
-    groupNode.dataset.groupName = groupName;
-    groupNode.open = visualOpenGroups.has(groupName);
+    groupNode.dataset.groupName = renderGroupKey;
+    groupNode.open = visualOpenGroups.has(renderGroupKey);
     groupNode.addEventListener("toggle", () => {
       if (groupNode.open) {
-        visualOpenGroups.add(groupName);
+        visualOpenGroups.add(renderGroupKey);
       } else {
-        visualOpenGroups.delete(groupName);
+        visualOpenGroups.delete(renderGroupKey);
       }
     });
 

@@ -285,6 +285,8 @@ Useful notes:
 - when multiple Premiere components are exposed, the `Visual editor` groups controls by component/layer name instead of flattening everything into `General`
 - low-signal internal controls such as generic `Property ...` and raw `Align` toggles are hidden to keep Premiere-authored templates more usable
 - Premiere-only `Responsive Design` pins and internal effect metadata such as `Controls`, `Applied Version`, or sequence-size bookkeeping are hidden
+- when Premiere exposes several generic components with the same name, the `Visual editor` keeps them separate and numbers them (`Group 01`, `Group 02`, etc.) instead of merging them
+- clip-level sections such as `Motion`, `Vector Motion`, and `Opacity` are rendered after the layer/effect sections to better match Premiere's reading order
 - on a single selected clip, `Apply changes` sends only controls you actually changed in the panel, so ambiguous Premiere-only fields are less likely to be rewritten accidentally
 
 ## Text editor

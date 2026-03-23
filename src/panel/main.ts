@@ -107,6 +107,10 @@ interface VisualEditorSectionNode {
   children: VisualEditorSectionNode[];
 }
 
+interface VisualEditorMutableSectionNode extends VisualEditorSectionNode {
+  encounterOrder: number;
+}
+
 interface PanelStateSnapshot {
   languageCode: string;
   activeMode: PanelMode;
@@ -2941,6 +2945,86 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     duplicateComponentRemainders.set(componentKey, Math.max(0, duplicateOffset - 1));
   }
 
+  const buildVisualSectionTree = (
+    properties: HostVisualProperty[],
+    rootKey: string,
+    rootLabel: string,
+    rootGroupPathPrefix: string
+  ): VisualEditorSectionNode => {
+    // // Rebuild nested `Properties` sections from slash-separated group paths so Premiere-authored groups stay readable.
+    const rootNode: VisualEditorMutableSectionNode = {
+      key: rootKey,
+      label: rootLabel,
+      properties: [],
+      children: [],
+      encounterOrder: 0
+    };
+    const childNodesByParentKey = new Map<string, Map<string, VisualEditorMutableSectionNode>>();
+
+    const ensureChildNode = (
+      parentNode: VisualEditorMutableSectionNode,
+      childLabel: string,
+      childKeySegment: string
+    ): VisualEditorMutableSectionNode => {
+      // // Keep one stable child node per label path so repeated properties merge into the same subsection.
+      const parentChildren = childNodesByParentKey.get(parentNode.key) || new Map<string, VisualEditorMutableSectionNode>();
+      childNodesByParentKey.set(parentNode.key, parentChildren);
+      const normalizedChildKey = String(childKeySegment || "").trim().toLowerCase() || "__section__";
+      const existingChild = parentChildren.get(normalizedChildKey);
+      if (existingChild) {
+        return existingChild;
+      }
+
+      const createdChild: VisualEditorMutableSectionNode = {
+        key: `${parentNode.key}:section:${normalizedChildKey}`,
+        label: childLabel,
+        properties: [],
+        children: [],
+        encounterOrder: parentNode.children.length
+      };
+      parentNode.children.push(createdChild);
+      parentChildren.set(normalizedChildKey, createdChild);
+      return createdChild;
+    };
+
+    for (const property of properties) {
+      const groupSegments = splitVisualGroupPath(String(property.groupPath || ""));
+      const relativeSegments =
+        rootGroupPathPrefix &&
+        groupSegments.length > 0 &&
+        groupSegments[0].trim().toLowerCase() === rootGroupPathPrefix.toLowerCase()
+          ? groupSegments.slice(1)
+          : groupSegments.slice();
+
+      if (relativeSegments.length < 1) {
+        rootNode.properties.push(property);
+        continue;
+      }
+
+      let targetNode = rootNode;
+      for (const relativeSegment of relativeSegments) {
+        targetNode = ensureChildNode(targetNode, relativeSegment, relativeSegment);
+      }
+      targetNode.properties.push(property);
+    }
+
+    const finalizeVisualSectionNode = (node: VisualEditorMutableSectionNode): VisualEditorSectionNode => {
+      // // Strip editor-only ordering metadata once the tree is ready for render.
+      const orderedChildren = node.children
+        .slice()
+        .sort((leftNode, rightNode) => leftNode.encounterOrder - rightNode.encounterOrder)
+        .map((childNode) => finalizeVisualSectionNode(childNode));
+      return {
+        key: node.key,
+        label: node.label,
+        properties: node.properties.slice(),
+        children: orderedChildren
+      };
+    };
+
+    return finalizeVisualSectionNode(rootNode);
+  };
+
   const buildVisualComponentNode = (
     componentEntry: {
       componentIndex: number;
@@ -2949,60 +3033,13 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     },
     displayLabel: string
   ): VisualEditorSectionNode => {
-    // // Split one Premiere component into collapsible logical subsections (`Settings`, `Appearance`, `Align and Transform`, etc.).
-    const subsectionBuckets = new Map<
-      string,
-      {
-        label: string;
-        encounterOrder: number;
-        properties: HostVisualProperty[];
-      }
-    >();
-
-    for (const property of componentEntry.properties) {
-      const groupSegments = splitVisualGroupPath(String(property.groupPath || ""));
-      const componentNameKey = String(componentEntry.componentName || "").trim().toLowerCase();
-      const relativeSegments =
-        groupSegments.length > 0 && groupSegments[0].trim().toLowerCase() === componentNameKey
-          ? groupSegments.slice(1)
-          : groupSegments.slice();
-      const subsectionLabel = relativeSegments.length > 0 ? relativeSegments.join(" / ") : "Settings";
-      const subsectionKey = relativeSegments.length > 0 ? relativeSegments.join(" / ").toLowerCase() : "__settings__";
-      const existingBucket = subsectionBuckets.get(subsectionKey);
-      if (existingBucket) {
-        existingBucket.properties.push(property);
-        continue;
-      }
-      subsectionBuckets.set(subsectionKey, {
-        label: subsectionLabel,
-        encounterOrder: subsectionBuckets.size,
-        properties: [property]
-      });
-    }
-
-    const orderedSubsections = Array.from(subsectionBuckets.entries())
-      .sort((left, right) => {
-        if (left[0] === "__settings__") {
-          return -1;
-        }
-        if (right[0] === "__settings__") {
-          return 1;
-        }
-        return left[1].encounterOrder - right[1].encounterOrder;
-      })
-      .map(([subsectionKey, subsection]) => ({
-        key: `component:${componentEntry.componentIndex}:section:${subsectionKey}`,
-        label: subsection.label,
-        properties: subsection.properties,
-        children: []
-      }));
-
-    return {
-      key: `component:${componentEntry.componentIndex}`,
-      label: displayLabel,
-      properties: [],
-      children: orderedSubsections
-    };
+    // // Drop the synthetic `Settings` wrapper and keep real nested section names only when Premiere exposes them.
+    return buildVisualSectionTree(
+      componentEntry.properties,
+      `component:${componentEntry.componentIndex}`,
+      displayLabel,
+      String(componentEntry.componentName || "").trim()
+    );
   };
 
   const topLevelVisualNodes: VisualEditorSectionNode[] = [];

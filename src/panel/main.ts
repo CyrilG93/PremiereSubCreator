@@ -3047,32 +3047,32 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     );
   };
 
-  const mergeChildSectionIntoParent = (
-    node: VisualEditorSectionNode,
-    childLabel: string
-  ): VisualEditorSectionNode => {
-    // // Collapse one redundant subsection so Premiere-authored blocks like `Shape -> Align and Transform` render as a single logical section.
-    const normalizedChildLabel = String(childLabel || "").trim().toLowerCase();
-    const nextChildren = node.children.map((childNode) => mergeChildSectionIntoParent(childNode, childLabel));
-    const targetChild = nextChildren.find(
-      (childNode) =>
-        String(childNode.label || "").trim().toLowerCase() === normalizedChildLabel &&
-        childNode.children.length === 0
-    );
-    if (!targetChild || node.children.length !== 1 || node.properties.length < 1) {
-      return {
-        key: node.key,
-        label: node.label,
-        properties: node.properties.slice(),
-        children: nextChildren
-      };
-    }
-
-    return {
+  const normalizeVisualNodeForRender = (node: VisualEditorSectionNode): VisualEditorSectionNode => {
+    // // Normalize nested Premiere sections recursively so inner `Shape -> Align and Transform` wrappers do not survive just because they sit under a Group.
+    const normalizedChildren = node.children.map((childNode) => normalizeVisualNodeForRender(childNode));
+    const nextNode: VisualEditorSectionNode = {
       key: node.key,
       label: node.label,
-      properties: node.properties.concat(targetChild.properties),
-      children: []
+      properties: node.properties.slice(),
+      children: normalizedChildren
+    };
+
+    if (nextNode.children.length !== 1) {
+      return nextNode;
+    }
+
+    const onlyChild = nextNode.children[0];
+    const normalizedChildLabel = String(onlyChild.label || "").trim().toLowerCase();
+    if (normalizedChildLabel !== "settings" && normalizedChildLabel !== "align and transform") {
+      return nextNode;
+    }
+
+    // // Fold one low-signal subsection directly into its parent so the panel stays closer to Premiere's visible structure.
+    return {
+      key: nextNode.key,
+      label: nextNode.label,
+      properties: nextNode.properties.concat(onlyChild.properties),
+      children: onlyChild.children.slice()
     };
   };
 
@@ -3603,9 +3603,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   };
 
   for (const node of topLevelVisualNodes) {
-    const normalizedNodeLabel = String(node.label || "").trim().toLowerCase();
-    const renderedNode =
-      normalizedNodeLabel.indexOf("shape") === 0 ? mergeChildSectionIntoParent(node, "Align and Transform") : node;
+    const renderedNode = normalizeVisualNodeForRender(node);
     elements.visualPropertyList.appendChild(renderVisualNode(renderedNode, 0));
   }
 

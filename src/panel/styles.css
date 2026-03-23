@@ -580,6 +580,22 @@ input[type="checkbox"] {
   overflow: visible;
 }
 
+.visual-group--nested {
+  background: rgba(var(--bg-surface-rgb), 0.58);
+}
+
+.visual-group[data-group-depth="1"] {
+  margin-left: 12px;
+}
+
+.visual-group[data-group-depth="2"] {
+  margin-left: 24px;
+}
+
+.visual-group[data-group-depth="3"] {
+  margin-left: 36px;
+}
+
 .visual-group__title {
   cursor: pointer;
   padding: 6px 8px;

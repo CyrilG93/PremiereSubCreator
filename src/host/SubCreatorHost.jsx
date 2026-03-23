@@ -3730,17 +3730,7 @@ function subcreator_visual_normalize_descriptor(descriptor) {
   var isShapeGroup = subcreator_visual_group_mentions(groupPath, "shape");
   var isTextGroup = subcreator_visual_group_mentions(groupPath, "text");
 
-  if ((isShapeGroup || isTextGroup) && normalizedKey === "parentwidth") {
-    normalized.displayName = isShapeGroup ? "Width" : "Parent Width";
-    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
-  } else if ((isShapeGroup || isTextGroup) && normalizedKey === "parentheight") {
-    normalized.displayName = isShapeGroup ? "Height" : "Parent Height";
-    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
-  } else if (isShapeGroup && normalizedKey === "parentrotation") {
-    // // Premiere's Shape layer exposes roundness through an internal `Parent Rotation` label on this API path.
-    normalized.displayName = "Roundness";
-    normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Align and Transform");
-  } else if ((isShapeGroup || isTextGroup) && /^(left|top|right|bottom)$/.test(normalizedKey)) {
+  if ((isShapeGroup || isTextGroup) && /^(left|top|right|bottom)$/.test(normalizedKey)) {
     normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Responsive Design");
   }
 
@@ -3769,9 +3759,9 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
   }
 
   if (
-    (normalizedKey === "parentwidth" || normalizedKey === "parentheight" || normalizedKey === "parentrotation") &&
-    !subcreator_visual_group_mentions(groupPath, "shape") &&
-    !subcreator_visual_group_mentions(groupPath, "text")
+    normalizedKey === "parentwidth" ||
+    normalizedKey === "parentheight" ||
+    normalizedKey === "parentrotation"
   ) {
     return true;
   }

@@ -128,11 +128,30 @@ export interface SelectedMogrtVisualProperty {
   stepValue?: number;
 }
 
+export interface SelectedMogrtVisualComponentDebug {
+  index: number;
+  name: string;
+  propertyCount: number;
+}
+
+export interface SelectedMogrtVisualDebug {
+  sequenceWidth?: number;
+  sequenceHeight?: number;
+  componentCount?: number;
+  components?: SelectedMogrtVisualComponentDebug[];
+  vectorCount?: number;
+  colorCount?: number;
+  selectCount?: number;
+  sample?: unknown[];
+  textStyleCandidates?: unknown[];
+  [key: string]: unknown;
+}
+
 export interface SelectedMogrtVisualPropertyList {
   selectedCount: number;
   editableCount: number;
   properties: SelectedMogrtVisualProperty[];
-  debug?: unknown;
+  debug?: SelectedMogrtVisualDebug;
 }
 
 export interface ApplyVisualPropertiesResult {
@@ -3044,11 +3063,45 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
     });
   }
 
+  const rawDebug = payload.debug && typeof payload.debug === "object" ? (payload.debug as Record<string, unknown>) : null;
+  const normalizedDebug: SelectedMogrtVisualDebug | undefined = rawDebug
+    ? {
+        ...rawDebug,
+        sequenceWidth: Number.isFinite(Number(rawDebug.sequenceWidth)) ? Number(rawDebug.sequenceWidth) : undefined,
+        sequenceHeight: Number.isFinite(Number(rawDebug.sequenceHeight)) ? Number(rawDebug.sequenceHeight) : undefined,
+        componentCount: Number.isFinite(Number(rawDebug.componentCount)) ? Number(rawDebug.componentCount) : undefined,
+        vectorCount: Number.isFinite(Number(rawDebug.vectorCount)) ? Number(rawDebug.vectorCount) : undefined,
+        colorCount: Number.isFinite(Number(rawDebug.colorCount)) ? Number(rawDebug.colorCount) : undefined,
+        selectCount: Number.isFinite(Number(rawDebug.selectCount)) ? Number(rawDebug.selectCount) : undefined,
+        components: Array.isArray(rawDebug.components)
+          ? rawDebug.components
+              .map((entry) => {
+                const item = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+                if (!item) {
+                  return null;
+                }
+                const index = Number(item.index);
+                const name = String(item.name || "").trim();
+                const propertyCount = Number(item.propertyCount);
+                if (!Number.isFinite(index)) {
+                  return null;
+                }
+                return {
+                  index,
+                  name: name || `Component ${index + 1}`,
+                  propertyCount: Number.isFinite(propertyCount) ? propertyCount : 0
+                };
+              })
+              .filter((entry): entry is SelectedMogrtVisualComponentDebug => Boolean(entry))
+          : undefined
+      }
+    : undefined;
+
   return {
     selectedCount: Number(payload.selectedCount || 0),
     editableCount: Number(payload.editableCount || properties.length),
     properties,
-    debug: payload.debug
+    debug: normalizedDebug
   };
 }
 

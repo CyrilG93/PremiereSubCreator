@@ -49,6 +49,7 @@ import {
 import type {
   ApplySelectedMogrtTextResult,
   InstalledMogrtCatalog,
+  SelectedMogrtVisualComponentDebug,
   SystemFontCatalog,
   TextEditorApplyPayload,
   WhisperProgressUpdate
@@ -97,6 +98,13 @@ interface HostVisualProperty {
   minValue?: number;
   maxValue?: number;
   stepValue?: number;
+}
+
+interface VisualEditorSectionNode {
+  key: string;
+  label: string;
+  properties: HostVisualProperty[];
+  children: VisualEditorSectionNode[];
 }
 
 interface PanelStateSnapshot {
@@ -235,9 +243,12 @@ let pendingSelectedMogrtId = "";
 let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
 let loadedVisualPropertySignature = "";
+let loadedVisualComponents: SelectedMogrtVisualComponentDebug[] = [];
+let loadedVisualSelectionCount = 0;
 const visualOriginalValuesByPath = new Map<string, string>();
 const visualOpenGroups = new Set<string>();
 const visualTextStyleTokenMapByBasePath = new Map<string, Record<string, string>>();
+const visualDirtyPaths = new Set<string>();
 let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
@@ -1538,11 +1549,6 @@ function normalizeColorHex(value: string | number | boolean): string {
   return "";
 }
 
-function looksLikeGuidList(value: string): boolean {
-  // // Detect Premiere internal GUID-list artifacts to avoid exposing them as group labels.
-  return /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12};)+$/i.test(String(value || "").trim());
-}
-
 function parseVectorValues(value: string | number | boolean): number[] {
   // // Parse vector payloads from host JSON strings into editable number fields.
   if (typeof value === "number") {
@@ -2411,6 +2417,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   elements.visualPropertyList.innerHTML = "";
   visualOriginalValuesByPath.clear();
   visualTextStyleTokenMapByBasePath.clear();
+  visualDirtyPaths.clear();
 
   if (!properties.length) {
     return;
@@ -2697,10 +2704,16 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   const bindLiveUpdateEvent = (
     control: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
-    eventName: "input" | "change" = "change"
+    eventName: "input" | "change" = "change",
+    dirtyPathOverride = ""
   ): void => {
-    // // Queue a debounced live apply whenever a visual control is edited.
+    // // Track explicit user edits so single-clip apply only touches changed controls.
     control.addEventListener(eventName, () => {
+      const dirtyPath =
+        String(dirtyPathOverride || ((control as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).dataset?.visualPath || "")).trim();
+      if (dirtyPath) {
+        visualDirtyPaths.add(dirtyPath);
+      }
       scheduleLiveVisualApply();
     });
   };
@@ -2828,101 +2841,200 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     ["vector motion", 1],
     ["opacity", 2]
   ]);
-  const grouped = new Map<
-    string,
+
+  const splitVisualGroupPath = (value: string): string[] =>
+    String(value || "")
+      .split("/")
+      .map((segment) => String(segment || "").trim())
+      .filter((segment) => segment.length > 0);
+
+  const componentNameByIndex = new Map<number, string>();
+  for (const component of loadedVisualComponents) {
+    const componentIndex = Number(component.index);
+    if (!Number.isFinite(componentIndex)) {
+      continue;
+    }
+    const componentName = String(component.name || "").trim();
+    if (!componentName) {
+      continue;
+    }
+    componentNameByIndex.set(componentIndex, componentName);
+  }
+
+  const resolveVisualComponentName = (property: HostVisualProperty): string => {
+    // // Prefer host component labels so duplicated Premiere `Group`/`Text` components can stay distinct in the panel.
+    const componentIndex = parseVisualComponentIndex(property.path);
+    const knownComponentName = String(componentNameByIndex.get(componentIndex) || "").trim();
+    if (knownComponentName) {
+      return knownComponentName;
+    }
+    const groupSegments = splitVisualGroupPath(String(property.groupPath || ""));
+    if (groupSegments.length > 0) {
+      return groupSegments[0];
+    }
+    return `Component ${componentIndex + 1}`;
+  };
+
+  const isClipLevelComponent = (componentName: string): boolean =>
+    clipLevelSectionOrder.has(String(componentName || "").trim().toLowerCase());
+
+  const componentEntries = new Map<
+    number,
     {
-      displayName: string;
       componentIndex: number;
+      componentName: string;
       encounterOrder: number;
       properties: HostVisualProperty[];
     }
   >();
+
   for (const property of renderProperties) {
     if (property.controlKind === "text" || property.controlKind === "json") {
       continue;
     }
 
-    const rawGroup = String(property.groupPath || "").trim();
-    const groupName = rawGroup && !looksLikeGuidList(rawGroup) ? rawGroup : "General";
-    const componentIndex = parseVisualComponentIndex(property.path);
-    const groupKey = `${componentIndex}::${groupName}`;
     visualOriginalValuesByPath.set(
       property.path,
       canonicalizeVisualValue(property.controlKind, property.valueType, property.value)
     );
-    const existing = grouped.get(groupKey);
+
+    const componentIndex = parseVisualComponentIndex(property.path);
+    const existing = componentEntries.get(componentIndex);
     if (existing) {
       existing.properties.push(property);
-    } else {
-      grouped.set(groupKey, {
-        displayName: groupName,
-        componentIndex,
-        encounterOrder: grouped.size,
-        properties: [property]
-      });
+      continue;
     }
+
+    componentEntries.set(componentIndex, {
+      componentIndex,
+      componentName: resolveVisualComponentName(property),
+      encounterOrder: componentEntries.size,
+      properties: [property]
+    });
   }
 
-  const duplicateCounts = new Map<string, number>();
-  for (const groupEntry of grouped.values()) {
-    const normalizedDisplayName = groupEntry.displayName.toLowerCase();
-    duplicateCounts.set(normalizedDisplayName, (duplicateCounts.get(normalizedDisplayName) || 0) + 1);
-  }
-
-  const duplicateOffsets = new Map<string, number>();
-  const orderedGroups = Array.from(grouped.values()).sort((left, right) => {
-    const leftClipOrder = clipLevelSectionOrder.get(left.displayName.toLowerCase());
-    const rightClipOrder = clipLevelSectionOrder.get(right.displayName.toLowerCase());
-    const leftIsClipLevel = typeof leftClipOrder === "number";
-    const rightIsClipLevel = typeof rightClipOrder === "number";
-
-    if (leftIsClipLevel !== rightIsClipLevel) {
-      return leftIsClipLevel ? 1 : -1;
-    }
-
-    if (leftIsClipLevel && rightIsClipLevel) {
-      return Number(leftClipOrder) - Number(rightClipOrder);
-    }
-
+  const orderedComponentEntries = Array.from(componentEntries.values()).sort((left, right) => {
     if (left.componentIndex !== right.componentIndex) {
       return left.componentIndex - right.componentIndex;
     }
-
     return left.encounterOrder - right.encounterOrder;
   });
 
-  for (const groupEntry of orderedGroups) {
-    const duplicateKey = groupEntry.displayName.toLowerCase();
-    const duplicateCount = duplicateCounts.get(duplicateKey) || 0;
-    const duplicateOffset = (duplicateOffsets.get(duplicateKey) || 0) + 1;
-    duplicateOffsets.set(duplicateKey, duplicateOffset);
-    const groupName =
-      duplicateCount > 1
-        ? `${groupEntry.displayName} ${String(duplicateOffset).padStart(2, "0")}`
-        : groupEntry.displayName;
-    const groupProperties = groupEntry.properties;
+  const duplicateComponentCounts = new Map<string, number>();
+  for (const componentEntry of orderedComponentEntries) {
+    const componentKey = String(componentEntry.componentName || "").trim().toLowerCase();
+    duplicateComponentCounts.set(componentKey, (duplicateComponentCounts.get(componentKey) || 0) + 1);
+  }
 
-    const renderGroupKey = `${groupEntry.componentIndex}::${groupName}`;
-    const groupNode = document.createElement("details");
-    groupNode.className = "visual-group";
-    groupNode.dataset.groupName = renderGroupKey;
-    groupNode.open = visualOpenGroups.has(renderGroupKey);
-    groupNode.addEventListener("toggle", () => {
-      if (groupNode.open) {
-        visualOpenGroups.add(renderGroupKey);
-      } else {
-        visualOpenGroups.delete(renderGroupKey);
+  const duplicateComponentRemainders = new Map(duplicateComponentCounts);
+  const componentLabelByIndex = new Map<number, string>();
+  for (const componentEntry of orderedComponentEntries) {
+    const componentKey = String(componentEntry.componentName || "").trim().toLowerCase();
+    const duplicateCount = duplicateComponentCounts.get(componentKey) || 0;
+    const duplicateOffset = duplicateComponentRemainders.get(componentKey) || duplicateCount;
+    const baseLabel = isClipLevelComponent(componentEntry.componentName)
+      ? `Clip ${componentEntry.componentName}`
+      : componentEntry.componentName;
+    const displayLabel =
+      duplicateCount > 1 ? `${baseLabel} ${String(duplicateOffset).padStart(2, "0")}` : baseLabel;
+    componentLabelByIndex.set(componentEntry.componentIndex, displayLabel);
+    duplicateComponentRemainders.set(componentKey, Math.max(0, duplicateOffset - 1));
+  }
+
+  const buildVisualComponentNode = (
+    componentEntry: {
+      componentIndex: number;
+      componentName: string;
+      properties: HostVisualProperty[];
+    },
+    displayLabel: string
+  ): VisualEditorSectionNode => {
+    // // Split one Premiere component into collapsible logical subsections (`Settings`, `Appearance`, `Align and Transform`, etc.).
+    const subsectionBuckets = new Map<
+      string,
+      {
+        label: string;
+        encounterOrder: number;
+        properties: HostVisualProperty[];
       }
-    });
+    >();
 
-    const summary = document.createElement("summary");
-    summary.className = "visual-group__title";
-    summary.textContent = groupName;
-    groupNode.appendChild(summary);
+    for (const property of componentEntry.properties) {
+      const groupSegments = splitVisualGroupPath(String(property.groupPath || ""));
+      const componentNameKey = String(componentEntry.componentName || "").trim().toLowerCase();
+      const relativeSegments =
+        groupSegments.length > 0 && groupSegments[0].trim().toLowerCase() === componentNameKey
+          ? groupSegments.slice(1)
+          : groupSegments.slice();
+      const subsectionLabel = relativeSegments.length > 0 ? relativeSegments.join(" / ") : "Settings";
+      const subsectionKey = relativeSegments.length > 0 ? relativeSegments.join(" / ").toLowerCase() : "__settings__";
+      const existingBucket = subsectionBuckets.get(subsectionKey);
+      if (existingBucket) {
+        existingBucket.properties.push(property);
+        continue;
+      }
+      subsectionBuckets.set(subsectionKey, {
+        label: subsectionLabel,
+        encounterOrder: subsectionBuckets.size,
+        properties: [property]
+      });
+    }
 
-    const groupBody = document.createElement("div");
-    groupBody.className = "visual-group__body";
+    const orderedSubsections = Array.from(subsectionBuckets.entries())
+      .sort((left, right) => {
+        if (left[0] === "__settings__") {
+          return -1;
+        }
+        if (right[0] === "__settings__") {
+          return 1;
+        }
+        return left[1].encounterOrder - right[1].encounterOrder;
+      })
+      .map(([subsectionKey, subsection]) => ({
+        key: `component:${componentEntry.componentIndex}:section:${subsectionKey}`,
+        label: subsection.label,
+        properties: subsection.properties,
+        children: []
+      }));
 
+    return {
+      key: `component:${componentEntry.componentIndex}`,
+      label: displayLabel,
+      properties: [],
+      children: orderedSubsections
+    };
+  };
+
+  const topLevelVisualNodes: VisualEditorSectionNode[] = [];
+  let activeGroupNode: VisualEditorSectionNode | null = null;
+
+  for (const componentEntry of orderedComponentEntries) {
+    const componentName = String(componentEntry.componentName || "").trim();
+    const displayLabel = String(componentLabelByIndex.get(componentEntry.componentIndex) || componentName).trim() || "Component";
+    const componentNode = buildVisualComponentNode(componentEntry, displayLabel);
+    const normalizedComponentName = componentName.toLowerCase();
+
+    if (isClipLevelComponent(componentName)) {
+      topLevelVisualNodes.push(componentNode);
+      continue;
+    }
+
+    if (normalizedComponentName === "group") {
+      topLevelVisualNodes.push(componentNode);
+      activeGroupNode = componentNode;
+      continue;
+    }
+
+    if (activeGroupNode) {
+      activeGroupNode.children.push(componentNode);
+      continue;
+    }
+
+    topLevelVisualNodes.push(componentNode);
+  }
+
+  const appendVisualPropertyRows = (targetBody: HTMLElement, groupProperties: HostVisualProperty[]): void => {
+    // // Render one subsection worth of editable controls while preserving existing control-specific behaviors.
     for (const property of groupProperties) {
       const row = document.createElement("div");
       row.className = "visual-property-item";
@@ -2982,7 +3094,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
         row.classList.add("visual-property-item--checkbox");
         row.append(checkbox, label);
-        groupBody.appendChild(row);
+        targetBody.appendChild(row);
         continue;
       }
 
@@ -3064,6 +3176,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
             return;
           }
           setColorState(normalized);
+          visualDirtyPaths.add(property.path);
           scheduleLiveVisualApply();
         });
         hexInput.addEventListener("blur", () => {
@@ -3097,10 +3210,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         });
         nativeColorInput.addEventListener("input", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
+          visualDirtyPaths.add(property.path);
           scheduleLiveVisualApply();
         });
         nativeColorInput.addEventListener("change", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
+          visualDirtyPaths.add(property.path);
           scheduleLiveVisualApply();
         });
 
@@ -3142,10 +3257,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
         rangeInput.addEventListener("input", () => {
           numberInput.value = rangeInput.value;
+          visualDirtyPaths.add(property.path);
           scheduleLiveVisualApply();
         });
         numberInput.addEventListener("input", () => {
           rangeInput.value = numberInput.value;
+          visualDirtyPaths.add(property.path);
           scheduleLiveVisualApply();
         });
 
@@ -3192,7 +3309,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         };
         componentInputs.forEach((input) => {
           input.addEventListener("input", syncVector);
-          bindLiveUpdateEvent(input, "input");
+          bindLiveUpdateEvent(input, "input", property.path);
         });
         syncVector();
 
@@ -3265,6 +3382,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
               preserveCurrent: false,
               preferredStyles: ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"]
             });
+            visualDirtyPaths.add(property.path);
             scheduleLiveVisualApply();
           });
         } else if (textStylePath?.styleKey === "fontStyle") {
@@ -3337,11 +3455,45 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       }
 
       row.appendChild(controlWrap);
-      groupBody.appendChild(row);
+      targetBody.appendChild(row);
     }
+  };
 
+  const renderVisualNode = (node: VisualEditorSectionNode, depth: number): HTMLDetailsElement => {
+    // // Render one collapsible hierarchy node so Premiere group/components can stay visually nested.
+    const groupNode = document.createElement("details");
+    groupNode.className = "visual-group";
+    if (depth > 0) {
+      groupNode.classList.add("visual-group--nested");
+    }
+    groupNode.dataset.groupName = node.key;
+    groupNode.dataset.groupDepth = String(depth);
+    groupNode.open = visualOpenGroups.has(node.key) || depth === 0;
+    groupNode.addEventListener("toggle", () => {
+      if (groupNode.open) {
+        visualOpenGroups.add(node.key);
+      } else {
+        visualOpenGroups.delete(node.key);
+      }
+    });
+
+    const summary = document.createElement("summary");
+    summary.className = "visual-group__title";
+    summary.textContent = node.label;
+    groupNode.appendChild(summary);
+
+    const groupBody = document.createElement("div");
+    groupBody.className = "visual-group__body";
+    appendVisualPropertyRows(groupBody, node.properties);
+    for (const childNode of node.children) {
+      groupBody.appendChild(renderVisualNode(childNode, depth + 1));
+    }
     groupNode.appendChild(groupBody);
-    elements.visualPropertyList.appendChild(groupNode);
+    return groupNode;
+  };
+
+  for (const node of topLevelVisualNodes) {
+    elements.visualPropertyList.appendChild(renderVisualNode(node, 0));
   }
 
   for (const basePath of textStyleStyleSelectByBasePath.keys()) {
@@ -3417,6 +3569,7 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
   }
 
   const includeUnchanged = options?.includeUnchanged === true;
+  const restrictToDirtyPaths = !includeUnchanged && loadedVisualSelectionCount <= 1;
   const changes: VisualPropertyChange[] = [];
   const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
     '[data-visual-role="value"]'
@@ -3438,6 +3591,9 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
         })()
       : undefined;
     if (!path) {
+      return;
+    }
+    if (restrictToDirtyPaths && !visualDirtyPaths.has(path)) {
       return;
     }
 
@@ -3489,6 +3645,8 @@ function selectionHasFontControls(properties: HostVisualProperty[]): boolean {
 async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
   const result = await readSelectedMogrtVisualProperties();
+  loadedVisualSelectionCount = Number(result.selectedCount || 0);
+  loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
   const propertySignature = buildVisualPropertySignature(result.properties);
   loadedVisualPropertySignature = propertySignature;
   renderVisualPropertyEditor(result.properties);

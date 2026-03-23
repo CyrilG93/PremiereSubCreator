@@ -1615,6 +1615,7 @@ function subcreator_visual_is_color_label(displayName) {
     key.indexOf("size") !== -1 ||
     key.indexOf("amount") !== -1 ||
     key.indexOf("opacity") !== -1 ||
+    key.indexOf("colorize") !== -1 ||
     key.indexOf("position") !== -1 ||
     key.indexOf("offset") !== -1
   ) {
@@ -3753,8 +3754,13 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
   }
 
   var displayName = subcreator_trim_string(String(descriptor.displayName || ""));
+  var groupPath = String(descriptor.groupPath || "");
   var normalizedKey = subcreator_visual_normalize_label_key(displayName);
   if (!displayName || /^Property\s+/i.test(displayName)) {
+    return true;
+  }
+
+  if (subcreator_visual_group_mentions(groupPath, "responsive")) {
     return true;
   }
 
@@ -3764,13 +3770,17 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
 
   if (
     (normalizedKey === "parentwidth" || normalizedKey === "parentheight" || normalizedKey === "parentrotation") &&
-    !subcreator_visual_group_mentions(descriptor.groupPath || "", "shape") &&
-    !subcreator_visual_group_mentions(descriptor.groupPath || "", "text")
+    !subcreator_visual_group_mentions(groupPath, "shape") &&
+    !subcreator_visual_group_mentions(groupPath, "text")
   ) {
     return true;
   }
 
-  if ((normalizedKey === "start" || normalizedKey === "end") && subcreator_visual_group_mentions(descriptor.groupPath || "", "text")) {
+  if ((normalizedKey === "start" || normalizedKey === "end") && subcreator_visual_group_mentions(groupPath, "text")) {
+    return true;
+  }
+
+  if (/^(left|top|right|bottom)$/.test(normalizedKey) && (subcreator_visual_group_mentions(groupPath, "shape") || subcreator_visual_group_mentions(groupPath, "text"))) {
     return true;
   }
 
@@ -3782,6 +3792,17 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
   }
 
   if (normalizedKey === "transform" && descriptor.controlKind === "boolean") {
+    return true;
+  }
+
+  if (
+    normalizedKey === "erroroccurred" ||
+    normalizedKey === "controls" ||
+    normalizedKey === "appliedversion" ||
+    normalizedKey === "sequencewidth" ||
+    normalizedKey === "sequenceheight" ||
+    normalizedKey === "sequencepixelratio"
+  ) {
     return true;
   }
 

@@ -3047,6 +3047,35 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     );
   };
 
+  const mergeChildSectionIntoParent = (
+    node: VisualEditorSectionNode,
+    childLabel: string
+  ): VisualEditorSectionNode => {
+    // // Collapse one redundant subsection so Premiere-authored blocks like `Shape -> Align and Transform` render as a single logical section.
+    const normalizedChildLabel = String(childLabel || "").trim().toLowerCase();
+    const nextChildren = node.children.map((childNode) => mergeChildSectionIntoParent(childNode, childLabel));
+    const targetChild = nextChildren.find(
+      (childNode) =>
+        String(childNode.label || "").trim().toLowerCase() === normalizedChildLabel &&
+        childNode.children.length === 0
+    );
+    if (!targetChild || node.children.length !== 1 || node.properties.length < 1) {
+      return {
+        key: node.key,
+        label: node.label,
+        properties: node.properties.slice(),
+        children: nextChildren
+      };
+    }
+
+    return {
+      key: node.key,
+      label: node.label,
+      properties: node.properties.concat(targetChild.properties),
+      children: []
+    };
+  };
+
   const topLevelVisualNodes: VisualEditorSectionNode[] = [];
   let activeGroupNode: VisualEditorSectionNode | null = null;
 
@@ -3077,6 +3106,22 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   if (clipRootVisualNode.children.length > 0) {
     // // Keep clip-level controls grouped together at the bottom so layer/effect sections stay closer to Premiere ordering.
+    clipRootVisualNode.children.sort((leftNode, rightNode) => {
+      const leftKey = String(leftNode.label || "").replace(/^Clip\s+/i, "").trim().toLowerCase();
+      const rightKey = String(rightNode.label || "").replace(/^Clip\s+/i, "").trim().toLowerCase();
+      const leftOrder = clipLevelSectionOrder.get(leftKey);
+      const rightOrder = clipLevelSectionOrder.get(rightKey);
+      if (typeof leftOrder === "number" && typeof rightOrder === "number" && leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+      if (typeof leftOrder === "number") {
+        return -1;
+      }
+      if (typeof rightOrder === "number") {
+        return 1;
+      }
+      return String(leftNode.label || "").localeCompare(String(rightNode.label || ""));
+    });
     topLevelVisualNodes.push(clipRootVisualNode);
   }
 
@@ -3558,7 +3603,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   };
 
   for (const node of topLevelVisualNodes) {
-    elements.visualPropertyList.appendChild(renderVisualNode(node, 0));
+    const normalizedNodeLabel = String(node.label || "").trim().toLowerCase();
+    const renderedNode =
+      normalizedNodeLabel.indexOf("shape") === 0 ? mergeChildSectionIntoParent(node, "Align and Transform") : node;
+    elements.visualPropertyList.appendChild(renderVisualNode(renderedNode, 0));
   }
 
   for (const basePath of textStyleStyleSelectByBasePath.keys()) {

@@ -287,6 +287,7 @@ Useful notes:
 - group components can contain nested component sections (`Text`, `Shape`, effects, extra subsections) so large Premiere templates are easier to browse
 - synthetic `Settings` wrappers are collapsed, so single-subsection components open directly on their real controls
 - clip-level sections such as `Motion`, `Vector Motion`, and `Opacity` are grouped together under one `Clip` section instead of being scattered through the layer tree
+- when Premiere exposes a `Shape` component plus a nested `Align and Transform` subsection, Sub Creator merges them into one `Shape` block so the controls stay closer to the panel you see in Premiere
 - low-signal internal controls such as generic `Property ...` and raw `Align` toggles are hidden to keep Premiere-authored templates more usable
 - Premiere-only `Responsive Design` pins and internal effect metadata such as `Controls`, `Applied Version`, or sequence-size bookkeeping are hidden
 - still-ambiguous `Shape`-specific internal width/height/roundness fields are shown conservatively under `Align and Transform`, but they are only cloned to other clips when you change them explicitly

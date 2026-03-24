@@ -3811,6 +3811,11 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
     return true;
   }
 
+  if (normalizedKey === "blendmode" && subcreator_visual_group_mentions(groupPath, "opacity")) {
+    // // Hide clip-level blend mode until CEP exposes a reliable read/write mapping; current values drift from Premiere's visible label and writes do not stick.
+    return true;
+  }
+
   return false;
 }
 

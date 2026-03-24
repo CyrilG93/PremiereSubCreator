@@ -292,11 +292,12 @@ Useful notes:
 - when Premiere exposes a `Shape` component plus one low-signal nested subsection such as `Align and Transform`, Sub Creator folds that extra subsection into the parent `Shape` block
 - low-signal internal controls such as generic `Property ...` and raw `Align` toggles are hidden to keep Premiere-authored templates more usable
 - Premiere-only `Responsive Design` pins and internal effect metadata such as `Controls`, `Applied Version`, or sequence-size bookkeeping are hidden
+- clip-level `Opacity > Blend Mode` is currently hidden because CEP does not expose a reliable label/value mapping for it and writes do not stick consistently
 - Premiere internal `Parent Width / Height / Rotation` fields are hidden when they do not match the visible `Properties` panel values, so Sub Creator does not push misleading size values back onto other clips
 - clip-level sections are still rendered after the layer/effect sections to better match Premiere's reading order
 - on a single selected clip, `Apply changes` sends only controls you actually changed in the panel, so ambiguous Premiere-only fields are less likely to be rewritten accidentally
 - some Premiere text layers still expose only an opaque runtime `Source Text` placeholder to CEP, so `font / fill / stroke` controls cannot be shown reliably until Adobe exposes more than that placeholder
-- some Premiere enum labels, especially clip-level `Blend Mode`, still rely on inferred mappings because CEP exposes the numeric value but not the official option labels
+- some Premiere enum labels still rely on inferred mappings because CEP exposes the numeric value but not the official option labels; when a control proves unreliable, Sub Creator hides it instead of exposing a misleading field
 
 ## Text editor
 

@@ -2192,6 +2192,7 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
   var height = Math.max(Number(sequenceSize && sequenceSize.height) || 1080, 1);
   var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
   var displayKey = String(displayName || "").toLowerCase();
+  var looksLikeAnchor = displayKey.indexOf("anchor") !== -1;
 
   var candidates = [];
   if (vectorMode === "offset_scaled") {
@@ -2291,6 +2292,20 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
       idealValue: 100
     });
   } else {
+    if (
+      looksLikeAnchor &&
+      subcreator_visual_group_prefers_sequence_axis(groupPath) &&
+      subcreator_visual_vector_looks_normalized_position(vectorValues)
+    ) {
+      // // When Position already proved this group uses normalized sequence coordinates, Anchor Point should follow the same axis conversion.
+      return {
+        mode: vectorMode,
+        scale: [width, height, 1, 1].slice(0, vectorValues.length),
+        candidateId: "anchor_group_sequence_axis",
+        score: 0
+      };
+    }
+
     candidates.push({ id: "raw", scales: [1, 1, 1, 1], minPreferred: 0.05, maxPreferred: 5000, idealValue: 50 });
   }
 

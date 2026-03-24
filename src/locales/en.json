@@ -47,6 +47,7 @@
   "visual.applyProgress": "Applying changes: {done}/{total} MOGRT ({remaining} remaining).",
   "visual.noProperties": "No editable properties detected on the current selection.",
   "visual.noChanges": "No changes to apply.",
+  "visual.fontReadonlyHint": "Change the font in Premiere Properties, then use Apply to copy it to the other selected clips.",
   "help.whisper": "Whisper must be installed locally (either `whisper` CLI or Python `whisper` module).",
   "help.whisperModelsMissing": "No Whisper model was found locally. Read the README to install or copy one into the Whisper cache.",
   "help.whisperSequence": "The active sequence audible mix, or only the In/Out range, is exported temporarily as WAV and then analyzed by Whisper.",

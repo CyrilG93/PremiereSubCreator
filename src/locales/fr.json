@@ -47,6 +47,7 @@
   "visual.applyProgress": "Application en cours: {done}/{total} MOGRT ({remaining} restant).",
   "visual.noProperties": "Aucun parametre editable detecte sur la selection.",
   "visual.noChanges": "Aucune modification a appliquer.",
+  "visual.fontReadonlyHint": "Change la police dans le panneau Properties de Premiere, puis utilise Appliquer pour la copier aux autres clips selectionnes.",
   "help.whisper": "Whisper doit etre installe localement (commande `whisper` ou module Python `whisper`).",
   "help.whisperModelsMissing": "Aucun modele Whisper n'a ete trouve localement. Lis le README pour en installer ou en copier un dans le cache Whisper.",
   "help.whisperSequence": "Le mix audible de la sequence active, ou seulement la plage In/Out, est exporte temporairement en WAV puis analyse par Whisper.",

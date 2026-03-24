@@ -672,6 +672,27 @@ input[type="checkbox"] {
   overflow-y: auto;
 }
 
+.visual-readonly-value {
+  min-height: 29px;
+  padding: 5px 6px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+  background: rgba(var(--bg-surface-rgb), 0.6);
+  border: 1px solid rgba(var(--text-primary-rgb), 0.12);
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-readonly-hint {
+  margin: 4px 0 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
 .visual-floating-select {
   position: fixed;
   z-index: 9999;

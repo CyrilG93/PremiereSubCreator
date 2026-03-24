@@ -41,7 +41,6 @@ import {
   readInstalledMogrtCatalog,
   readPremiereTemplateTextPayloads,
   readSelectedMogrtVisualProperties,
-  readSystemFontCatalog,
   readTextFileFromHost,
   transcribeWithWhisper,
   applySelectedMogrtTextItems
@@ -50,7 +49,6 @@ import type {
   ApplySelectedMogrtTextResult,
   InstalledMogrtCatalog,
   SelectedMogrtVisualComponentDebug,
-  SystemFontCatalog,
   TextEditorApplyPayload,
   WhisperProgressUpdate
 } from "./cepBridge";
@@ -247,7 +245,6 @@ const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
 let pendingSelectedMogrtId = "";
 let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
-let loadedVisualPropertySignature = "";
 let loadedVisualComponents: SelectedMogrtVisualComponentDebug[] = [];
 let loadedVisualSelectionCount = 0;
 const visualOriginalValuesByPath = new Map<string, string>();
@@ -259,7 +256,6 @@ let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
 let visualLiveUpdateEnabled = false;
-let systemFontCatalogLoadPromise: Promise<void> | null = null;
 let logPanelExpanded = true;
 let verboseLogsEnabled = false;
 let currentLogState: PanelLogState | null = null;
@@ -283,14 +279,6 @@ let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
-let systemFontCatalog: SystemFontCatalog = {
-  available: false,
-  source: "unavailable",
-  details: "",
-  families: [],
-  stylesByFamily: {},
-  fontTokensByFamilyStyle: {}
-};
 
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
@@ -346,30 +334,6 @@ function listFontStyleLookupKeys(value: string): string[] {
   return Array.from(new Set(keys.filter(Boolean)));
 }
 
-function normalizeFontStyleDisplayKey(value: string): string {
-  // // Collapse display-only style aliases to one select matching key.
-  const normalized = normalizeFontLookupKey(value);
-  if (normalized === "plain" || normalized === "roman") {
-    return "regular";
-  }
-  return normalized;
-}
-
-function findMatchingFontStyleOption(options: string[], targetStyle: string): string {
-  // // Resolve one requested style against available options using the same alias rules as token lookup.
-  const requestedKeys = new Set(listFontStyleLookupKeys(targetStyle));
-  if (requestedKeys.size < 1) {
-    return "";
-  }
-  for (const option of options) {
-    const optionKeys = listFontStyleLookupKeys(option);
-    if (optionKeys.some((entry) => requestedKeys.has(entry))) {
-      return option;
-    }
-  }
-  return "";
-}
-
 function getFontStylePriority(style: string): number {
   // // Rank neutral/default styles before heavier variants so family switches land on safer defaults.
   const normalizedKeys = new Set(listFontStyleLookupKeys(style));
@@ -404,25 +368,6 @@ function sortFontStyleOptions(options: string[]): string[] {
       }
       return left.localeCompare(right, undefined, { sensitivity: "base" });
     });
-}
-
-function pickPreferredFontStyleOption(options: string[], preferredStyles?: string[]): string {
-  // // Pick the best style for a family, preferring neutral defaults like `Regular` before any fallback.
-  const normalizedOptions = sortFontStyleOptions(options);
-  if (normalizedOptions.length < 1) {
-    return "";
-  }
-  const requestedStyles =
-    preferredStyles && preferredStyles.length > 0
-      ? preferredStyles
-      : ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"];
-  for (const requestedStyle of requestedStyles) {
-    const matchedOption = findMatchingFontStyleOption(normalizedOptions, requestedStyle);
-    if (matchedOption) {
-      return matchedOption;
-    }
-  }
-  return normalizedOptions[0];
 }
 
 function assertDomBindings(): void {
@@ -1414,78 +1359,6 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   }
 }
 
-async function loadSystemFontCatalogFallback(): Promise<void> {
-  // // Load OS font families/styles so font selectors can offer non-MOGRT fonts when possible.
-  try {
-    const catalog = await readSystemFontCatalog();
-    if (!catalog || !catalog.available) {
-      systemFontCatalog = {
-        available: false,
-        source: catalog?.source || "unavailable",
-        details: catalog?.details || "",
-        families: [],
-        stylesByFamily: {},
-        fontTokensByFamilyStyle: {}
-      };
-      return;
-    }
-
-    systemFontCatalog = {
-      available: true,
-      source: String(catalog.source || "system-fonts"),
-      details: String(catalog.details || ""),
-      families: Array.isArray(catalog.families) ? catalog.families.slice() : [],
-      stylesByFamily:
-        catalog.stylesByFamily && typeof catalog.stylesByFamily === "object"
-          ? Object.entries(catalog.stylesByFamily).reduce<Record<string, string[]>>((accumulator, [family, styles]) => {
-              accumulator[String(family)] = Array.isArray(styles) ? styles.slice() : [];
-              return accumulator;
-            }, {})
-          : {},
-      fontTokensByFamilyStyle:
-        catalog.fontTokensByFamilyStyle && typeof catalog.fontTokensByFamilyStyle === "object"
-          ? Object.entries(catalog.fontTokensByFamilyStyle).reduce<Record<string, Record<string, string>>>(
-              (accumulator, [family, tokenMap]) => {
-                accumulator[String(family)] = tokenMap && typeof tokenMap === "object"
-                  ? Object.entries(tokenMap).reduce<Record<string, string>>((styleAccumulator, [style, token]) => {
-                      styleAccumulator[String(style)] = String(token || "");
-                      return styleAccumulator;
-                    }, {})
-                  : {};
-                return accumulator;
-              },
-              {}
-            )
-          : {}
-    };
-  } catch {
-    systemFontCatalog = {
-      available: false,
-      source: "error",
-      details: "",
-      families: [],
-      stylesByFamily: {},
-      fontTokensByFamilyStyle: {}
-    };
-  }
-}
-
-function ensureSystemFontCatalogLoaded(): Promise<void> {
-  // // Defer the expensive system-font scan until the visual editor actually needs font-family/style expansion.
-  if (systemFontCatalog.available || systemFontCatalog.source !== "unavailable" || systemFontCatalog.details) {
-    return Promise.resolve();
-  }
-
-  if (systemFontCatalogLoadPromise) {
-    return systemFontCatalogLoadPromise;
-  }
-
-  systemFontCatalogLoadPromise = loadSystemFontCatalogFallback().finally(() => {
-    systemFontCatalogLoadPromise = null;
-  });
-  return systemFontCatalogLoadPromise;
-}
-
 function setActiveMode(mode: PanelMode): void {
   // // Toggle tab state and active mode container visibility.
   activeMode = mode;
@@ -1659,45 +1532,6 @@ function captureOpenVisualGroupsFromDom(): void {
       visualOpenGroups.delete(groupName);
     }
   });
-}
-
-function buildVisualPropertySignature(properties: HostVisualProperty[]): string {
-  // // Track which host-property set is currently rendered so deferred refreshes never overwrite a newer selection.
-  return properties
-    .map((property) => `${property.path}|${property.controlKind}|${property.valueType}`)
-    .sort()
-    .join("\n");
-}
-
-function hasPendingVisualEditorEdits(): boolean {
-  // // Avoid background rerenders once the user has started editing rendered visual controls.
-  if (!elements.visualPropertyList) {
-    return false;
-  }
-
-  const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-    '[data-visual-role="value"]'
-  );
-  for (const control of controls) {
-    const path = String(control.dataset.visualPath || "").trim();
-    if (!path || !visualOriginalValuesByPath.has(path)) {
-      continue;
-    }
-
-    const valueType = String(control.dataset.visualType || "string") as HostVisualProperty["valueType"];
-    const controlKind = String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"];
-    const currentValue =
-      control instanceof HTMLInputElement && control.type === "checkbox"
-        ? control.checked
-        : control.value;
-    const currentCanonical = canonicalizeVisualValue(controlKind, valueType, currentValue);
-    const originalCanonical = String(visualOriginalValuesByPath.get(path) || "");
-    if (currentCanonical !== originalCanonical) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function updateVisualSelectionSummary(message: string): void {
@@ -2428,9 +2262,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return;
   }
 
-  const textStyleFamilySelectByBasePath = new Map<string, HTMLSelectElement>();
-  const textStyleStyleSelectByBasePath = new Map<string, HTMLSelectElement>();
-  const textStyleStylesByFamilyByBasePath = new Map<string, Record<string, string[]>>();
   const textStyleFlagCheckboxesByBasePath = new Map<
     string,
     { bold?: HTMLInputElement; italic?: HTMLInputElement; allCaps?: HTMLInputElement; smallCaps?: HTMLInputElement }
@@ -2466,102 +2297,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return normalized;
   };
 
-  const mergeStyleMaps = (...maps: Array<Record<string, string[]>>): Record<string, string[]> => {
-    // // Merge style maps with case-insensitive family/style dedupe.
-    const merged: Record<string, string[]> = {};
-
-    for (const map of maps) {
-      if (!map || typeof map !== "object") {
-        continue;
-      }
-
-      for (const [rawFamily, rawStyles] of Object.entries(map)) {
-        const family = String(rawFamily || "").trim();
-        if (!family || !Array.isArray(rawStyles)) {
-          continue;
-        }
-
-        const familyKey = family.toLowerCase();
-        const existingFamily =
-          Object.keys(merged).find((entry) => entry.toLowerCase() === familyKey) || family;
-        if (!Array.isArray(merged[existingFamily])) {
-          merged[existingFamily] = [];
-        }
-        for (const styleValue of rawStyles) {
-          const styleText = String(styleValue || "").trim();
-          if (!styleText) {
-            continue;
-          }
-          if (!merged[existingFamily].some((entry) => entry.toLowerCase() === styleText.toLowerCase())) {
-            merged[existingFamily].push(styleText);
-          }
-        }
-      }
-    }
-
-    return merged;
-  };
-
-  const normalizeTokenMap = (value: unknown): Record<string, string> => {
-    // // Normalize family/style -> exact font token map for panel-side apply payloads.
-    const normalized: Record<string, string> = {};
-    if (!value || typeof value !== "object") {
-      return normalized;
-    }
-    for (const [rawFamily, rawStyleMap] of Object.entries(value as Record<string, unknown>)) {
-      const family = String(rawFamily || "").trim();
-      if (!family || !rawStyleMap || typeof rawStyleMap !== "object") {
-        continue;
-      }
-      for (const [rawStyle, rawToken] of Object.entries(rawStyleMap as Record<string, unknown>)) {
-        const style = String(rawStyle || "").trim();
-        const token = String(rawToken || "").trim();
-        if (!style || !token) {
-          continue;
-        }
-        for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
-          for (const styleLookupKey of listFontStyleLookupKeys(style)) {
-            normalized[`${familyLookupKey}::${styleLookupKey}`] = token;
-          }
-        }
-      }
-    }
-    return normalized;
-  };
-
-  const mergeTokenMaps = (...maps: Array<Record<string, string>>): Record<string, string> => {
-    // // Merge exact font-token lookup tables without overwriting earlier matches.
-    const merged: Record<string, string> = {};
-    for (const map of maps) {
-      if (!map || typeof map !== "object") {
-        continue;
-      }
-      for (const [lookupKey, token] of Object.entries(map)) {
-        const normalizedLookupKey = String(lookupKey || "").trim();
-        const normalizedToken = String(token || "").trim();
-        if (!normalizedLookupKey || !normalizedToken || merged[normalizedLookupKey]) {
-          continue;
-        }
-        merged[normalizedLookupKey] = normalizedToken;
-      }
-    }
-    return merged;
-  };
-
-  const normalizedSystemStyleMap = systemFontCatalog.available
-    ? normalizeStyleMap(systemFontCatalog.stylesByFamily)
-    : {};
-  const normalizedSystemTokenMap = systemFontCatalog.available
-    ? normalizeTokenMap(systemFontCatalog.fontTokensByFamilyStyle)
-    : {};
-  const systemFamilies = systemFontCatalog.available && Array.isArray(systemFontCatalog.families)
-    ? systemFontCatalog.families
-    : [];
-  const commonSyntheticFontStyles = ["Regular", "Medium", "Semibold", "Bold", "Italic", "Bold Italic", "Black", "ExtraBold"];
-
   const resolveStyleOptionsForFamily = (family: string, styleMap?: Record<string, string[]>): string[] => {
-    // // Resolve styles for one family using host hints first, then the local system font catalog.
-    const mergedMap = mergeStyleMaps(styleMap || {}, normalizedSystemStyleMap);
+    // // Resolve host-exposed styles for one family without triggering any system-font scan.
+    const mergedMap = normalizeStyleMap(styleMap || {});
     for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
       if (Array.isArray(mergedMap[familyLookupKey]) && mergedMap[familyLookupKey].length > 0) {
         return sortFontStyleOptions(mergedMap[familyLookupKey].slice());
@@ -2592,20 +2330,18 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
       const currentFamily = String(property.value || "").trim();
       const resolvedStyleOptions = resolveStyleOptionsForFamily(currentFamily, property.styleOptionsByFamily);
-      const syntheticStyleOptions = resolvedStyleOptions.length > 0 ? resolvedStyleOptions : commonSyntheticFontStyles.slice();
-      const syntheticStyleValue = pickPreferredFontStyleOption(syntheticStyleOptions) || "Regular";
+      if (resolvedStyleOptions.length !== 1) {
+        continue;
+      }
+      const syntheticStyleValue = resolvedStyleOptions[0];
 
       propertiesWithStyleControls.push({
         path: `${textStylePath.basePath}::textstyle.fontStyle`,
         displayName: "Font Style",
         groupPath: property.groupPath,
         valueType: "string",
-        controlKind: "select",
-        options: syntheticStyleOptions.map((styleOption) => ({
-          value: styleOption,
-          label: styleOption
-        })),
-        styleOptionsByFamily: currentFamily ? { [currentFamily]: syntheticStyleOptions.slice() } : {},
+        controlKind: "string",
+        styleOptionsByFamily: currentFamily ? { [currentFamily]: resolvedStyleOptions.slice() } : {},
         value: syntheticStyleValue
       });
     }
@@ -2615,97 +2351,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   const renderProperties = ensureTextStyleControls(properties);
   loadedVisualProperties = renderProperties.slice();
-
-  const replaceSelectOptions = (
-    select: HTMLSelectElement,
-    options: string[],
-    preferredValue: string,
-    dedupeKeyBuilder?: (value: string) => string
-  ): void => {
-    // // Replace select items while preserving currently selected value when possible.
-    const deduped: string[] = [];
-    for (const optionText of options) {
-      const normalized = String(optionText || "").trim();
-      if (!normalized) {
-        continue;
-      }
-      const normalizedKey = dedupeKeyBuilder ? dedupeKeyBuilder(normalized) : normalized.toLowerCase();
-      if (!deduped.some((item) => (dedupeKeyBuilder ? dedupeKeyBuilder(item) : item.toLowerCase()) === normalizedKey)) {
-        deduped.push(normalized);
-      }
-    }
-
-    const currentValue = String(preferredValue || select.value || "").trim();
-    const previousValue = select.value;
-    select.innerHTML = "";
-    for (const optionText of deduped) {
-      const option = document.createElement("option");
-      option.value = optionText;
-      option.textContent = optionText;
-      select.appendChild(option);
-    }
-
-    const targetValue = currentValue || previousValue;
-    if (!targetValue) {
-      return;
-    }
-    const targetValueKey = dedupeKeyBuilder ? dedupeKeyBuilder(targetValue) : targetValue.toLowerCase();
-    for (const option of Array.from(select.options)) {
-      const optionValueKey = dedupeKeyBuilder ? dedupeKeyBuilder(String(option.value || "")) : String(option.value).toLowerCase();
-      if (optionValueKey === targetValueKey) {
-        select.value = option.value;
-        return;
-      }
-    }
-    if (!select.value && select.options.length > 0) {
-      select.selectedIndex = 0;
-    }
-  };
-
-  const refreshStyleSelectForFamily = (
-    basePath: string,
-    options?: {
-      preserveCurrent?: boolean;
-      preferredStyles?: string[];
-    }
-  ): void => {
-    // // Keep font-style options aligned with selected family and optionally reset to neutral defaults on family changes.
-    const familySelect = textStyleFamilySelectByBasePath.get(basePath);
-    const styleSelect = textStyleStyleSelectByBasePath.get(basePath);
-    const styleMap = textStyleStylesByFamilyByBasePath.get(basePath);
-    if (!familySelect || !styleSelect || !styleMap) {
-      return;
-    }
-
-    const selectedFamilyKeys = listFontFamilyLookupKeys(familySelect.value);
-    if (selectedFamilyKeys.length < 1) {
-      return;
-    }
-
-    let mappedOptions: string[] = [];
-    for (const selectedFamilyKey of selectedFamilyKeys) {
-      if (Object.prototype.hasOwnProperty.call(styleMap, selectedFamilyKey) && Array.isArray(styleMap[selectedFamilyKey])) {
-        mappedOptions = styleMap[selectedFamilyKey];
-        break;
-      }
-    }
-    const preserveCurrent = options?.preserveCurrent !== false;
-    const currentStyle = String(styleSelect.value || "").trim();
-    if (mappedOptions.length > 0) {
-      const orderedOptions = sortFontStyleOptions(mappedOptions);
-      const nextStyle = preserveCurrent
-        ? currentStyle
-        : pickPreferredFontStyleOption(orderedOptions, options?.preferredStyles);
-      replaceSelectOptions(styleSelect, orderedOptions, nextStyle, normalizeFontStyleDisplayKey);
-      return;
-    }
-    if (preserveCurrent && currentStyle) {
-      replaceSelectOptions(styleSelect, [currentStyle], currentStyle, normalizeFontStyleDisplayKey);
-      return;
-    }
-    const fallbackStyle = pickPreferredFontStyleOption(["Regular"], options?.preferredStyles) || "Regular";
-    replaceSelectOptions(styleSelect, ["Regular"], fallbackStyle, normalizeFontStyleDisplayKey);
-  };
 
   const bindLiveUpdateEvent = (
     control: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -3588,6 +3233,35 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         syncVector();
 
         controlWrap.append(vectorWrap, hiddenInput);
+      } else if (
+        parseTextStyleVirtualPath(property.path)?.styleKey === "fontFamily" ||
+        parseTextStyleVirtualPath(property.path)?.styleKey === "fontStyle"
+      ) {
+        // // Keep detected font family/style visible for reference and clone payloads, but do not expose manual edits here.
+        const textStylePath = parseTextStyleVirtualPath(property.path);
+        const readonlyValue = document.createElement("div");
+        readonlyValue.className = "visual-readonly-value";
+        readonlyValue.textContent = String(property.value ?? "").trim() || "—";
+
+        const hiddenInput = document.createElement("input");
+        hiddenInput.type = "hidden";
+        hiddenInput.value = String(property.value ?? "");
+        hiddenInput.dataset.visualPath = property.path;
+        hiddenInput.dataset.visualType = property.valueType;
+        hiddenInput.dataset.visualControlKind = property.controlKind;
+        hiddenInput.dataset.visualRole = "value";
+        if (property.cloneOnlyWhenDirty) {
+          hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
+        }
+
+        controlWrap.append(readonlyValue, hiddenInput);
+        if (textStylePath?.styleKey === "fontFamily") {
+          // // Point users to Premiere Properties for font edits now that system-font scanning is disabled.
+          const readonlyHint = document.createElement("p");
+          readonlyHint.className = "visual-readonly-hint";
+          readonlyHint.textContent = translate("visual.fontReadonlyHint");
+          controlWrap.appendChild(readonlyHint);
+        }
       } else if (property.controlKind === "select" && Array.isArray(property.options) && property.options.length > 0) {
         const select = document.createElement("select");
         const currentValue = String(property.value ?? "");
@@ -3608,93 +3282,8 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           select.dataset.visualCloneOnlyWhenDirty = "1";
         }
-
-        const textStylePath = parseTextStyleVirtualPath(property.path);
-        if (textStylePath) {
-          const hostMap = property.styleOptionsByFamily ? normalizeStyleMap(property.styleOptionsByFamily) : {};
-          const existingMap = textStyleStylesByFamilyByBasePath.get(textStylePath.basePath) || {};
-          const combinedMap = mergeStyleMaps(existingMap, hostMap, normalizedSystemStyleMap);
-          if (Object.keys(combinedMap).length > 0) {
-            textStyleStylesByFamilyByBasePath.set(textStylePath.basePath, combinedMap);
-          }
-          const existingTokenMap = visualTextStyleTokenMapByBasePath.get(textStylePath.basePath) || {};
-          const combinedTokenMap = mergeTokenMaps(existingTokenMap, normalizedSystemTokenMap);
-          if (Object.keys(combinedTokenMap).length > 0) {
-            visualTextStyleTokenMapByBasePath.set(textStylePath.basePath, combinedTokenMap);
-          }
-        }
-        if (textStylePath?.styleKey === "fontFamily") {
-          const currentFamilyValue = String(select.value || currentValue || "").trim();
-          const selectFamilies = Array.from(select.options).map((option) => String(option.value || ""));
-          const dedupedFamilies: string[] = [];
-          const seenFamilyKeys = new Set<string>();
-          for (const familyName of [...systemFamilies, ...selectFamilies]) {
-            const normalizedFamily = String(familyName || "").trim();
-            if (!normalizedFamily) {
-              continue;
-            }
-            const dedupeKey = normalizeCompactFontLookupKey(normalizedFamily) || normalizeFontLookupKey(normalizedFamily);
-            if (!dedupeKey || seenFamilyKeys.has(dedupeKey)) {
-              continue;
-            }
-            seenFamilyKeys.add(dedupeKey);
-            dedupedFamilies.push(normalizedFamily);
-          }
-          replaceSelectOptions(select, dedupedFamilies, currentFamilyValue, normalizeCompactFontLookupKey);
-          bindConstrainedSelectOpen(select);
-          textStyleFamilySelectByBasePath.set(textStylePath.basePath, select);
-          select.addEventListener("change", () => {
-            // // Reset family changes to a neutral style so old `Bold`/`Italic` values do not bleed into the new font.
-            refreshStyleSelectForFamily(textStylePath.basePath, {
-              preserveCurrent: false,
-              preferredStyles: ["Regular", "Book", "Roman", "Plain", "Medium", "Semibold"]
-            });
-            visualDirtyPaths.add(property.path);
-            scheduleLiveVisualApply();
-          });
-        } else if (textStylePath?.styleKey === "fontStyle") {
-          textStyleStyleSelectByBasePath.set(textStylePath.basePath, select);
-          const relatedMap = textStyleStylesByFamilyByBasePath.get(textStylePath.basePath);
-          if (relatedMap && Object.keys(relatedMap).length > 0) {
-            const selectStyles = Array.from(select.options).map((option) => String(option.value || ""));
-            const relatedFamilySelect = textStyleFamilySelectByBasePath.get(textStylePath.basePath);
-            const selectedFamilyKeys = listFontFamilyLookupKeys(String(relatedFamilySelect?.value || ""));
-            let mappedStyles: string[] = [];
-            for (const selectedFamilyKey of selectedFamilyKeys) {
-              if (Array.isArray(relatedMap[selectedFamilyKey])) {
-                mappedStyles = relatedMap[selectedFamilyKey];
-                break;
-              }
-            }
-            if (mappedStyles.length > 0) {
-              replaceSelectOptions(
-                select,
-                sortFontStyleOptions(mappedStyles),
-                String(select.value || currentValue || ""),
-                normalizeFontStyleDisplayKey
-              );
-            } else if (selectedFamilyKeys.length > 0) {
-              replaceSelectOptions(
-                select,
-                sortFontStyleOptions(selectStyles),
-                String(select.value || currentValue || ""),
-                normalizeFontStyleDisplayKey
-              );
-            } else {
-              replaceSelectOptions(
-                select,
-                sortFontStyleOptions([...selectStyles, ...Object.values(relatedMap).flat()]),
-                String(select.value || currentValue || ""),
-                normalizeFontStyleDisplayKey
-              );
-            }
-          }
-          bindConstrainedSelectOpen(select);
-          bindLiveUpdateEvent(select, "change");
-        } else {
-          bindConstrainedSelectOpen(select);
-          bindLiveUpdateEvent(select, "change");
-        }
+        bindConstrainedSelectOpen(select);
+        bindLiveUpdateEvent(select, "change");
 
         controlWrap.appendChild(select);
       } else {
@@ -3756,11 +3345,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   for (const node of topLevelVisualNodes) {
     const renderedNode = normalizeVisualNodeForRender(node);
     elements.visualPropertyList.appendChild(renderVisualNode(renderedNode, 0));
-  }
-
-  for (const basePath of textStyleStyleSelectByBasePath.keys()) {
-    // // Run one initial sync so style list follows currently selected family on first render.
-    refreshStyleSelectForFamily(basePath, { preserveCurrent: true });
   }
 }
 
@@ -3909,43 +3493,12 @@ function commitAppliedVisualChanges(changes: VisualPropertyChange[]): void {
   }
 }
 
-function selectionHasFontControls(properties: HostVisualProperty[]): boolean {
-  // // Load OS font metadata only for selections that actually expose font family/style controls.
-  return properties.some((property) => {
-    const textStylePath = parseTextStyleVirtualPath(property.path);
-    if (!textStylePath) {
-      return false;
-    }
-    return textStylePath.styleKey === "fontFamily" || textStylePath.styleKey === "fontStyle";
-  });
-}
-
 async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
   const result = await readSelectedMogrtVisualProperties();
   loadedVisualSelectionCount = Number(result.selectedCount || 0);
   loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
-  const propertySignature = buildVisualPropertySignature(result.properties);
-  loadedVisualPropertySignature = propertySignature;
   renderVisualPropertyEditor(result.properties);
-  if (selectionHasFontControls(result.properties)) {
-    void ensureSystemFontCatalogLoaded()
-      .then(() => {
-        if (activeMode !== "visual" || loadedVisualProperties.length < 1) {
-          return;
-        }
-        if (loadedVisualPropertySignature !== propertySignature) {
-          return;
-        }
-        if (hasPendingVisualEditorEdits()) {
-          return;
-        }
-        renderVisualPropertyEditor(result.properties);
-      })
-      .catch(() => {
-        // // Ignore deferred font-catalog failures so visual property reading never breaks on startup or slow systems.
-      });
-  }
   if (emitHostLog) {
     setStructuredLog(translate("log.hostResult"), result);
   }

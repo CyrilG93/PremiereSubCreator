@@ -299,6 +299,7 @@ Useful notes:
 - on a single selected clip, `Apply changes` sends only controls you actually changed in the panel, so ambiguous Premiere-only fields are less likely to be rewritten accidentally
 - some Premiere text layers still expose only an opaque runtime `Source Text` placeholder to CEP, so `font / fill / stroke` controls cannot be shown reliably until Adobe exposes more than that placeholder
 - some Premiere enum labels still rely on inferred mappings because CEP exposes the numeric value but not the official option labels; when a control proves unreliable, Sub Creator hides it instead of exposing a misleading field
+- `Font Family` and `Font Style` are shown as read-only values in the `Visual editor`; Sub Creator keeps them visible for reference and can still clone the detected values across multiple selected AE-style MOGRTs without scanning all system fonts
 
 ## Text editor
 

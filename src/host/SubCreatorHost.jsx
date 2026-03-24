@@ -1663,6 +1663,17 @@ function subcreator_visual_is_discrete_numeric_label(displayName) {
   );
 }
 
+function subcreator_visual_is_crop_label(displayName) {
+  // // Premiere crop controls are percentage sliders and should stay in a 0..100 range.
+  var key = String(displayName || "").toLowerCase();
+  var normalizedKey = subcreator_visual_normalize_label_key(displayName);
+  return (
+    key.indexOf("crop") !== -1 ||
+    normalizedKey.indexOf("crop") !== -1 ||
+    normalizedKey.indexOf("recadr") !== -1
+  );
+}
+
 function subcreator_visual_normalize_label_key(label) {
   // // Normalize labels for robust matching across accents/typos/localized variants.
   return String(label || "")
@@ -1726,6 +1737,10 @@ function subcreator_visual_guess_numeric_range(displayName, rawValue) {
     key.indexOf("progress") !== -1 ||
     key.indexOf("delay") !== -1
   ) {
+    return { minValue: 0, maxValue: 100, stepValue: 1 };
+  }
+
+  if (subcreator_visual_is_crop_label(displayName)) {
     return { minValue: 0, maxValue: 100, stepValue: 1 };
   }
 
@@ -1812,6 +1827,15 @@ function subcreator_visual_read_numeric_range(property, displayName, rawValue) {
     normalizedKey.indexOf("ocapite") !== -1;
   if (isOpacityLike) {
     // // Some MOGRT metadata reports oversized max values for opacity while UI is effectively clamped to 100.
+    minValue = 0;
+    maxValue = 100;
+    if (isNaN(stepValue) || stepValue <= 0) {
+      stepValue = 1;
+    }
+  }
+
+  if (subcreator_visual_is_crop_label(displayName)) {
+    // // Premiere can expose misleading crop metadata like `-50..50`, but the UI is really `0..100`.
     minValue = 0;
     maxValue = 100;
     if (isNaN(stepValue) || stepValue <= 0) {

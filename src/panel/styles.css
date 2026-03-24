@@ -672,6 +672,19 @@ input[type="checkbox"] {
   overflow-y: auto;
 }
 
+.visual-floating-select {
+  position: fixed;
+  z-index: 9999;
+  padding: 5px 6px;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid rgba(var(--text-primary-rgb), 0.22);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
 .visual-color-row {
   position: relative;
   display: grid;

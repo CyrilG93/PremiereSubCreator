@@ -281,6 +281,7 @@ Useful notes:
 - `Live update` can apply changes while you tweak values
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
+- long dropdowns can open below, above, or centered in the viewport when the normal native menu would be clipped
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
 - when multiple Premiere components are exposed, the `Visual editor` rebuilds a layered hierarchy instead of flattening everything into `General`
 - duplicate Premiere components are kept separate and numbered (`Group 02`, `Group 01`, `Text 02`, `Text 01`, etc.) to stay closer to Premiere's own reading order
@@ -295,6 +296,7 @@ Useful notes:
 - clip-level sections are still rendered after the layer/effect sections to better match Premiere's reading order
 - on a single selected clip, `Apply changes` sends only controls you actually changed in the panel, so ambiguous Premiere-only fields are less likely to be rewritten accidentally
 - some Premiere text layers still expose only an opaque runtime `Source Text` placeholder to CEP, so `font / fill / stroke` controls cannot be shown reliably until Adobe exposes more than that placeholder
+- some Premiere enum labels, especially clip-level `Blend Mode`, still rely on inferred mappings because CEP exposes the numeric value but not the official option labels
 
 ## Text editor
 

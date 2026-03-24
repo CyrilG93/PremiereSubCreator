@@ -2824,6 +2824,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
     overlaySelect.value = sourceSelect.value;
     document.body.appendChild(overlaySelect);
+    const openedAt = Date.now();
 
     const cleanup = (restoreFocus = false): void => {
       // // Remove all temporary listeners and destroy the floating select after use.
@@ -2831,7 +2832,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       document.removeEventListener("touchstart", onDocumentPointerDown, true);
       window.removeEventListener("resize", onViewportChanged, true);
       document.removeEventListener("scroll", onViewportChanged, true);
-      overlaySelect.removeEventListener("blur", onBlur);
       overlaySelect.removeEventListener("change", onChange);
       overlaySelect.removeEventListener("keydown", onKeydown);
       if (overlaySelect.parentElement) {
@@ -2852,18 +2852,15 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       closeFloatingVisualSelect(false);
     };
     const onDocumentPointerDown = (event: Event): void => {
+      // // Ignore the opening gesture itself; CEP can otherwise close the floating select immediately after it appears.
+      if (Date.now() - openedAt < 120) {
+        return;
+      }
       const target = event.target as Node | null;
       if (target && (overlaySelect.contains(target) || sourceSelect.contains(target))) {
         return;
       }
       closeFloatingVisualSelect(false);
-    };
-    const onBlur = (): void => {
-      window.setTimeout(() => {
-        if (activeFloatingVisualSelect?.overlaySelect === overlaySelect && document.activeElement !== overlaySelect) {
-          closeFloatingVisualSelect(false);
-        }
-      }, 0);
     };
     const onChange = (): void => {
       syncValueBack();
@@ -2886,7 +2883,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     document.addEventListener("touchstart", onDocumentPointerDown, true);
     window.addEventListener("resize", onViewportChanged, true);
     document.addEventListener("scroll", onViewportChanged, true);
-    overlaySelect.addEventListener("blur", onBlur);
     overlaySelect.addEventListener("change", onChange);
     overlaySelect.addEventListener("keydown", onKeydown);
 

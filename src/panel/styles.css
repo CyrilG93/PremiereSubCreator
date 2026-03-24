@@ -675,14 +675,47 @@ input[type="checkbox"] {
 .visual-floating-select {
   position: fixed;
   z-index: 9999;
-  padding: 5px 6px;
-  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
   color: var(--text-primary);
   background: var(--surface-raised);
   border: 1px solid rgba(var(--text-primary-rgb), 0.22);
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.visual-floating-select:focus-visible {
+  outline: 1px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+.visual-floating-select__list {
   overflow-y: auto;
+}
+
+.visual-floating-select__option {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.visual-floating-select__option:hover,
+.visual-floating-select__option.is-highlighted {
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.visual-floating-select__option.is-selected {
+  background: rgba(var(--accent-rgb), 0.26);
 }
 
 .visual-color-row {

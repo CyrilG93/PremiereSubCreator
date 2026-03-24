@@ -2728,7 +2728,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
   const selectMaxRows = 10;
   let activeFloatingVisualSelect: {
     sourceSelect: HTMLSelectElement;
-    overlaySelect: HTMLSelectElement;
+    overlayRoot: HTMLDivElement;
     cleanup: (restoreFocus?: boolean) => void;
   } | null = null;
 
@@ -2766,8 +2766,17 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     currentOverlay.cleanup(restoreFocus);
   };
 
+  const syncSelectValueAndTriggerChange = (sourceSelect: HTMLSelectElement, nextValue: string): void => {
+    // // Mirror a custom popover choice back into the real field so existing change handlers and dirty tracking stay untouched.
+    if (sourceSelect.value === nextValue) {
+      return;
+    }
+    sourceSelect.value = nextValue;
+    sourceSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
   const openFloatingVisualSelect = (sourceSelect: HTMLSelectElement): void => {
-    // // Render a temporary viewport-fixed select so long dropdowns can open below, above, or centered without clipping.
+    // // Render a temporary viewport-fixed HTML list so CEP does not rely on buggy native expanded `<select>` rendering.
     closeFloatingVisualSelect(false);
 
     const optionCount = Math.max(1, sourceSelect.options.length || 1);
@@ -2807,45 +2816,83 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     overlayTop = Math.max(8, Math.min(overlayTop, Math.max(8, viewportHeight - overlayHeight - 8)));
     const overlayLeft = Math.max(8, Math.min(rect.left, Math.max(8, viewportWidth - overlayWidth - 8)));
 
-    const overlaySelect = document.createElement("select");
-    overlaySelect.className = "visual-floating-select";
-    overlaySelect.size = overlayRows;
-    overlaySelect.style.left = `${Math.round(overlayLeft)}px`;
-    overlaySelect.style.top = `${Math.round(overlayTop)}px`;
-    overlaySelect.style.width = `${Math.round(overlayWidth)}px`;
-    overlaySelect.style.maxHeight = `${Math.round(overlayHeight)}px`;
-    overlaySelect.dataset.visualFloatingSource = String(sourceSelect.dataset.visualPath || "");
-    for (const sourceOption of Array.from(sourceSelect.options)) {
-      const clonedOption = document.createElement("option");
-      clonedOption.value = sourceOption.value;
-      clonedOption.textContent = sourceOption.textContent;
-      clonedOption.selected = sourceOption.selected;
-      overlaySelect.appendChild(clonedOption);
+    const overlayRoot = document.createElement("div");
+    overlayRoot.className = "visual-floating-select";
+    overlayRoot.tabIndex = -1;
+    overlayRoot.style.left = `${Math.round(overlayLeft)}px`;
+    overlayRoot.style.top = `${Math.round(overlayTop)}px`;
+    overlayRoot.style.width = `${Math.round(overlayWidth)}px`;
+    overlayRoot.style.maxHeight = `${Math.round(overlayHeight)}px`;
+    overlayRoot.dataset.visualFloatingSource = String(sourceSelect.dataset.visualPath || "");
+
+    const overlayList = document.createElement("div");
+    overlayList.className = "visual-floating-select__list";
+    overlayRoot.appendChild(overlayList);
+
+    const sourceOptions = Array.from(sourceSelect.options);
+    const selectedIndex = Math.max(0, sourceOptions.findIndex((option) => option.value === sourceSelect.value));
+    let highlightedIndex = selectedIndex;
+
+    const overlayItems: HTMLButtonElement[] = [];
+    const renderOverlayState = (): void => {
+      // // Keep selected/highlighted visuals in sync with keyboard and pointer navigation.
+      for (let itemIndex = 0; itemIndex < overlayItems.length; itemIndex += 1) {
+        const button = overlayItems[itemIndex];
+        const sourceOption = sourceOptions[itemIndex];
+        button.classList.toggle("is-highlighted", itemIndex === highlightedIndex);
+        button.classList.toggle("is-selected", Boolean(sourceOption?.value === sourceSelect.value));
+      }
+      const highlightedItem = overlayItems[highlightedIndex];
+      if (highlightedItem) {
+        highlightedItem.scrollIntoView({ block: "nearest" });
+      }
+    };
+
+    const chooseIndex = (itemIndex: number): void => {
+      // // Commit one option from the popover back to the native select.
+      const sourceOption = sourceOptions[itemIndex];
+      if (!sourceOption) {
+        return;
+      }
+      syncSelectValueAndTriggerChange(sourceSelect, sourceOption.value);
+      closeFloatingVisualSelect(true);
+    };
+
+    for (let optionIndex = 0; optionIndex < sourceOptions.length; optionIndex += 1) {
+      const sourceOption = sourceOptions[optionIndex];
+      const optionButton = document.createElement("button");
+      optionButton.type = "button";
+      optionButton.className = "visual-floating-select__option";
+      optionButton.textContent = sourceOption.textContent || sourceOption.label || sourceOption.value;
+      optionButton.dataset.optionValue = sourceOption.value;
+      optionButton.addEventListener("mouseenter", () => {
+        highlightedIndex = optionIndex;
+        renderOverlayState();
+      });
+      optionButton.addEventListener("click", () => {
+        chooseIndex(optionIndex);
+      });
+      overlayItems.push(optionButton);
+      overlayList.appendChild(optionButton);
     }
-    overlaySelect.value = sourceSelect.value;
-    document.body.appendChild(overlaySelect);
+
+    document.body.appendChild(overlayRoot);
     const openedAt = Date.now();
+    renderOverlayState();
 
     const cleanup = (restoreFocus = false): void => {
-      // // Remove all temporary listeners and destroy the floating select after use.
+      // // Remove all temporary listeners and destroy the floating popover after use.
       document.removeEventListener("mousedown", onDocumentPointerDown, true);
       document.removeEventListener("touchstart", onDocumentPointerDown, true);
       window.removeEventListener("resize", onViewportChanged, true);
       document.removeEventListener("scroll", onViewportChanged, true);
-      overlaySelect.removeEventListener("change", onChange);
-      overlaySelect.removeEventListener("keydown", onKeydown);
-      if (overlaySelect.parentElement) {
-        overlaySelect.parentElement.removeChild(overlaySelect);
+      overlayRoot.removeEventListener("keydown", onKeydown);
+      if (overlayRoot.parentElement) {
+        overlayRoot.parentElement.removeChild(overlayRoot);
       }
       if (restoreFocus) {
         sourceSelect.focus();
       }
-    };
-
-    const syncValueBack = (): void => {
-      // // Mirror the floating dropdown selection back into the real field so existing change handlers keep working.
-      sourceSelect.value = overlaySelect.value;
-      sourceSelect.dispatchEvent(new Event("change", { bubbles: true }));
     };
 
     const onViewportChanged = (): void => {
@@ -2857,14 +2904,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         return;
       }
       const target = event.target as Node | null;
-      if (target && (overlaySelect.contains(target) || sourceSelect.contains(target))) {
+      if (target && (overlayRoot.contains(target) || sourceSelect.contains(target))) {
         return;
       }
       closeFloatingVisualSelect(false);
-    };
-    const onChange = (): void => {
-      syncValueBack();
-      closeFloatingVisualSelect(true);
     };
     const onKeydown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
@@ -2872,10 +2915,33 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         closeFloatingVisualSelect(true);
         return;
       }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        highlightedIndex = Math.min(sourceOptions.length - 1, highlightedIndex + 1);
+        renderOverlayState();
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        highlightedIndex = Math.max(0, highlightedIndex - 1);
+        renderOverlayState();
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
-        syncValueBack();
-        closeFloatingVisualSelect(true);
+        chooseIndex(highlightedIndex);
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        highlightedIndex = 0;
+        renderOverlayState();
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        highlightedIndex = Math.max(0, sourceOptions.length - 1);
+        renderOverlayState();
       }
     };
 
@@ -2883,16 +2949,15 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     document.addEventListener("touchstart", onDocumentPointerDown, true);
     window.addEventListener("resize", onViewportChanged, true);
     document.addEventListener("scroll", onViewportChanged, true);
-    overlaySelect.addEventListener("change", onChange);
-    overlaySelect.addEventListener("keydown", onKeydown);
+    overlayRoot.addEventListener("keydown", onKeydown);
 
     activeFloatingVisualSelect = {
       sourceSelect,
-      overlaySelect,
+      overlayRoot,
       cleanup
     };
 
-    overlaySelect.focus();
+    overlayRoot.focus();
   };
 
   const tryOpenConstrainedSelect = (select: HTMLSelectElement, event?: Event): void => {

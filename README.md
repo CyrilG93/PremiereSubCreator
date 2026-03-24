@@ -284,6 +284,7 @@ Useful notes:
 - long dropdowns use a custom popover that can open below, above, or centered in the viewport when the native menu would be clipped, and it stays open until you choose a value or click outside without disappearing during its own scroll
 - `Clip > Motion > Crop` sliders are clamped to Premiere's usual `0..100` range even if CEP reports misleading min/max metadata
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
+- AE-authored `.mogrt` files that expose the same `Graphic Parameters` block twice through CEP are deduplicated in the `Visual editor`, so identical control sets do not appear twice
 - when multiple Premiere components are exposed, the `Visual editor` rebuilds a layered hierarchy instead of flattening everything into `General`
 - duplicate Premiere components are kept separate and numbered (`Group 02`, `Group 01`, `Text 02`, `Text 01`, etc.) to stay closer to Premiere's own reading order
 - group components can contain nested component sections (`Text`, `Shape`, effects, extra subsections) so large Premiere templates are easier to browse

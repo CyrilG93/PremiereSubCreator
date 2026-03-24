@@ -3874,6 +3874,53 @@ function subcreator_visual_filter_property_descriptors(properties) {
   return filtered;
 }
 
+function subcreator_visual_build_component_descriptor_signature(properties) {
+  // // Deduplicate cloned AE components by visible descriptor content instead of host path prefix.
+  if (!properties || typeof properties.length !== "number") {
+    return "";
+  }
+
+  var parts = [];
+  for (var index = 0; index < properties.length; index += 1) {
+    var descriptor = properties[index];
+    if (!descriptor) {
+      continue;
+    }
+
+    var normalizedDescriptor = subcreator_visual_normalize_descriptor(descriptor) || descriptor;
+    var optionParts = [];
+    if (normalizedDescriptor.options && typeof normalizedDescriptor.options.length === "number") {
+      for (var optionIndex = 0; optionIndex < normalizedDescriptor.options.length; optionIndex += 1) {
+        var option = normalizedDescriptor.options[optionIndex] || {};
+        optionParts.push(String(option.value) + "=" + String(option.label || option.value));
+      }
+    }
+
+    var vectorScaleText = "";
+    if (normalizedDescriptor.vectorScale && typeof normalizedDescriptor.vectorScale.length === "number") {
+      vectorScaleText = String(normalizedDescriptor.vectorScale.join(","));
+    }
+
+    parts.push(
+      [
+        String(normalizedDescriptor.displayName || ""),
+        String(normalizedDescriptor.groupPath || ""),
+        String(normalizedDescriptor.controlKind || ""),
+        String(normalizedDescriptor.valueType || ""),
+        String(normalizedDescriptor.value),
+        String(normalizedDescriptor.minValue),
+        String(normalizedDescriptor.maxValue),
+        String(normalizedDescriptor.stepValue),
+        String(normalizedDescriptor.vectorMode || ""),
+        vectorScaleText,
+        optionParts.join("|")
+      ].join("::")
+    );
+  }
+
+  return parts.join("\n");
+}
+
 function subcreator_visual_parse_component_prefixed_path(pathValue) {
   // // Decode optional component-prefixed visual-editor paths like `c2|0.4::textstyle.fontSize`.
   var pathText = subcreator_trim_string(String(pathValue || ""));
@@ -5295,27 +5342,59 @@ function subcreator_list_selected_mogrt_properties() {
     }
 
     var firstTrackItem = mogrtItems[0];
-    var components = subcreator_get_mogrt_components_from_track_item(firstTrackItem);
+    var rawComponents = subcreator_get_mogrt_components_from_track_item(firstTrackItem);
+    var components = [];
     var properties = [];
+    var componentDebugEntries = [];
+    var duplicateComponentDebug = [];
     var sequenceSize = subcreator_visual_read_sequence_dimensions();
+    var seenComponentSignatures = {};
     subcreator_visual_reset_group_sequence_axis_preferences();
     subcreator_visual_reset_text_style_option_cache();
-    for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
-      var componentGroupPath = components.length > 1 ? subcreator_visual_get_component_group_label(components[componentIndex], componentIndex) : "";
+    for (var componentIndex = 0; componentIndex < rawComponents.length; componentIndex += 1) {
+      var rawComponent = rawComponents[componentIndex];
+      var componentGroupPath = rawComponents.length > 1 ? subcreator_visual_get_component_group_label(rawComponent, componentIndex) : "";
+      var componentProperties = [];
       subcreator_collect_mogrt_visual_properties_recursive(
-        components[componentIndex] ? components[componentIndex].properties : null,
+        rawComponent ? rawComponent.properties : null,
         subcreator_visual_build_component_path_prefix(componentIndex),
         componentGroupPath,
-        properties
+        componentProperties
       );
+
+      componentProperties = subcreator_visual_filter_property_descriptors(componentProperties);
+      var componentSignature = subcreator_visual_build_component_descriptor_signature(componentProperties);
+      if (componentSignature && typeof seenComponentSignatures[componentSignature] !== "undefined") {
+        // // Collapse duplicated AE components that expose the same visible controls twice in the host API.
+        duplicateComponentDebug.push({
+          index: componentIndex,
+          duplicateOf: seenComponentSignatures[componentSignature],
+          name: subcreator_trim_string(String((rawComponent && (rawComponent.displayName || rawComponent.name)) || "")) || "Component " + String(componentIndex),
+          propertyCount: componentProperties.length
+        });
+        continue;
+      }
+
+      seenComponentSignatures[componentSignature] = componentIndex;
+      components.push(rawComponent);
+      componentDebugEntries.push({
+        index: componentIndex,
+        name: subcreator_trim_string(String((rawComponent && (rawComponent.displayName || rawComponent.name)) || "")) || "Component " + String(componentIndex),
+        propertyCount: componentProperties.length
+      });
+
+      for (var componentPropertyIndex = 0; componentPropertyIndex < componentProperties.length; componentPropertyIndex += 1) {
+        properties.push(componentProperties[componentPropertyIndex]);
+      }
     }
-    properties = subcreator_visual_filter_property_descriptors(properties);
 
     var debug = {
       sequenceWidth: sequenceSize.width,
       sequenceHeight: sequenceSize.height,
+      rawComponentCount: rawComponents.length,
       componentCount: components.length,
-      components: [],
+      components: componentDebugEntries,
+      duplicateComponents: duplicateComponentDebug,
       vectorCount: 0,
       colorCount: 0,
       selectCount: 0,
@@ -5382,21 +5461,17 @@ function subcreator_list_selected_mogrt_properties() {
       }
     }
 
-    for (var debugComponentIndex = 0; debugComponentIndex < components.length; debugComponentIndex += 1) {
-      var debugComponent = components[debugComponentIndex];
-      if (!debugComponent || !debugComponent.properties) {
+    for (var debugComponentIndex = 0; debugComponentIndex < componentDebugEntries.length; debugComponentIndex += 1) {
+      var debugComponentEntry = componentDebugEntries[debugComponentIndex];
+      var debugComponent = rawComponents[debugComponentEntry.index];
+      if (!debugComponentEntry || !debugComponent || !debugComponent.properties) {
         continue;
       }
 
-      debug.components.push({
-        index: debugComponentIndex,
-        name: subcreator_trim_string(String(debugComponent.displayName || debugComponent.name || "")) || "Component " + String(debugComponentIndex),
-        propertyCount: Number(debugComponent.properties.numItems || 0)
-      });
       subcreator_collect_text_style_debug_candidates(
         debugComponent.properties,
-        subcreator_visual_build_component_path_prefix(debugComponentIndex),
-        components.length > 1 ? subcreator_visual_get_component_group_label(debugComponent, debugComponentIndex) : "",
+        subcreator_visual_build_component_path_prefix(debugComponentEntry.index),
+        rawComponents.length > 1 ? subcreator_visual_get_component_group_label(debugComponent, debugComponentEntry.index) : "",
         debug.textStyleCandidates,
         20
       );

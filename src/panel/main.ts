@@ -3898,6 +3898,17 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
   return changes;
 }
 
+function commitAppliedVisualChanges(changes: VisualPropertyChange[]): void {
+  // // Advance the live-update baseline after a successful apply so reverting a slider back to 0 still counts as a fresh change.
+  for (const change of changes) {
+    visualOriginalValuesByPath.set(
+      change.path,
+      canonicalizeVisualValue(change.controlKind, change.valueType, change.value)
+    );
+    visualDirtyPaths.delete(change.path);
+  }
+}
+
 function selectionHasFontControls(properties: HostVisualProperty[]): boolean {
   // // Load OS font metadata only for selections that actually expose font family/style controls.
   return properties.some((property) => {
@@ -4024,6 +4035,9 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
     }
 
     const response = await applyVisualPropertiesToSelectedMogrts(changes);
+    if (useLiveUpdate && Number(response.failedCount || 0) === 0) {
+      commitAppliedVisualChanges(changes);
+    }
     if (!useLiveUpdate) {
       setStructuredLog(translate("log.visualApplyDone"), response);
       await loadVisualPropertiesFromSelection();

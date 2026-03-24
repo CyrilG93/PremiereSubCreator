@@ -4563,6 +4563,77 @@ function subcreator_normalize_visual_payload_value(valueType, rawValue) {
   return String(rawValue || "");
 }
 
+function subcreator_visual_numeric_values_match(targetValue, readbackValue) {
+  // // Compare numeric writes with a tiny tolerance so host readback can confirm that `0` really stuck.
+  var target = Number(targetValue);
+  var readback = Number(readbackValue);
+  if (isNaN(target) || isNaN(readback)) {
+    return false;
+  }
+  return Math.abs(target - readback) <= 0.0001;
+}
+
+function subcreator_visual_try_set_numeric_property(property, numericValue, debugLines, debugLabel) {
+  // // Validate numeric writes with readback because some Premiere sliders silently coerce values like `0`.
+  if (!property || typeof property.setValue !== "function") {
+    return false;
+  }
+
+  var attempts = [
+    { value: numericValue, useRefresh: true, label: "number_refresh" },
+    { value: numericValue, useRefresh: false, label: "number_no_refresh" },
+    { value: String(numericValue), useRefresh: true, label: "string_refresh" },
+    { value: String(numericValue), useRefresh: false, label: "string_no_refresh" }
+  ];
+
+  for (var attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+    var attempt = attempts[attemptIndex];
+    try {
+      property.setValue(attempt.value, attempt.useRefresh);
+    } catch (numericSetError) {
+      continue;
+    }
+
+    if (typeof property.getValue !== "function") {
+      return true;
+    }
+
+    try {
+      var readbackValue = property.getValue();
+      if (subcreator_visual_numeric_values_match(numericValue, readbackValue)) {
+        if (attemptIndex > 0 && debugLines && debugLines.push) {
+          debugLines.push(
+            "numeric write fallback label=" +
+              String(debugLabel || "") +
+              " mode=" +
+              attempt.label +
+              " target=" +
+              String(numericValue)
+          );
+        }
+        return true;
+      }
+
+      if (attemptIndex === attempts.length - 1 && debugLines && debugLines.push) {
+        debugLines.push(
+          "numeric write mismatch label=" +
+            String(debugLabel || "") +
+            " target=" +
+            String(numericValue) +
+            " readback=" +
+            String(readbackValue)
+        );
+      }
+    } catch (numericReadbackError) {
+      if (attemptIndex === 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function subcreator_visual_parse_hex_color(value) {
   // // Parse CSS hex color strings into RGB channels.
   var text = subcreator_trim_string(String(value || ""));
@@ -5782,6 +5853,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           controlKind === "vector" ||
           controlKind === "color" ||
           controlKind === "select" ||
+          (valueType === "number" && Number(value) === 0) ||
           String(displayName || "").toLowerCase().indexOf("size") !== -1 ||
           !!virtualTextStyleTarget
         ) {
@@ -5829,6 +5901,15 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               applied = true;
             }
           } catch (vectorError) {}
+        } else if ((controlKind === "slider" || controlKind === "number") && valueType === "number") {
+          try {
+            applied = subcreator_visual_try_set_numeric_property(
+              property,
+              Number(value),
+              debugLines,
+              path + " name=" + displayName
+            );
+          } catch (numericError) {}
         }
 
         if (!applied && controlKind !== "color" && !virtualTextStyleTarget) {
@@ -7730,6 +7811,15 @@ function subcreator_apply_visual_changes_to_track_item(trackItem, changes, debug
           applied = true;
         }
       } catch (vectorError) {}
+    } else if ((controlKind === "slider" || controlKind === "number") && valueType === "number") {
+      try {
+        applied = subcreator_visual_try_set_numeric_property(
+          property,
+          Number(value),
+          debugLines,
+          path + " clone"
+        );
+      } catch (numericError) {}
     }
 
     if (!applied && controlKind !== "color" && !virtualTextStyleTarget) {

@@ -278,7 +278,7 @@ Typical editable parameters include:
 - some text style fields when exposed by the template
 
 Useful notes:
-- `Live update` can apply changes while you tweak values
+- `Live update` can apply changes while you tweak values, including when you return a slider or number field back to `0` after a previous live change
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
 - long dropdowns use a custom popover that can open below, above, or centered in the viewport when the native menu would be clipped, and it stays open until you choose a value or click outside without disappearing during its own scroll

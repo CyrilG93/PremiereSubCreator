@@ -2750,6 +2750,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   const getDesiredSelectHeight = (rows: number): number => rows * selectRowHeightPx + 12;
 
+  const shouldUseConstrainedSelect = (select: HTMLSelectElement): boolean => {
+    // // Decide once whether this select needs the custom popover instead of the native dropdown.
+    const desiredHeight = getDesiredSelectHeight(getDesiredSelectRows(select));
+    return (select.options.length || 0) > selectMaxRows || getViewportSpaceBelow(select) < desiredHeight;
+  };
+
   const getRowsForAvailableHeight = (availableHeight: number, optionCount: number): number => {
     // // Fit as many rows as possible in the visible viewport while keeping the list usable.
     const rowsFromHeight = Math.floor((Math.max(availableHeight, 84) - 12) / selectRowHeightPx);
@@ -2895,7 +2901,11 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
       }
     };
 
-    const onViewportChanged = (): void => {
+    const onViewportChanged = (event?: Event): void => {
+      const scrollTarget = event?.target as Node | null;
+      if (scrollTarget && overlayRoot.contains(scrollTarget)) {
+        return;
+      }
       closeFloatingVisualSelect(false);
     };
     const onDocumentPointerDown = (event: Event): void => {
@@ -2965,12 +2975,13 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     if ((activeFloatingVisualSelect && activeFloatingVisualSelect.sourceSelect === select) || Number(select.size || 1) > 1) {
       return;
     }
-    const desiredHeight = getDesiredSelectHeight(getDesiredSelectRows(select));
-    const shouldConstrain = (select.options.length || 0) > selectMaxRows || getViewportSpaceBelow(select) < desiredHeight;
+    const shouldConstrain = shouldUseConstrainedSelect(select);
     if (shouldConstrain) {
       if (event) {
         event.preventDefault();
+        event.stopPropagation();
       }
+      select.blur();
       openFloatingVisualSelect(select);
     }
   };
@@ -2986,6 +2997,16 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     select.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
         tryOpenConstrainedSelect(select, event);
+      }
+    });
+    select.addEventListener("click", (event) => {
+      if (!shouldUseConstrainedSelect(select)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!activeFloatingVisualSelect || activeFloatingVisualSelect.sourceSelect !== select) {
+        openFloatingVisualSelect(select);
       }
     });
   };

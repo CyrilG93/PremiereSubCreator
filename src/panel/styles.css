@@ -679,11 +679,12 @@ input[type="checkbox"] {
   flex-direction: column;
   padding: 4px 0;
   color: var(--text-primary);
-  background: var(--surface-raised);
+  background: rgb(var(--bg-surface-rgb));
   border: 1px solid rgba(var(--text-primary-rgb), 0.22);
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+  opacity: 1;
 }
 
 .visual-floating-select:focus-visible {
@@ -692,6 +693,7 @@ input[type="checkbox"] {
 }
 
 .visual-floating-select__list {
+  background: rgb(var(--bg-surface-rgb));
   overflow-y: auto;
 }
 
@@ -701,7 +703,7 @@ input[type="checkbox"] {
   width: 100%;
   padding: 6px 10px;
   border: 0;
-  background: transparent;
+  background: rgb(var(--bg-surface-rgb));
   color: inherit;
   text-align: left;
   font-size: 0.75rem;

@@ -281,7 +281,7 @@ Useful notes:
 - `Live update` can apply changes while you tweak values
 - multi-MOGRT apply shows progress
 - logs can be collapsed or switched between compact/full modes
-- long dropdowns use a custom popover that can open below, above, or centered in the viewport when the native menu would be clipped, and it stays open until you choose a value or click outside
+- long dropdowns use a custom popover that can open below, above, or centered in the viewport when the native menu would be clipped, and it stays open until you choose a value or click outside without disappearing during its own scroll
 - Premiere-authored `.mogrt` files are scanned across all exposed components, so the `Visual editor` can recover more real controls than a first-component-only read
 - when multiple Premiere components are exposed, the `Visual editor` rebuilds a layered hierarchy instead of flattening everything into `General`
 - duplicate Premiere components are kept separate and numbered (`Group 02`, `Group 01`, `Text 02`, `Text 01`, etc.) to stay closer to Premiere's own reading order

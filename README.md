@@ -37,14 +37,18 @@ Sub Creator does not need the same dependencies for every mode.
 
 The installers try to configure the Python tools automatically when possible.
 If Whisper cannot be configured, `SRT` mode still works.
+If `Whisper + SRT` still looks unavailable on Windows after install, rerun the Windows installer once Python `3.11` or `3.12` is confirmed and let it finish until the runtime summary is printed.
 
 ## Installation
 
 1. Download the latest release `.zip` from GitHub.
 2. Close Premiere Pro.
 3. Run the included installer for your OS.
-4. Reopen Premiere Pro.
-5. Open `Sub Creator` from the Premiere extensions panel.
+4. Let the installer finish and print its runtime summary.
+5. Reopen Premiere Pro.
+6. Open `Sub Creator` from the Premiere extensions panel.
+
+The installers copy the bundled `base` Whisper model into the local Whisper cache and write a runtime config that helps the panel find Python, Whisper, WhisperX, and `ffmpeg`.
 
 ### macOS
 

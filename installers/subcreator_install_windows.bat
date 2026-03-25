@@ -62,6 +62,7 @@ if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode
 call :subcreator_copy_bundled_models
+call :subcreator_validate_bundled_model_cache
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
@@ -119,41 +120,41 @@ if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCR
   ) else (
     echo WhisperX Python package installed successfully.
   )
+  call :subcreator_validate_whisperx_install
 ) else (
   echo WhisperX setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(need 3.10 to 3.13 for corrected transcript align^).
 )
 
 :subcreator_after_whisper_setup
-REM // Install ffmpeg via winget when available; otherwise keep setup non-blocking.
+REM // Install ffmpeg via winget when available; otherwise keep setup non-blocking without jumping from inside IF blocks.
+set "SUBCREATOR_SKIP_FFMPEG_INSTALL="
 where ffmpeg >nul 2>nul
 if not errorlevel 1 (
   echo ffmpeg already available.
-  goto :subcreator_collect_runtime
+  set "SUBCREATOR_SKIP_FFMPEG_INSTALL=1"
 )
 
-where winget >nul 2>nul
-if errorlevel 1 (
-  echo ffmpeg not found and winget unavailable. Install ffmpeg manually if Whisper transcription fails.
-  goto :subcreator_collect_runtime
+if not defined SUBCREATOR_SKIP_FFMPEG_INSTALL (
+  where winget >nul 2>nul
+  if errorlevel 1 (
+    echo ffmpeg not found and winget unavailable. Install ffmpeg manually if Whisper transcription fails.
+  ) else (
+    echo Installing ffmpeg via winget...
+    winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements >nul 2>nul
+    where ffmpeg >nul 2>nul
+    if errorlevel 1 (
+      echo ffmpeg install failed. Install manually with winget or another package manager.
+    ) else (
+      echo ffmpeg installed successfully.
+    )
+  )
 )
 
-echo Installing ffmpeg via winget...
-winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements >nul 2>nul
-where ffmpeg >nul 2>nul
-if errorlevel 1 (
-  echo ffmpeg install failed. Install manually with winget or another package manager.
-) else (
-  echo ffmpeg installed successfully.
-)
-
-:subcreator_collect_runtime
-call :subcreator_detect_python_executable_path
-call :subcreator_detect_whisper_path
-call :subcreator_detect_ffmpeg_path
-call :subcreator_write_runtime_config
+call :subcreator_collect_runtime
 
 echo Restart Premiere Pro.
 echo Installation complete.
+goto :subcreator_done
 
 :subcreator_done
 if /I not "%SUBCREATOR_NO_PAUSE%"=="1" (
@@ -181,7 +182,7 @@ if exist "%SUBCREATOR_BUNDLED_MODELS_DIR%\*.pt" (
   for %%F in ("%SUBCREATOR_BUNDLED_MODELS_DIR%\*.pt") do (
     if exist "%%~fF" (
       if not exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\%%~nxF" (
-        copy "%%~fF" "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\%%~nxF" >nul
+        copy /b "%%~fF" "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\%%~nxF" >nul
         if not errorlevel 1 set /a SUBCREATOR_MODELS_COPIED+=1
       )
     )
@@ -192,6 +193,25 @@ for /f "tokens=* delims=" %%L in ('powershell -NoProfile -ExecutionPolicy Bypass
 )
 if !SUBCREATOR_MODELS_COPIED! GTR 0 (
   echo Copied !SUBCREATOR_MODELS_COPIED! bundled Whisper model^(s^) to %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%
+)
+goto :eof
+
+:subcreator_validate_bundled_model_cache
+REM // Confirm that the bundled base model is reachable from the cache directory used by the panel.
+if exist "%SUBCREATOR_BUNDLED_MODELS_DIR%\base.pt" (
+  if exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt" (
+    echo Bundled Whisper base model available at %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt
+  ) else (
+    echo WARNING: bundled Whisper base model was not copied to %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%
+  )
+  goto :eof
+)
+if exist "%SUBCREATOR_BUNDLED_MODELS_DIR%\base.pt.part-000" (
+  if exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt" (
+    echo Bundled Whisper base model available at %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt
+  ) else (
+    echo WARNING: bundled Whisper base model parts were found, but %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt is missing
+  )
 )
 goto :eof
 
@@ -294,6 +314,18 @@ if errorlevel 1 (
   goto :eof
 )
 echo Whisper validation succeeded with !SUBCREATOR_PYTHON_LABEL!.
+goto :eof
+
+:subcreator_validate_whisperx_install
+REM // Confirm that the selected Python can import WhisperX before corrected align is advertised as ready.
+if not defined SUBCREATOR_PYTHON_CMD goto :eof
+call !SUBCREATOR_PYTHON_CMD! -c "import whisperx" >nul 2>nul
+if errorlevel 1 (
+  echo WhisperX validation failed with !SUBCREATOR_PYTHON_LABEL!.
+  echo Corrected transcript align may still be unavailable until whisperx imports cleanly.
+  goto :eof
+)
+echo WhisperX validation succeeded with !SUBCREATOR_PYTHON_LABEL!.
 goto :eof
 
 :subcreator_detect_whisper_path
@@ -435,3 +467,11 @@ for /f "tokens=1* delims=;" %%a in ("!SUBCREATOR_PATH_HINTS_WORK!") do (
   set "SUBCREATOR_PATH_HINTS_WORK=%%~b"
 )
 goto :subcreator_build_path_hints_json_loop
+
+:subcreator_collect_runtime
+REM // Refresh the resolved runtime paths once installs are finished, then write the CEP runtime config.
+call :subcreator_detect_python_executable_path
+call :subcreator_detect_whisper_path
+call :subcreator_detect_ffmpeg_path
+call :subcreator_write_runtime_config
+goto :eof

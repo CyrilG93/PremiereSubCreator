@@ -368,6 +368,47 @@ subcreator_supports_whisperx_version() {
   return 0
 }
 
+subcreator_validate_bundled_model_cache() {
+  # // Confirm that the bundled base model is available from the cache location used by the panel.
+  if [ -f "${SUBCREATOR_BUNDLED_MODELS_DIR}/base.pt" ] || [ -f "${SUBCREATOR_BUNDLED_MODELS_DIR}/base.pt.part-000" ]; then
+    if [ -f "${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/base.pt" ]; then
+      echo "Bundled Whisper base model available at ${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}/base.pt"
+    else
+      echo "WARNING: bundled Whisper base model is missing from ${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}"
+    fi
+  fi
+}
+
+subcreator_validate_whisper_install() {
+  # // Confirm that the selected Python can import Whisper before the runtime config is written.
+  if [ -z "${SUBCREATOR_PYTHON_CMD}" ]; then
+    return 1
+  fi
+
+  if ${SUBCREATOR_PYTHON_CMD} -c 'import whisper' >/dev/null 2>&1; then
+    echo "Whisper validation succeeded with ${SUBCREATOR_PYTHON_CMD}."
+    return 0
+  fi
+
+  echo "Whisper validation failed with ${SUBCREATOR_PYTHON_CMD}."
+  return 1
+}
+
+subcreator_validate_whisperx_install() {
+  # // Confirm that the selected Python can import WhisperX before corrected align is advertised as ready.
+  if [ -z "${SUBCREATOR_PYTHON_CMD}" ]; then
+    return 1
+  fi
+
+  if ${SUBCREATOR_PYTHON_CMD} -c 'import whisperx' >/dev/null 2>&1; then
+    echo "WhisperX validation succeeded with ${SUBCREATOR_PYTHON_CMD}."
+    return 0
+  fi
+
+  echo "WhisperX validation failed with ${SUBCREATOR_PYTHON_CMD}."
+  return 1
+}
+
 subcreator_select_python_cmd() {
   # // Prefer explicit minor-version executables before generic python3/python aliases.
   local candidates=(
@@ -425,6 +466,7 @@ subcreator_restore_existing_templates
 echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
 subcreator_enable_cep_debug_mode
 subcreator_copy_bundled_whisper_models
+subcreator_validate_bundled_model_cache
 
 # // Discover supported Python runtime; when multiple versions exist we pick the newest supported one.
 if ! subcreator_select_python_cmd; then
@@ -445,6 +487,7 @@ else
 
   if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade openai-whisper; then
     echo "Whisper Python package installed successfully."
+    subcreator_validate_whisper_install || true
     subcreator_configure_whisper_path || true
   else
     echo "Whisper package install failed. You can run manually:"
@@ -455,6 +498,7 @@ else
   if subcreator_supports_whisperx_version "${SUBCREATOR_PYTHON_VERSION}"; then
     if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk; then
       echo "WhisperX Python package installed successfully."
+      subcreator_validate_whisperx_install || true
     else
       echo "WhisperX package install failed. You can run manually:"
       echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk"

@@ -16,6 +16,7 @@ set "SUBCREATOR_PYTHON_VERSION_LINE="
 set "SUBCREATOR_PYTHON_MAJOR="
 set "SUBCREATOR_PYTHON_MINOR="
 set "SUBCREATOR_PYTHON_PATH="
+set "SUBCREATOR_PYTHON_SCRIPTS_DIR="
 set "SUBCREATOR_PYTHON_SEEN="
 set "SUBCREATOR_WHISPER_PATH="
 set "SUBCREATOR_FFMPEG_PATH="
@@ -96,6 +97,7 @@ if errorlevel 1 (
 ) else (
   echo Whisper Python package installed successfully.
 )
+call :subcreator_validate_whisper_install
 
 REM // Install WhisperX when Python is compatible so corrected transcript align can run without extra setup.
 if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
@@ -140,8 +142,10 @@ call :subcreator_detect_ffmpeg_path
 call :subcreator_write_runtime_config
 
 echo Restart Premiere Pro.
+echo Installation complete.
 
 :subcreator_done
+if /I not "%SUBCREATOR_NO_PAUSE%"=="1" pause
 endlocal
 exit /b 0
 
@@ -177,8 +181,8 @@ if !SUBCREATOR_MODELS_COPIED! GTR 0 (
 goto :eof
 
 :subcreator_detect_python
-REM // Prefer explicit supported Python minor versions first to avoid defaulting to unsupported 3.14+.
-for %%m in (13 12 11 10 9 8) do (
+REM // Prefer the most reliable Whisper/WhisperX Python versions first instead of defaulting to the newest interpreter.
+for %%m in (11 12 10 13 9 8) do (
   for /f "tokens=* delims=" %%v in ('py -3.%%m --version 2^>nul') do (
     set "SUBCREATOR_PYTHON_CMD=py -3.%%m"
     set "SUBCREATOR_PYTHON_LABEL=py -3.%%m"
@@ -251,9 +255,41 @@ if defined SUBCREATOR_PYTHON_PATH (
 )
 goto :eof
 
+:subcreator_detect_python_scripts_path
+REM // Resolve the active Python scripts directory directly from Python so user installs are detected reliably.
+set "SUBCREATOR_PYTHON_SCRIPTS_DIR="
+if not defined SUBCREATOR_PYTHON_CMD goto :eof
+for /f "tokens=* delims=" %%s in ('!SUBCREATOR_PYTHON_CMD! -c "import sysconfig; print(sysconfig.get_path('scripts') or '')" 2^>nul') do (
+  set "SUBCREATOR_PYTHON_SCRIPTS_DIR=%%s"
+  goto :subcreator_detect_python_scripts_path_done
+)
+:subcreator_detect_python_scripts_path_done
+if defined SUBCREATOR_PYTHON_SCRIPTS_DIR (
+  call :subcreator_add_path_hint "!SUBCREATOR_PYTHON_SCRIPTS_DIR!"
+)
+goto :eof
+
+:subcreator_validate_whisper_install
+REM // Confirm that the selected Python can import Whisper before writing the runtime config.
+if not defined SUBCREATOR_PYTHON_CMD goto :eof
+call !SUBCREATOR_PYTHON_CMD! -c "import whisper" >nul 2>nul
+if errorlevel 1 (
+  echo Whisper validation failed with !SUBCREATOR_PYTHON_LABEL!.
+  echo The panel may need another supported Python version or a manual install.
+  goto :eof
+)
+echo Whisper validation succeeded with !SUBCREATOR_PYTHON_LABEL!.
+goto :eof
+
 :subcreator_detect_whisper_path
 REM // Detect whisper executable path from user installs or PATH fallback.
 set "SUBCREATOR_WHISPER_PATH="
+call :subcreator_detect_python_scripts_path
+if defined SUBCREATOR_PYTHON_SCRIPTS_DIR (
+  if exist "!SUBCREATOR_PYTHON_SCRIPTS_DIR!\whisper.exe" (
+    set "SUBCREATOR_WHISPER_PATH=!SUBCREATOR_PYTHON_SCRIPTS_DIR!\whisper.exe"
+  )
+)
 if defined SUBCREATOR_PYTHON_MAJOR if defined SUBCREATOR_PYTHON_MINOR (
   if exist "%APPDATA%\Python\Python!SUBCREATOR_PYTHON_MAJOR!!SUBCREATOR_PYTHON_MINOR!\Scripts\whisper.exe" (
     set "SUBCREATOR_WHISPER_PATH=%APPDATA%\Python\Python!SUBCREATOR_PYTHON_MAJOR!!SUBCREATOR_PYTHON_MINOR!\Scripts\whisper.exe"

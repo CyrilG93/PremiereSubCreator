@@ -2098,8 +2098,8 @@ function readRuntimeConfigFromDisk(modules: CepNodeModules): SubcreatorRuntimeCo
 }
 
 function getRuntimeConfig(modules: CepNodeModules): SubcreatorRuntimeConfig | null {
-  // // Cache runtime config lookup per session to avoid repeated disk reads.
-  if (typeof subcreatorRuntimeConfigCache !== "undefined") {
+  // // Re-read when cache is still null so the panel can pick up a runtime config written after the first failed probe.
+  if (typeof subcreatorRuntimeConfigCache !== "undefined" && subcreatorRuntimeConfigCache !== null) {
     return subcreatorRuntimeConfigCache;
   }
 
@@ -2274,7 +2274,7 @@ function buildWhisperCommandCandidates(
     }
   }
 
-  const versionedPython = ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8"];
+  const versionedPython = ["python3.11", "python3.12", "python3.10", "python3.13", "python3.9", "python3.8"];
   for (const pythonCommand of versionedPython) {
     pushCandidate(pythonCommand, ["-m", "whisper", ...baseArgs], `${pythonCommand} -m whisper`);
   }
@@ -2284,10 +2284,10 @@ function buildWhisperCommandCandidates(
   pushCandidate("python", ["-m", "whisper", ...baseArgs], "python -m whisper");
 
   if (isWindows) {
-    pushCandidate("py", ["-3.13", "-m", "whisper", ...baseArgs], "py -3.13 -m whisper");
-    pushCandidate("py", ["-3.12", "-m", "whisper", ...baseArgs], "py -3.12 -m whisper");
     pushCandidate("py", ["-3.11", "-m", "whisper", ...baseArgs], "py -3.11 -m whisper");
     pushCandidate("py", ["-3.10", "-m", "whisper", ...baseArgs], "py -3.10 -m whisper");
+    pushCandidate("py", ["-3.12", "-m", "whisper", ...baseArgs], "py -3.12 -m whisper");
+    pushCandidate("py", ["-3.13", "-m", "whisper", ...baseArgs], "py -3.13 -m whisper");
     pushCandidate("py", ["-3.9", "-m", "whisper", ...baseArgs], "py -3.9 -m whisper");
     pushCandidate("py", ["-3.8", "-m", "whisper", ...baseArgs], "py -3.8 -m whisper");
     pushCandidate("py", ["-3", "-m", "whisper", ...baseArgs], "py -3 -m whisper");
@@ -2341,7 +2341,7 @@ function buildPythonLauncherCandidates(
     }
   }
 
-  const posixVersioned = ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8"];
+  const posixVersioned = ["python3.11", "python3.12", "python3.10", "python3.13", "python3.9", "python3.8"];
   for (const command of posixVersioned) {
     pushCandidate(command, [], command);
   }
@@ -2350,10 +2350,10 @@ function buildPythonLauncherCandidates(
   pushCandidate("python", [], "python");
 
   if (detectWindowsRuntime()) {
-    pushCandidate("py", ["-3.13"], "py -3.13");
-    pushCandidate("py", ["-3.12"], "py -3.12");
     pushCandidate("py", ["-3.11"], "py -3.11");
     pushCandidate("py", ["-3.10"], "py -3.10");
+    pushCandidate("py", ["-3.12"], "py -3.12");
+    pushCandidate("py", ["-3.13"], "py -3.13");
     pushCandidate("py", ["-3.9"], "py -3.9");
     pushCandidate("py", ["-3.8"], "py -3.8");
     pushCandidate("py", ["-3"], "py -3");

@@ -9,6 +9,16 @@ It is built for a simple workflow inside Premiere:
 - adjust exposed controls in the `Visual editor`
 - rebalance text and timing in the `Text editor`
 
+## Included features
+
+- `SRT`, `Whisper`, and `Whisper + SRT` creation modes
+- generation on `Entire sequence` or `In/Out points`
+- built-in MOGRT gallery with refresh support
+- support for custom `.mogrt` files
+- `Visual editor` for exposed controls
+- `Text editor` for subtitle text redistribution and timing rebuild
+- `Stop current job` for active Whisper and Whisper + SRT processing
+
 ## Platforms
 
 - Adobe Premiere Pro `2025+`
@@ -132,8 +142,23 @@ Sub Creator includes a gallery, but you can also add your own `.mogrt` files.
 
 Basic flow:
 1. In the panel, click `Open MOGRT folder`.
-2. Add your `.mogrt` files.
+2. Add your `.mogrt` files at the root on in the folder.
 3. Click `Refresh gallery`.
+
+### Add more Whisper models manually
+
+If you want more models than the ones bundled with the installer, download them manually and place them in the Whisper cache.
+
+Model links:
+- `tiny.pt`: `https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt`
+- `base.pt`: `https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt`
+- `small.pt`: `https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt`
+- `medium.pt`: `https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt`
+- `large-v3.pt`: `https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt`
+
+Cache locations:
+- macOS: `~/.cache/whisper/`
+- Windows: `%USERPROFILE%\.cache\whisper\`
 
 ### Compatibility notes
 
@@ -144,16 +169,6 @@ Basic flow:
 If you want to author an After Effects template specifically for Sub Creator, read:
 
 - [After Effects MOGRT compatibility guide](docs/AE_MOGRT_COMPATIBILITY_GUIDE.md)
-
-## Included features
-
-- `SRT`, `Whisper`, and `Whisper + SRT` creation modes
-- generation on `Entire sequence` or `In/Out points`
-- built-in MOGRT gallery with refresh support
-- support for custom `.mogrt` files
-- `Visual editor` for exposed controls
-- `Text editor` for subtitle text redistribution and timing rebuild
-- `Stop current job` for active Whisper and Whisper + SRT processing
 
 ## Known limitations
 

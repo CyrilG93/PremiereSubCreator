@@ -145,7 +145,7 @@ Basic flow:
 2. Add your `.mogrt` files at the root on in the folder.
 3. Click `Refresh gallery`.
 
-### Add more Whisper models manually
+## Add more Whisper models manually
 
 If you want more models than the ones bundled with the installer, download them manually and place them in the Whisper cache.
 
@@ -196,5 +196,5 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Support
 
-- GitHub releases: `https://github.com/CyrilG93/PremiereSubCreator/releases`
-- GitHub repository: `https://github.com/CyrilG93/PremiereSubCreator`
+- My website: https://www.cyrilplugin.com/
+- Join my discord for any help: https://www.cyrilplugin.com/website/social/discord

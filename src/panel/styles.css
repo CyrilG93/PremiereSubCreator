@@ -257,6 +257,13 @@ input[type="checkbox"] {
   color: var(--text-primary);
 }
 
+.button--danger {
+  /* Keep destructive stop actions visually distinct from normal secondary actions. */
+  background: linear-gradient(180deg, rgba(166, 82, 82, 0.94), rgba(132, 58, 58, 0.94));
+  border-color: rgba(244, 138, 138, 0.72);
+  color: var(--button-primary-text);
+}
+
 .mogrt-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -265,7 +272,7 @@ input[type="checkbox"] {
 
 .generate-actions {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(180px, 240px) minmax(150px, 180px) minmax(0, 1fr);
   gap: 10px;
   align-items: center;
 }

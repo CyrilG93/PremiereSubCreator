@@ -66,6 +66,14 @@ interface CorrectedAlignmentResult {
   commandOutput?: string;
 }
 
+interface CepSpawnedChild {
+  stdout?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
+  stderr?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
+  on: (eventName: "error" | "close", listener: (value: unknown) => void) => void;
+  kill?: (signal?: string) => void;
+  pid?: number;
+}
+
 export interface WhisperProgressUpdate {
   percent: number;
   detail: string;
@@ -224,14 +232,10 @@ interface CepNodeModules {
       args: string[],
       options: {
         shell?: boolean;
+        detached?: boolean;
         env?: Record<string, string | undefined>;
       }
-    ) => {
-      stdout?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
-      stderr?: { on: (eventName: "data", listener: (chunk: string | Uint8Array) => void) => void };
-      on: (eventName: "error" | "close", listener: (value: unknown) => void) => void;
-      kill?: (signal?: string) => void;
-    };
+    ) => CepSpawnedChild;
     spawnSync: (
       command: string,
       args: string[],
@@ -269,6 +273,7 @@ interface CepNodeModules {
   };
   process: {
     env: Record<string, string | undefined>;
+    kill?: (pid: number, signal?: string | number) => boolean;
   };
 }
 
@@ -299,6 +304,13 @@ interface SubcreatorRuntimeConfig {
   pathHints: string[];
 }
 
+interface ActiveCepJob {
+  label: string;
+  child: CepSpawnedChild;
+  detached: boolean;
+  cancelRequested: boolean;
+}
+
 let subcreatorRuntimeConfigCache: SubcreatorRuntimeConfig | null | undefined;
 let subcreatorSystemFontCatalogCache: SystemFontCatalog | null | undefined;
 let subcreatorInstalledMogrtCatalogCache:
@@ -308,6 +320,8 @@ let subcreatorInstalledMogrtCatalogCache:
       catalog: InstalledMogrtCatalog;
     }
   | undefined;
+let activeCepJob: ActiveCepJob | null = null;
+const SUBCREATOR_CANCELLED_JOB_CODE = "SUBCREATOR_JOB_CANCELLED";
 const SUBCREATOR_SUPPORTED_WHISPER_MODELS: WhisperModelDefinition[] = [
   { value: "tiny", filenames: ["tiny.pt"] },
   { value: "base", filenames: ["base.pt"] },
@@ -377,6 +391,119 @@ function resolveCepNodeModules(): CepNodeModules | null {
   } catch {
     return null;
   }
+}
+
+function createCancelledJobError(): Error {
+  // // Normalize bridge-side cancellation into one stable error marker for the panel.
+  const error = new Error(SUBCREATOR_CANCELLED_JOB_CODE);
+  error.name = SUBCREATOR_CANCELLED_JOB_CODE;
+  return error;
+}
+
+export function isCancelledJobError(error: unknown): boolean {
+  // // Detect the stable cancellation marker no matter whether it comes from `name` or `message`.
+  const errorName = error instanceof Error ? String(error.name || "").trim() : "";
+  const errorMessage = error instanceof Error ? String(error.message || "").trim() : String(error ?? "").trim();
+  return errorName === SUBCREATOR_CANCELLED_JOB_CODE || errorMessage === SUBCREATOR_CANCELLED_JOB_CODE;
+}
+
+function registerActiveCepJob(child: CepSpawnedChild, label: string, detached: boolean): ActiveCepJob {
+  // // Track the currently running CEP child so the panel can stop Whisper/WhisperX jobs on demand.
+  const job: ActiveCepJob = {
+    label,
+    child,
+    detached,
+    cancelRequested: false
+  };
+  activeCepJob = job;
+  return job;
+}
+
+function clearActiveCepJob(child?: CepSpawnedChild): void {
+  // // Clear only the matching tracked child so overlapping cleanup does not wipe a newer job accidentally.
+  if (!activeCepJob) {
+    return;
+  }
+
+  if (child && activeCepJob.child !== child) {
+    return;
+  }
+
+  activeCepJob = null;
+}
+
+function terminateTrackedCepJob(modules: CepNodeModules, job: ActiveCepJob): boolean {
+  // // Stop the active Whisper/WhisperX process tree with the safest strategy available on the current OS.
+  const pid = Number(job.child.pid || 0);
+  const env = modules.process.env || {};
+
+  if (detectWindowsRuntime()) {
+    if (pid > 0) {
+      const taskkillResult = modules.childProcess.spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
+        encoding: "utf8",
+        timeout: 15000,
+        env
+      });
+      if (!taskkillResult.error) {
+        return true;
+      }
+    }
+
+    try {
+      job.child.kill?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const canUseProcessKill = typeof modules.process.kill === "function" && pid > 0;
+  if (canUseProcessKill && job.detached) {
+    try {
+      modules.process.kill?.(-pid, "SIGTERM");
+      return true;
+    } catch {
+      // // Fall through to direct child termination when process-group kill is unavailable.
+    }
+  }
+
+  try {
+    job.child.kill?.("SIGTERM");
+    return true;
+  } catch {
+    // // Fall through to SIGKILL fallback for stubborn Python children.
+  }
+
+  if (canUseProcessKill && job.detached) {
+    try {
+      modules.process.kill?.(-pid, "SIGKILL");
+      return true;
+    } catch {
+      // // Fall through to direct child termination when process-group SIGKILL also fails.
+    }
+  }
+
+  try {
+    job.child.kill?.("SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function cancelCurrentJob(): Promise<boolean> {
+  // // Expose one panel-level stop hook for the currently running Whisper or WhisperX CEP job.
+  const modules = resolveCepNodeModules();
+  if (!modules || !activeCepJob) {
+    return false;
+  }
+
+  if (activeCepJob.cancelRequested) {
+    return true;
+  }
+
+  activeCepJob.cancelRequested = true;
+  return terminateTrackedCepJob(modules, activeCepJob);
 }
 
 function pushUniqueString(list: string[], value: string): void {
@@ -2672,8 +2799,10 @@ async function transcribeWithWhisperViaCepNodeAsync(
     const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
       // // Attach stdout/stderr listeners before Whisper starts so tqdm progress can feed the panel immediately.
       let settled = false;
+      const detached = !detectWindowsRuntime();
       const child = modules.childProcess.spawn?.(candidate.command, candidate.args, {
         shell: false,
+        detached,
         env: spawnEnv
       });
       if (!child) {
@@ -2685,6 +2814,7 @@ async function transcribeWithWhisperViaCepNodeAsync(
         });
         return;
       }
+      const activeJob = registerActiveCepJob(child, candidate.label, detached);
 
       const handleChunk = (chunk: string | Uint8Array): void => {
         // // Keep the latest progress percentage from Whisper stderr without flooding the UI with duplicate values.
@@ -2705,20 +2835,42 @@ async function transcribeWithWhisperViaCepNodeAsync(
       child.stdout?.on("data", handleChunk);
       child.stderr?.on("data", handleChunk);
       child.on("error", (error) => {
+        clearActiveCepJob(child);
         if (settled) {
           return;
         }
         settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
         resolve({
           code: null,
           error: error && typeof error === "object" ? (error as { message?: string; code?: string }) : { message: String(error) }
         });
       });
       child.on("close", (value) => {
+        clearActiveCepJob(child);
         if (settled) {
           return;
         }
         settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
         resolve({
           code: typeof value === "number" ? value : null
         });
@@ -2726,6 +2878,9 @@ async function transcribeWithWhisperViaCepNodeAsync(
     });
 
     if (attemptResult.error) {
+      if (isCancelledJobError(attemptResult.error.message || attemptResult.error.code || "")) {
+        throw createCancelledJobError();
+      }
       const code = String(attemptResult.error.code || "");
       attempts.push(`${candidate.label}: ${String(attemptResult.error.message || attemptResult.error)}`);
       if (code === "ENOENT") {
@@ -3486,8 +3641,10 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
     const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
       // // Attach stderr listeners before process start so helper progress markers can feed the UI immediately.
       let settled = false;
+      const detached = !detectWindowsRuntime();
       const child = modules.childProcess.spawn?.(launcher.command, args, {
         shell: false,
+        detached,
         env: spawnEnv
       });
       if (!child) {
@@ -3499,6 +3656,7 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
         });
         return;
       }
+      const activeJob = registerActiveCepJob(child, launcher.label, detached);
 
       const handleChunk = (chunk: string | Uint8Array): void => {
         // // Parse helper progress output without flooding the panel with duplicate percentages.
@@ -3519,20 +3677,42 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
       child.stdout?.on("data", handleChunk);
       child.stderr?.on("data", handleChunk);
       child.on("error", (error) => {
+        clearActiveCepJob(child);
         if (settled) {
           return;
         }
         settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
         resolve({
           code: null,
           error: error && typeof error === "object" ? (error as { message?: string; code?: string }) : { message: String(error) }
         });
       });
       child.on("close", (value) => {
+        clearActiveCepJob(child);
         if (settled) {
           return;
         }
         settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
         resolve({
           code: typeof value === "number" ? value : null
         });
@@ -3540,6 +3720,9 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
     });
 
     if (attemptResult.error) {
+      if (isCancelledJobError(attemptResult.error.message || attemptResult.error.code || "")) {
+        throw createCancelledJobError();
+      }
       attempts.push(`${launcher.label}: ${String(attemptResult.error.message || attemptResult.error)}`);
       continue;
     }

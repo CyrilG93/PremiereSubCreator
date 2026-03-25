@@ -25,6 +25,7 @@ import type {
 import {
   applyCaptionPlan,
   buildPremiereTemplateCueMogrts,
+  cancelCurrentJob,
   alignCorrectedTranscript,
   applyVisualPropertiesToSelectedMogrts,
   deleteTemporaryWhisperAudio,
@@ -43,7 +44,8 @@ import {
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
   transcribeWithWhisper,
-  applySelectedMogrtTextItems
+  applySelectedMogrtTextItems,
+  isCancelledJobError
 } from "./cepBridge";
 import type {
   ApplySelectedMogrtTextResult,
@@ -209,6 +211,7 @@ const elements = {
   textSelectionSummary: document.querySelector<HTMLParagraphElement>("#textSelectionSummary"),
   textEditorList: document.querySelector<HTMLElement>("#textEditorList"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
+  generateStopButton: document.querySelector<HTMLButtonElement>("#generateStopButton"),
   generateProgress: document.querySelector<HTMLElement>("#generateProgress"),
   generateProgressBar: document.querySelector<HTMLProgressElement>("#generateProgressBar"),
   generateProgressText: document.querySelector<HTMLElement>("#generateProgressText"),
@@ -262,6 +265,7 @@ let currentLogState: PanelLogState | null = null;
 let passiveMogrtRefreshTimer: number | null = null;
 let lastPassiveMogrtCatalogRefreshAt = 0;
 let generateInProgress = false;
+let generateCancelRequested = false;
 let textApplyInProgress = false;
 let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
@@ -282,6 +286,31 @@ let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
 
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
+const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
+
+function createGenerateCancelledError(): Error {
+  // // Normalize panel-side cancellation into one stable marker so generate can treat it as a non-error path.
+  const error = new Error(SUBCREATOR_GENERATE_CANCELLED_CODE);
+  error.name = SUBCREATOR_GENERATE_CANCELLED_CODE;
+  return error;
+}
+
+function isGenerateCancelledError(error: unknown): boolean {
+  // // Treat both panel-side and CEP-bridge cancellation markers as graceful stop events.
+  if (isCancelledJobError(error)) {
+    return true;
+  }
+  const errorName = error instanceof Error ? String(error.name || "").trim() : "";
+  const errorMessage = error instanceof Error ? String(error.message || "").trim() : String(error ?? "").trim();
+  return errorName === SUBCREATOR_GENERATE_CANCELLED_CODE || errorMessage === SUBCREATOR_GENERATE_CANCELLED_CODE;
+}
+
+function assertGenerateNotCancelled(): void {
+  // // Abort the generate pipeline as soon as the user requested a stop from the panel UI.
+  if (generateCancelRequested) {
+    throw createGenerateCancelledError();
+  }
+}
 
 function parseTextStyleVirtualPath(path: string): { basePath: string; styleKey: string } | null {
   // // Decode synthetic text-style editor paths like `4::textstyle.fontStyle`.
@@ -1557,6 +1586,10 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   // // Prevent duplicate generate runs while export/transcription/apply is already active.
   if (elements.generateButton) {
     elements.generateButton.disabled = isBusy || !isCurrentSourceReady();
+  }
+  if (elements.generateStopButton) {
+    elements.generateStopButton.hidden = !isBusy;
+    elements.generateStopButton.disabled = !isBusy || generateCancelRequested;
   }
   if (elements.languageSelect) {
     elements.languageSelect.disabled = isBusy;
@@ -4113,10 +4146,13 @@ async function updateGenerateProgress(done: number, label: string, waitForPaint 
 
 async function loadCuesFromSelectedSource(
   options: CaptionBuildOptions,
-  onProgress?: (done: number, label: string, waitForPaint?: boolean) => Promise<void>
+  onProgress?: (done: number, label: string, waitForPaint?: boolean) => Promise<void>,
+  assertNotCancelled: () => void = () => {}
 ): Promise<CaptionCue[]> {
   // // Build cues from the currently selected source mode.
+  assertNotCancelled();
   const requestedSequenceRange = await resolveRequestedSequenceRange(options);
+  assertNotCancelled();
 
   if (options.sourceMode === "srt") {
     if (!elements.srtPath || !elements.srtPath.value.trim()) {
@@ -4126,7 +4162,9 @@ async function loadCuesFromSelectedSource(
     if (onProgress) {
       await onProgress(10, translate("progress.readSrt"), true);
     }
+    assertNotCancelled();
     const srtText = await readTextFileFromHost(elements.srtPath.value.trim());
+    assertNotCancelled();
     if (onProgress) {
       await onProgress(28, translate("progress.parseSrt"));
     }
@@ -4154,7 +4192,9 @@ async function loadCuesFromSelectedSource(
     if (onProgress) {
       await onProgress(10, translate("progress.readCorrectedTranscript"), true);
     }
+    assertNotCancelled();
     const correctedTranscriptText = await readTextFileFromHost(options.correctedTranscriptPath);
+    assertNotCancelled();
     if (!String(correctedTranscriptText || "").trim()) {
       throw new Error(translate("error.emptyCorrectedTranscript"));
     }
@@ -4164,6 +4204,7 @@ async function loadCuesFromSelectedSource(
       await onProgress(18, translate("progress.exportSequence"), true);
     }
     const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+    assertNotCancelled();
     const cleanupAudioPath = exportResult.audioPath;
     if (!cleanupAudioPath) {
       throw new Error(translate("error.missingActiveSequenceAudio"));
@@ -4173,6 +4214,7 @@ async function loadCuesFromSelectedSource(
       if (onProgress) {
         await onProgress(30, translate("progress.correctedAligning"), true);
       }
+      assertNotCancelled();
       const alignmentResult = await alignCorrectedTranscript(
         {
           audioPath: cleanupAudioPath,
@@ -4189,6 +4231,7 @@ async function loadCuesFromSelectedSource(
           );
         }
       );
+      assertNotCancelled();
 
       if (onProgress) {
         await onProgress(84, translate("progress.parseWhisper"));
@@ -4210,6 +4253,7 @@ async function loadCuesFromSelectedSource(
     await onProgress(10, translate("progress.exportSequence"), true);
   }
   const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+  assertNotCancelled();
   const whisperAudioPath = exportResult.audioPath;
   const cleanupAudioPath = exportResult.audioPath;
 
@@ -4221,6 +4265,7 @@ async function loadCuesFromSelectedSource(
     if (onProgress) {
       await onProgress(22, translate("progress.whisperAnalyzing"), true);
     }
+    assertNotCancelled();
     const whisperResult = await transcribeWithWhisper({
       audioPath: whisperAudioPath,
       languageCode: options.languageCode,
@@ -4228,6 +4273,7 @@ async function loadCuesFromSelectedSource(
     }, (progress) => {
       void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
     });
+    assertNotCancelled();
 
     let cues: CaptionCue[] = [];
     if (onProgress) {
@@ -4262,14 +4308,18 @@ async function generate(): Promise<void> {
   }
 
   generateInProgress = true;
+  generateCancelRequested = false;
   setGenerateButtonsBusy(true);
   try {
     const options = collectBuildOptions();
     setLog(translate("log.processing"));
     await updateGenerateProgress(4, translate("progress.prepareGeneration"), true);
-    const cues = await loadCuesFromSelectedSource(options, updateGenerateProgress);
+    assertGenerateNotCancelled();
+    const cues = await loadCuesFromSelectedSource(options, updateGenerateProgress, assertGenerateNotCancelled);
+    assertGenerateNotCancelled();
     await updateGenerateProgress(90, translate("progress.planCaptions"), true);
     let plannedCues = buildCaptionPlan(cues, options);
+    assertGenerateNotCancelled();
     const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
     let cleanupMogrtPaths: string[] = [];
     if (premiereTemplateTextPayloads.length) {
@@ -4283,6 +4333,7 @@ async function generate(): Promise<void> {
     }
 
     try {
+      assertGenerateNotCancelled();
       const payload: HostApplyPayload = {
         options: {
           ...options,
@@ -4322,10 +4373,34 @@ async function generate(): Promise<void> {
         }
       }
     }
+  } catch (error) {
+    if (isGenerateCancelledError(error)) {
+      setLog(translate("log.generateCancelled"));
+      return;
+    }
+    throw error;
   } finally {
     generateInProgress = false;
+    generateCancelRequested = false;
     setGenerateButtonsBusy(false);
     setGenerateProgressState(false);
+  }
+}
+
+async function stopCurrentGenerateJob(): Promise<void> {
+  // // Stop the current Whisper or Whisper + SRT job and mark the whole generate flow as cancelled.
+  if (!generateInProgress || generateCancelRequested) {
+    return;
+  }
+
+  generateCancelRequested = true;
+  setGenerateButtonsBusy(true);
+  setLog(translate("log.generateCancelRequested"));
+
+  try {
+    await cancelCurrentJob();
+  } catch (error) {
+    setLog(String(error), true);
   }
 }
 
@@ -4493,6 +4568,9 @@ async function initialize(): Promise<void> {
     } catch (error) {
       setLog(String(error), true);
     }
+  });
+  elements.generateStopButton?.addEventListener("click", async () => {
+    await stopCurrentGenerateJob();
   });
 
   elements.visualReadButton?.addEventListener("click", async () => {

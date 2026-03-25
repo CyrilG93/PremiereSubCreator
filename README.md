@@ -41,6 +41,30 @@ If `Whisper + SRT` still looks unavailable on Windows after install, rerun the W
 
 ## Installation
 
+### Before you run the installer
+
+If you only use `SRT` mode, you can skip the Python and `ffmpeg` setup.
+
+If you want `Whisper` or `Whisper + SRT`, prepare these dependencies first:
+- Python `3.11` or `3.12` is recommended
+- `ffmpeg`
+
+Recommended Python setup:
+- download Python from `python.org`
+- on Windows, enable `Add python.exe to PATH` during installation
+- on Windows, keep the `py` launcher enabled if the installer offers it
+- avoid Python `3.14+` for now, because `openai-whisper` and `whisperx` are not the safest choice there yet
+
+Recommended `ffmpeg` setup:
+- macOS: install Homebrew first if you want automatic `ffmpeg` installation from the included installer
+- Windows: keep `winget` available if you want automatic `ffmpeg` installation from the included installer
+- if you install `ffmpeg` manually, make sure the `ffmpeg` executable is reachable from your system `PATH`
+
+Windows points to watch:
+- if `python` opens the Microsoft Store instead of a real interpreter, disable the Windows `App execution aliases` for Python
+- if you install Python after the first Sub Creator install, rerun the installer so it can rebuild its runtime config
+- let the installer finish until it prints the runtime summary before closing the window
+
 1. Download the latest release `.zip` from GitHub.
 2. Close Premiere Pro.
 3. Run the included installer for your OS.
@@ -58,6 +82,13 @@ Use the included installer script:
 ./installers/subcreator_install_mac.sh
 ```
 
+If you want `Whisper` or `Whisper + SRT` and the automatic install is not enough:
+
+```bash
+python3.11 -m pip install --user --upgrade openai-whisper whisperx requests nltk
+brew install ffmpeg
+```
+
 ### Windows
 
 Run the included batch installer:
@@ -67,6 +98,15 @@ installers\subcreator_install_windows.bat
 ```
 
 On Windows, the installer now opens in a dedicated console so the final setup summary stays visible instead of disappearing immediately.
+
+If you want `Whisper` or `Whisper + SRT` and the automatic install is not enough:
+
+```bat
+py -3.11 -m pip install --user --upgrade openai-whisper whisperx requests nltk
+winget install -e --id Gyan.FFmpeg
+```
+
+Then rerun the Sub Creator installer so the panel can refresh its runtime config with the correct paths.
 
 ## Basic workflows
 

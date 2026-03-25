@@ -62,6 +62,8 @@ Run the included batch installer:
 installers\subcreator_install_windows.bat
 ```
 
+On Windows, the installer now opens in a dedicated console so the final setup summary stays visible instead of disappearing immediately.
+
 ## Basic workflows
 
 ### SRT
@@ -82,9 +84,10 @@ Use this when you want Sub Creator to transcribe the active sequence audio.
 1. Open `Creation`.
 2. Choose `Whisper`.
 3. Select a local Whisper model.
-4. Choose `Entire sequence` or `In/Out points`.
-5. Choose a MOGRT.
-6. Click `Generate subtitles`.
+4. Choose a `Whisper language`, or leave `Auto detect`.
+5. Choose `Entire sequence` or `In/Out points`.
+6. Choose a MOGRT.
+7. Click `Generate subtitles`.
 
 Sub Creator exports a temporary WAV from the active sequence, runs Whisper, then creates subtitle MOGRTs on the timeline.
 
@@ -97,9 +100,10 @@ Use this when you already have corrected text and want better timings than a pla
 1. Open `Creation`.
 2. Choose `Whisper + SRT`.
 3. Select a corrected `.srt` or `.txt`.
-4. Choose `Entire sequence` or `In/Out points`.
-5. Choose a MOGRT.
-6. Click `Generate subtitles`.
+4. Choose the explicit language used in the corrected transcript.
+5. Choose `Entire sequence` or `In/Out points`.
+6. Choose a MOGRT.
+7. Click `Generate subtitles`.
 
 Sub Creator exports a temporary WAV from the active sequence, aligns the corrected text with WhisperX, then creates the subtitle MOGRTs.
 
@@ -142,7 +146,7 @@ Sub Creator includes a gallery, but you can also add your own `.mogrt` files.
 
 Basic flow:
 1. In the panel, click `Open MOGRT folder`.
-2. Add your `.mogrt` files at the root on in the folder.
+2. Add your `.mogrt` files at the root or in subfolders.
 3. Click `Refresh gallery`.
 
 ## Add more Whisper models manually
@@ -189,6 +193,8 @@ Open `Open Whisper models folder` and check that at least one `.pt` model is pre
 Check that Python, `ffmpeg`, and the required package are installed:
 - `openai-whisper` for `Whisper`
 - `whisperx` for `Whisper + SRT`
+
+If Whisper transcription quality is poor, check the `Whisper language` selector in the panel. It is separate from the UI language.
 
 ### A control is missing or behaves differently from Premiere
 

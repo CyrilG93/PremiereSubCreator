@@ -102,22 +102,30 @@
             <p id="whisperModelHint" class="hint" hidden>
               Aucun modele Whisper installe. Lire le README pour les telecharger.
             </p>
-            <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
-              La sequence active est exportee temporairement en WAV puis analysee par Whisper.
-            </p>
             <p class="hint" data-i18n="help.whisper">
               Whisper doit etre installe localement et accessible via la commande `whisper`.
             </p>
           </section>
 
           <section class="field field--full" id="sequenceAudioField">
-            <span data-i18n="field.sequenceAudioRange">Sequence range</span>
-            <select id="whisperSequenceRange" aria-label="Whisper sequence range">
-              <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
-              <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
-            </select>
+            <div class="subfield-grid">
+              <label class="subfield">
+                <span data-i18n="field.sequenceAudioRange">Sequence range</span>
+                <select id="whisperSequenceRange" aria-label="Whisper sequence range">
+                  <option value="entire_sequence" data-i18n="whisper.rangeEntire">Sequence entiere</option>
+                  <option value="in_out" data-i18n="whisper.rangeInOut">Points In/Out</option>
+                </select>
+              </label>
+              <label id="whisperLanguageField" class="subfield">
+                <span data-i18n="field.whisperLanguage">Whisper language</span>
+                <select id="whisperLanguage" aria-label="Whisper language"></select>
+              </label>
+            </div>
             <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
               La sequence active est exportee temporairement en WAV puis analysee par Whisper.
+            </p>
+            <p id="whisperLanguageHint" class="hint" data-i18n="help.whisperLanguage">
+              La langue Whisper est separee de la langue de l'interface.
             </p>
           </section>
 

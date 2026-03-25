@@ -114,6 +114,7 @@ interface VisualEditorMutableSectionNode extends VisualEditorSectionNode {
 
 interface PanelStateSnapshot {
   languageCode: string;
+  whisperLanguageCode?: string;
   activeMode: PanelMode;
   sourceMode: SourceMode;
   srtPath: string;
@@ -187,6 +188,8 @@ const elements = {
   whisperModelFolderButton: document.querySelector<HTMLButtonElement>("#whisperModelFolderButton"),
   whisperModelHint: document.querySelector<HTMLElement>("#whisperModelHint"),
   sequenceAudioField: document.querySelector<HTMLElement>("#sequenceAudioField"),
+  whisperLanguageField: document.querySelector<HTMLElement>("#whisperLanguageField"),
+  whisperLanguage: document.querySelector<HTMLSelectElement>("#whisperLanguage"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
   whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
@@ -274,6 +277,7 @@ let whisperRuntimeAvailable = false;
 let correctedAlignAvailable = false;
 let correctedAlignRuntimeDetails = "";
 let pendingWhisperModelValue = "base";
+let pendingWhisperLanguageValue = "auto";
 let textEditorBlocks: TextEditorBlockState[] = [];
 let textEditorOriginalBlocks: TextEditorBlock[] = [];
 let textEditorSelectionSignature = "";
@@ -287,6 +291,113 @@ let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
+const SUBCREATOR_WHISPER_LANGUAGE_DEFINITIONS: Array<{ code: string; label: string }> = [
+  ["af", "afrikaans"],
+  ["am", "amharic"],
+  ["ar", "arabic"],
+  ["as", "assamese"],
+  ["az", "azerbaijani"],
+  ["ba", "bashkir"],
+  ["be", "belarusian"],
+  ["bg", "bulgarian"],
+  ["bn", "bengali"],
+  ["bo", "tibetan"],
+  ["br", "breton"],
+  ["bs", "bosnian"],
+  ["ca", "catalan"],
+  ["cs", "czech"],
+  ["cy", "welsh"],
+  ["da", "danish"],
+  ["de", "german"],
+  ["el", "greek"],
+  ["en", "english"],
+  ["es", "spanish"],
+  ["et", "estonian"],
+  ["eu", "basque"],
+  ["fa", "persian"],
+  ["fi", "finnish"],
+  ["fo", "faroese"],
+  ["fr", "french"],
+  ["gl", "galician"],
+  ["gu", "gujarati"],
+  ["ha", "hausa"],
+  ["haw", "hawaiian"],
+  ["he", "hebrew"],
+  ["hi", "hindi"],
+  ["hr", "croatian"],
+  ["ht", "haitian creole"],
+  ["hu", "hungarian"],
+  ["hy", "armenian"],
+  ["id", "indonesian"],
+  ["is", "icelandic"],
+  ["it", "italian"],
+  ["ja", "japanese"],
+  ["jw", "javanese"],
+  ["ka", "georgian"],
+  ["kk", "kazakh"],
+  ["km", "khmer"],
+  ["kn", "kannada"],
+  ["ko", "korean"],
+  ["la", "latin"],
+  ["lb", "luxembourgish"],
+  ["ln", "lingala"],
+  ["lo", "lao"],
+  ["lt", "lithuanian"],
+  ["lv", "latvian"],
+  ["mg", "malagasy"],
+  ["mi", "maori"],
+  ["mk", "macedonian"],
+  ["ml", "malayalam"],
+  ["mn", "mongolian"],
+  ["mr", "marathi"],
+  ["ms", "malay"],
+  ["mt", "maltese"],
+  ["my", "myanmar"],
+  ["ne", "nepali"],
+  ["nl", "dutch"],
+  ["nn", "nynorsk"],
+  ["no", "norwegian"],
+  ["oc", "occitan"],
+  ["pa", "punjabi"],
+  ["pl", "polish"],
+  ["ps", "pashto"],
+  ["pt", "portuguese"],
+  ["ro", "romanian"],
+  ["ru", "russian"],
+  ["sa", "sanskrit"],
+  ["sd", "sindhi"],
+  ["si", "sinhala"],
+  ["sk", "slovak"],
+  ["sl", "slovenian"],
+  ["sn", "shona"],
+  ["so", "somali"],
+  ["sq", "albanian"],
+  ["sr", "serbian"],
+  ["su", "sundanese"],
+  ["sv", "swedish"],
+  ["sw", "swahili"],
+  ["ta", "tamil"],
+  ["te", "telugu"],
+  ["tg", "tajik"],
+  ["th", "thai"],
+  ["tk", "turkmen"],
+  ["tl", "tagalog"],
+  ["tr", "turkish"],
+  ["tt", "tatar"],
+  ["uk", "ukrainian"],
+  ["ur", "urdu"],
+  ["uz", "uzbek"],
+  ["vi", "vietnamese"],
+  ["yi", "yiddish"],
+  ["yo", "yoruba"],
+  ["yue", "cantonese"],
+  ["zh", "chinese"]
+]
+  .map(([code, label]) => ({
+    code,
+    label: String(label).replace(/\b\w/g, (character) => character.toUpperCase())
+  }))
+  .sort((left, right) => left.label.localeCompare(right.label));
 
 function createGenerateCancelledError(): Error {
   // // Normalize panel-side cancellation into one stable marker so generate can treat it as a non-error path.
@@ -681,6 +792,36 @@ function refreshWhisperModelUi(preferredValue = pendingWhisperModelValue): void 
   pendingWhisperModelValue = String(elements.whisperModel.value || "").trim() || pendingWhisperModelValue;
 }
 
+function getSelectedWhisperLanguageCode(): string {
+  // // Keep Whisper language selection separate from UI locale and default to auto-detect when unset.
+  return String(elements.whisperLanguage?.value || pendingWhisperLanguageValue || "auto").trim() || "auto";
+}
+
+function refreshWhisperLanguageUi(preferredValue = pendingWhisperLanguageValue): void {
+  // // Rebuild the Whisper language select from the official Whisper language-code list plus one auto-detect option.
+  if (!elements.whisperLanguage) {
+    return;
+  }
+
+  const desiredValue = String(preferredValue || elements.whisperLanguage.value || "auto").trim() || "auto";
+  elements.whisperLanguage.innerHTML = "";
+
+  const autoOption = document.createElement("option");
+  autoOption.value = "auto";
+  autoOption.textContent = translate("whisper.languageAuto");
+  elements.whisperLanguage.appendChild(autoOption);
+
+  for (const language of SUBCREATOR_WHISPER_LANGUAGE_DEFINITIONS) {
+    const option = document.createElement("option");
+    option.value = language.code;
+    option.textContent = `${language.label} (${language.code})`;
+    elements.whisperLanguage.appendChild(option);
+  }
+
+  elements.whisperLanguage.value = hasSelectOption(elements.whisperLanguage, desiredValue) ? desiredValue : "auto";
+  pendingWhisperLanguageValue = getSelectedWhisperLanguageCode();
+}
+
 function refreshCorrectedAlignUi(): void {
   // // Keep corrected-align availability explicit because it depends on Python WhisperX rather than Whisper CLI/models.
   if (!elements.correctedAlignHint) {
@@ -699,7 +840,7 @@ function isCurrentSourceReady(): boolean {
     return whisperRuntimeAvailable && availableWhisperModels.length > 0;
   }
   if (mode === "corrected_align") {
-    return correctedAlignAvailable;
+    return correctedAlignAvailable && getSelectedWhisperLanguageCode() !== "auto";
   }
   return true;
 }
@@ -727,6 +868,7 @@ function persistPanelState(): void {
     !elements.sourceMode ||
     !elements.srtPath ||
     !elements.whisperModel ||
+    !elements.whisperLanguage ||
     !elements.whisperSequenceRange ||
     !elements.animationMode ||
     !elements.maxChars ||
@@ -739,6 +881,7 @@ function persistPanelState(): void {
 
   const snapshot: PanelStateSnapshot = {
     languageCode: elements.languageSelect.value || "en",
+    whisperLanguageCode: getSelectedWhisperLanguageCode(),
     activeMode,
     sourceMode: getSourceMode(),
     srtPath: elements.srtPath.value || "",
@@ -787,6 +930,18 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.whisperModel && snapshot.whisperModel && hasSelectOption(elements.whisperModel, snapshot.whisperModel)) {
     elements.whisperModel.value = snapshot.whisperModel;
+  }
+
+  if (typeof snapshot.whisperLanguageCode === "string" && snapshot.whisperLanguageCode.trim().length > 0) {
+    pendingWhisperLanguageValue = snapshot.whisperLanguageCode.trim();
+  }
+
+  if (
+    elements.whisperLanguage &&
+    typeof snapshot.whisperLanguageCode === "string" &&
+    hasSelectOption(elements.whisperLanguage, snapshot.whisperLanguageCode)
+  ) {
+    elements.whisperLanguage.value = snapshot.whisperLanguageCode;
   }
 
   if (
@@ -1227,6 +1382,7 @@ async function loadLocale(languageCode: string): Promise<void> {
   renderCurrentLog();
   refreshMogrtAspectFilterOptions();
   refreshWhisperModelUi();
+  refreshWhisperLanguageUi(getSelectedWhisperLanguageCode());
   refreshCorrectedAlignUi();
 
   refreshUpdateBanner();
@@ -1345,12 +1501,19 @@ function toggleSourceFields(): void {
     elements.sequenceAudioField.style.display = sequenceRangeModeActive ? "grid" : "none";
   }
 
+  if (elements.whisperLanguageField) {
+    elements.whisperLanguageField.style.display = whisperModeActive || correctedAlignModeActive ? "grid" : "none";
+  }
+
   if (elements.whisperSequenceHint) {
     elements.whisperSequenceHint.style.display = whisperModeActive || correctedAlignModeActive ? "block" : "none";
   }
 
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled = !sequenceRangeModeActive;
+  }
+  if (elements.whisperLanguage) {
+    elements.whisperLanguage.disabled = !(whisperModeActive || correctedAlignModeActive) || generateInProgress;
   }
   if (elements.whisperModelFolderButton) {
     elements.whisperModelFolderButton.disabled = !whisperModeActive || generateInProgress;
@@ -1617,6 +1780,10 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   }
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled =
+      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "corrected_align");
+  }
+  if (elements.whisperLanguage) {
+    elements.whisperLanguage.disabled =
       isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "corrected_align");
   }
   if (elements.animationMode) {
@@ -4039,6 +4206,7 @@ function collectBuildOptions(): CaptionBuildOptions {
   if (
     !elements.sourceMode ||
     !elements.languageSelect ||
+    !elements.whisperLanguage ||
     !elements.fontSize ||
     !elements.maxChars ||
     !elements.linesPerCaption ||
@@ -4064,13 +4232,16 @@ function collectBuildOptions(): CaptionBuildOptions {
     const runtimeDetail = correctedAlignRuntimeDetails ? ` ${correctedAlignRuntimeDetails}` : "";
     throw new Error(`${translate("error.correctedAlignUnavailable")}${runtimeDetail ? ` (${runtimeDetail})` : ""}`);
   }
+  if (getSourceMode() === "corrected_align" && getSelectedWhisperLanguageCode() === "auto") {
+    throw new Error(translate("error.correctedAlignLanguageRequired"));
+  }
 
   const extensionRootPath = resolveExtensionRootPath();
   const templateRelativePath = selectedMogrt?.relativePath ?? "";
 
   return {
     sourceMode: getSourceMode(),
-    languageCode: elements.languageSelect.value,
+    languageCode: getSelectedWhisperLanguageCode(),
     style: {
       fontSize: Number(elements.fontSize.value),
       maxCharsPerLine: Number(elements.maxChars.value),
@@ -4424,6 +4595,7 @@ async function initialize(): Promise<void> {
   }
 
   await loadLocale(elements.languageSelect?.value ?? "en");
+  refreshWhisperLanguageUi();
   setVisualLiveUpdateEnabled(false, true);
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
@@ -4433,6 +4605,7 @@ async function initialize(): Promise<void> {
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
+    refreshWhisperLanguageUi(getSelectedWhisperLanguageCode());
     renderMogrtGallery();
     if (!loadedVisualProperties.length) {
       updateVisualSelectionSummary(translate("visual.selectionDefault"));
@@ -4527,6 +4700,13 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.whisperSequenceRange?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.whisperLanguage?.addEventListener("change", () => {
+    pendingWhisperLanguageValue = getSelectedWhisperLanguageCode();
+    if (elements.generateButton && !generateInProgress) {
+      elements.generateButton.disabled = !isCurrentSourceReady();
+    }
     persistPanelState();
   });
   elements.visualLiveUpdateButton?.addEventListener("click", () => {

@@ -159,12 +159,19 @@ function subcreator_read_text_file(encodedPath) {
 function subcreator_pick_srt_file() {
   // // Open native picker restricted to .srt subtitle files.
   try {
-    var selected = File.openDialog("Select SRT subtitle file", function (candidate) {
-      if (candidate instanceof Folder) {
-        return true;
-      }
-      return /\.srt$/i.test(String(candidate.name || ""));
-    });
+    var selected = null;
+    if (/windows/i.test(String($.os || ""))) {
+      // // Windows CEP treats function filters as literal strings, so use a native filter string there.
+      selected = File.openDialog("Select SRT subtitle file", "SRT subtitle files:*.srt");
+    } else {
+      // // macOS supports callback filters, which lets folders stay navigable while restricting files to `.srt`.
+      selected = File.openDialog("Select SRT subtitle file", function (candidate) {
+        if (candidate instanceof Folder) {
+          return true;
+        }
+        return /\.srt$/i.test(String(candidate.name || ""));
+      });
+    }
     if (!selected) {
       return subcreator_ok({ path: "" });
     }
@@ -178,12 +185,19 @@ function subcreator_pick_srt_file() {
 function subcreator_pick_corrected_transcript_file() {
   // // Open native picker for corrected transcript sources used by WhisperX alignment.
   try {
-    var selected = File.openDialog("Select corrected transcript file", function (candidate) {
-      if (candidate instanceof Folder) {
-        return true;
-      }
-      return /\.(srt|txt)$/i.test(String(candidate.name || ""));
-    });
+    var selected = null;
+    if (/windows/i.test(String($.os || ""))) {
+      // // Windows CEP needs a filter string so Explorer shows only supported corrected-transcript files.
+      selected = File.openDialog("Select corrected transcript file", "Corrected transcript files:*.srt;*.txt");
+    } else {
+      // // macOS can keep folder navigation while filtering to `.srt` and `.txt` transcript files.
+      selected = File.openDialog("Select corrected transcript file", function (candidate) {
+        if (candidate instanceof Folder) {
+          return true;
+        }
+        return /\.(srt|txt)$/i.test(String(candidate.name || ""));
+      });
+    }
     if (!selected) {
       return subcreator_ok({ path: "" });
     }

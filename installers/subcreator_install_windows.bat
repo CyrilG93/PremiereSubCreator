@@ -1,4 +1,15 @@
 @echo off
+
+REM // Relaunch from Explorer-style `/c` sessions inside a dedicated `cmd /k` window so the final summary stays visible.
+if /I not "%~1"=="--subcreator-run" if /I not "%SUBCREATOR_NO_PAUSE%"=="1" (
+  echo(%CMDCMDLINE%| findstr /I /C:" /c " >nul
+  if not errorlevel 1 (
+    start "Sub Creator Installer" cmd /v:on /k ""%~f0" --subcreator-run"
+    exit /b 0
+  )
+)
+
+if /I "%~1"=="--subcreator-run" shift
 setlocal enabledelayedexpansion
 
 REM // Resolve current directory and expected build output.
@@ -145,7 +156,11 @@ echo Restart Premiere Pro.
 echo Installation complete.
 
 :subcreator_done
-if /I not "%SUBCREATOR_NO_PAUSE%"=="1" pause
+if /I not "%SUBCREATOR_NO_PAUSE%"=="1" (
+  echo.
+  echo Review the messages above, then press any key to close this window.
+  pause >nul
+)
 endlocal
 exit /b 0
 

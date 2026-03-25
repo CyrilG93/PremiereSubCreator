@@ -296,6 +296,18 @@ input[type="checkbox"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.subfield-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.subfield {
+  display: grid;
+  gap: 6px;
+}
+
 .inline-row--triple {
   grid-template-columns: minmax(0, 1fr) minmax(156px, 0.72fr);
 }
@@ -923,6 +935,10 @@ input[type="checkbox"] {
   }
 
   .inline-row--actions {
+    grid-template-columns: 1fr;
+  }
+
+  .subfield-grid {
     grid-template-columns: 1fr;
   }
 

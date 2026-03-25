@@ -41,29 +41,35 @@ If `Whisper + SRT` still looks unavailable on Windows after install, rerun the W
 
 ## Installation
 
-### Before you run the installer
+### What you need
 
-If you only use `SRT` mode, you can skip the Python and `ffmpeg` setup.
+If you only use `SRT` mode:
+- just install the extension and use it
 
-If you want `Whisper` or `Whisper + SRT`, prepare these dependencies first:
-- Python `3.11` or `3.12` is recommended
-- `ffmpeg`
+If you want `Whisper` or `Whisper + SRT`:
+- install Python `3.11` or `3.12`
+- install `ffmpeg`
 
-Recommended Python setup:
-- download Python from `python.org`
-- on Windows, enable `Add python.exe to PATH` during installation
-- on Windows, keep the `py` launcher enabled if the installer offers it
-- avoid Python `3.14+` for now, because `openai-whisper` and `whisperx` are not the safest choice there yet
+Download links:
+- Python: [python.org/downloads](https://www.python.org/downloads/)
+- FFmpeg: [ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+- Python for Windows: [python.org/downloads/windows](https://www.python.org/downloads/windows/)
+- Python for macOS: [python.org/downloads/macos](https://www.python.org/downloads/macos/)
 
-Recommended `ffmpeg` setup:
-- macOS: install Homebrew first if you want automatic `ffmpeg` installation from the included installer
-- Windows: keep `winget` available if you want automatic `ffmpeg` installation from the included installer
-- if you install `ffmpeg` manually, make sure the `ffmpeg` executable is reachable from your system `PATH`
+### Important things to check
 
-Windows points to watch:
-- if `python` opens the Microsoft Store instead of a real interpreter, disable the Windows `App execution aliases` for Python
-- if you install Python after the first Sub Creator install, rerun the installer so it can rebuild its runtime config
-- let the installer finish until it prints the runtime summary before closing the window
+Windows:
+- during Python installation, enable `Add python.exe to PATH`
+- if the installer offers the `py launcher`, keep it enabled
+- if `python` opens the Microsoft Store instead of Python, disable the Windows `App execution aliases` for Python
+- if you install Python or `ffmpeg` after Sub Creator was already installed, run the Sub Creator installer again
+
+macOS:
+- install Python first if you want to use `Whisper` or `Whisper + SRT`
+- if `ffmpeg` is not already available on your Mac, install it before rerunning the Sub Creator installer
+
+For `ffmpeg`, use the download page above and choose the package for your system.
+If the `ffmpeg` installer asks to add it to `PATH`, accept it.
 
 1. Download the latest release `.zip` from GitHub.
 2. Close Premiere Pro.
@@ -82,13 +88,6 @@ Use the included installer script:
 ./installers/subcreator_install_mac.sh
 ```
 
-If you want `Whisper` or `Whisper + SRT` and the automatic install is not enough:
-
-```bash
-python3.11 -m pip install --user --upgrade openai-whisper whisperx requests nltk
-brew install ffmpeg
-```
-
 ### Windows
 
 Run the included batch installer:
@@ -99,14 +98,16 @@ installers\subcreator_install_windows.bat
 
 On Windows, the installer now opens in a dedicated console so the final setup summary stays visible instead of disappearing immediately.
 
-If you want `Whisper` or `Whisper + SRT` and the automatic install is not enough:
+### Simple recommended order for beginners
 
-```bat
-py -3.11 -m pip install --user --upgrade openai-whisper whisperx requests nltk
-winget install -e --id Gyan.FFmpeg
-```
+If you want `Whisper` or `Whisper + SRT`, this is the easiest order:
 
-Then rerun the Sub Creator installer so the panel can refresh its runtime config with the correct paths.
+1. Install Python from the official Python website.
+2. Install `ffmpeg`.
+3. Run the Sub Creator installer.
+4. Reopen Premiere Pro.
+
+If `SRT` is the only mode you need, you can skip Python and `ffmpeg`.
 
 ## Basic workflows
 

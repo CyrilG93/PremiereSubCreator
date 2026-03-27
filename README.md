@@ -213,7 +213,7 @@ Cache locations:
 
 - After Effects-authored MOGRTs are the most predictable option.
 - Premiere-authored MOGRTs are supported for subtitle generation and text editing, but some visual controls may still be better adjusted from Premiere's `Properties` panel.
-- Some template-specific controls are not exposed by Adobe's CEP API at all. If a control does not appear in the `Visual editor`, change it directly in Premiere.
+- Some template-specific controls are not exposed by Adobe's API at all. If a control does not appear in the `Visual editor`, change it directly in Premiere's `Properties` panel.
 
 If you want to author an After Effects template specifically for Sub Creator, read:
 

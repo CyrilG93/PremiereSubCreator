@@ -229,7 +229,7 @@ If you want to author an After Effects template specifically for Sub Creator, re
 
 ## Troubleshooting
 
-### No Whisper model appears in the dropdown
+### No Whisper model appears in the dropdown menu
 
 Open `Open Whisper models folder` and check that at least one `.pt` model is present in the local Whisper cache.
 

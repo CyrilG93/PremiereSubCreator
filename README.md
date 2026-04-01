@@ -31,7 +31,7 @@ Sub Creator does not need the same dependencies for every mode.
 
 | Mode | Extra dependencies |
 | --- | --- |
-| `SRT` | none beyond Premiere |
+| `SRT only` | none beyond Premiere |
 | `Whisper` | Python `3.8` to `3.13`, `ffmpeg`, `openai-whisper`, and at least one local Whisper model |
 | `Whisper + SRT` | Python `3.10` to `3.13`, `ffmpeg`, `whisperx`, and a corrected `.srt` or `.txt` transcript |
 

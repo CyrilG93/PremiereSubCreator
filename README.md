@@ -88,6 +88,8 @@ Use the included installer script:
 ./installers/subcreator_install_mac.sh
 ```
 
+You can also drag and drop the installer.sh in a terminal window and press enter.
+
 ### Windows
 
 Run the included batch installer:

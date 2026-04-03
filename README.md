@@ -78,7 +78,7 @@ If the `ffmpeg` installer asks to add it to `PATH`, accept it.
 5. Reopen Premiere Pro.
 6. Open `Sub Creator` from the Premiere extensions panel.
 
-The installers copy the bundled `base` Whisper model into the local Whisper cache and write a runtime config that helps the panel find Python, Whisper, WhisperX, and `ffmpeg`.
+The installers copy the bundled `base` Whisper model into the local Whisper cache and write a config file that helps the panel find Python, Whisper, WhisperX, and `ffmpeg`.
 
 ### macOS
 

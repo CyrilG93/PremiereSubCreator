@@ -4,7 +4,7 @@ Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs from a
 
 It is built for a simple workflow inside Premiere:
 - choose a subtitle source
-- choose a MOGRT style
+- choose a MOGRT style in the gallery
 - generate subtitle clips on the timeline
 - adjust exposed controls in the `Visual editor`
 - rebalance text and timing in the `Text editor`

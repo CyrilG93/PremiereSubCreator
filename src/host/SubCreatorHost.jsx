@@ -5873,6 +5873,21 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         clonedStyleFailures += cloneStats.failedCount;
       }
 
+      var rebuiltDurationStyleConfig = subcreator_clone_style_config_with_clip_duration(null, endSeconds - startSeconds);
+      var rebuiltDurationStats = subcreator_try_set_mogrt_controls(
+        insertedTrackItem,
+        textValue,
+        "",
+        rebuiltDurationStyleConfig,
+        [],
+        true,
+        debugLines,
+        "text_apply duration_control index=" + String(editedIndex)
+      );
+      if (rebuiltDurationStats && rebuiltDurationStats.layoutUpdates > 0) {
+        debugLines.push("text_apply duration_control_updates=" + String(rebuiltDurationStats.layoutUpdates));
+      }
+
       var textUpdateCount = 0;
       if (!itemSkipTextApply && sourceSnapshot.textChanges && sourceSnapshot.textChanges.length > 0) {
         var textCloneStats = subcreator_apply_text_clone_changes_to_track_item(
@@ -7801,6 +7816,23 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   var maxChars = Number(styleConfig.maxCharsPerLine || 0);
   var maxLines = Number(styleConfig.linesPerCaption || 0);
   var fontSize = Number(styleConfig.fontSize || 0);
+  var clipDurationSeconds = Number(styleConfig.clipDurationSeconds || 0);
+
+  if (
+    !isNaN(clipDurationSeconds) &&
+    clipDurationSeconds > 0 &&
+    (key === "clip duration" ||
+      key.indexOf("clip duration") !== -1 ||
+      key.indexOf("caption duration") !== -1 ||
+      key.indexOf("subtitle duration") !== -1 ||
+      key.indexOf("duree clip") !== -1)
+  ) {
+    try {
+      // // Feed opt-in AE test templates with the real subtitle clip duration instead of forcing them to infer it from MOGRT comp timing.
+      property.setValue(clipDurationSeconds, true);
+      return true;
+    } catch (clipDurationError) {}
+  }
 
   if ((key.indexOf("character") !== -1 && key.indexOf("line") !== -1) || key.indexOf("chars per line") !== -1) {
     if (!isNaN(maxChars) && maxChars > 0) {
@@ -7830,6 +7862,26 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   }
 
   return false;
+}
+
+function subcreator_clone_style_config_with_clip_duration(styleConfig, clipDurationSeconds) {
+  // // Keep existing template style options intact while adding a cue-specific clip duration override for opt-in AE MOGRTs.
+  var cloned = {};
+  if (styleConfig && typeof styleConfig === "object") {
+    for (var styleKey in styleConfig) {
+      if (!styleConfig.hasOwnProperty(styleKey)) {
+        continue;
+      }
+      cloned[styleKey] = styleConfig[styleKey];
+    }
+  }
+
+  var safeDuration = Number(clipDurationSeconds);
+  if (!isNaN(safeDuration) && safeDuration > 0) {
+    cloned.clipDurationSeconds = safeDuration;
+  }
+
+  return cloned;
 }
 
 function subcreator_try_set_controls_recursively(
@@ -9023,6 +9075,7 @@ function subcreator_apply_captions(payloadEncoded) {
       if (hasMogrt && typeof sequence.importMGT === "function") {
         var cueMogrtPath = subcreator_trim_string(String(cue.mogrtPathOverride || ""));
         var cuePathCandidates = cueMogrtPath ? subcreator_build_mogrt_path_candidates(cueMogrtPath) : pathCandidates;
+        var cueStyleConfig = subcreator_clone_style_config_with_clip_duration(options.style || {}, endSeconds - startSeconds);
         if (cueDebugEnabled && cueMogrtPath) {
           subcreator_debug_push_limited(debugLines, cueDebugPrefix + " override_path=" + cueMogrtPath, 120);
         }
@@ -9044,7 +9097,7 @@ function subcreator_apply_captions(payloadEncoded) {
             importAttempt.trackItem,
             text,
             options.style ? options.style.animationMode : "line",
-            options.style || {},
+            cueStyleConfig,
             templateTextPayloads,
             Boolean(cue.skipTextApply),
             cueDebugEnabled ? debugLines : null,

@@ -202,6 +202,9 @@ Basic flow:
 2. Add your `.mogrt` files at the root or in subfolders.
 3. Click `Refresh gallery`.
 
+For simple After Effects test templates, you can expose a slider named `Clip Duration`.
+Sub Creator will fill it automatically with each generated subtitle clip duration, which helps AE expressions adapt to the real timeline length without changing the behavior of existing Captioneer-style templates.
+
 ## Add more Whisper models manually
 
 If you want more models than the ones bundled with the installer, download them manually and place them in the Whisper cache.

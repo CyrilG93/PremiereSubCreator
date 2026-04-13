@@ -8,9 +8,10 @@ Sub Creator can:
 - replace the subtitle text
 - switch between animation modes when the template exposes the expected controls
 - update many exposed controls from Premiere
+- fill a `Clip Duration` control with the real timeline duration of each generated subtitle clip
 
-Sub Creator does not create the word or line animation for you.
-That animation must already exist in the After Effects template.
+Sub Creator does not create the animation for you.
+The word or line animation must already exist in the After Effects template.
 
 ## Recommended control names in Essential Graphics
 
@@ -29,10 +30,12 @@ Expose one text control with one of these names:
 Expose these controls:
 - `Animation`
 - `Highlight Based On`
+- `Clip Duration`
 
 Recommended setup:
 - `Animation` = `Checkbox Control`
 - `Highlight Based On` = `Dropdown Menu Control`
+- `Clip Duration` = `Slider Control`
 
 Recommended dropdown order:
 1. `Words`
@@ -56,12 +59,13 @@ A simple structure is usually the most reliable.
 Suggested setup:
 - one control layer, for example `SC_CTRL`
 - one main text layer, for example `TEXT_MASTER`
-- optional duplicate text layers for separate word and line animation behaviors
+- one text animator for word mode
+- one text animator for line mode
 
 Example:
 - `TEXT_MASTER` for the base text and style
-- `TEXT_WORD` for word-based animation
-- `TEXT_LINE` for line-based animation
+- `Animator: Highlight Words`
+- `Animator: Highlight Lines`
 
 ## How to build the animation logic
 
@@ -81,6 +85,7 @@ Typical options:
 Drive its visibility or behavior from:
 - `Animation`
 - `Highlight Based On`
+- `Clip Duration`
 
 ### Line mode
 
@@ -93,10 +98,23 @@ Typical options:
 Again, drive it from:
 - `Animation`
 - `Highlight Based On`
+- `Clip Duration`
 
 ### No animation
 
 When `Animation` is off, show a stable non-animated version of the text.
+
+## Expression workflow
+
+For the most stable result:
+- use one `Clip Duration` slider exposed in Essential Graphics
+- let Sub Creator fill that slider automatically on each subtitle clip
+- use two selectors or animators in the same text layer:
+  - one set to `Based On: Words`
+  - one set to `Based On: Lines`
+- activate only the one that matches the dropdown value
+
+This is more reliable than trying to switch the `Based On` mode dynamically inside one selector.
 
 ## Essential Graphics checklist
 
@@ -105,6 +123,7 @@ Before exporting the MOGRT, check this:
 - only one main exposed text control
 - `Animation` checkbox exposed
 - `Highlight Based On` dropdown exposed
+- `Clip Duration` slider exposed
 - dropdown order is exactly `Words`, then `Lines`
 - optional controls use clear names such as `Font Size`, `Characters Per Line`, `Max Lines`
 - the template still looks correct in Premiere without editing inside After Effects
@@ -115,6 +134,7 @@ Before exporting the MOGRT, check this:
 - expose controls only once when possible
 - avoid duplicate groups of identical controls unless they are really needed
 - make sure the text layer accepts line breaks cleanly
+- drive animation speed from `Clip Duration` instead of guessed clip timing
 - test the template in Premiere before distributing it
 
 ## Working with fonts and style
@@ -132,6 +152,7 @@ Avoid relying on:
 - undocumented control names
 - unusual dropdown ordering for `Highlight Based On`
 - duplicate exposed text controls with the same purpose
+- expressions that depend on negative time caches for basic subtitle animation
 - complex template logic that only works when edited back in After Effects
 
 ## Summary
@@ -140,5 +161,6 @@ For the best Sub Creator compatibility, expose at least:
 - `Text`
 - `Animation`
 - `Highlight Based On`
+- `Clip Duration`
 
 And make sure the actual animation behavior already exists in the After Effects template.

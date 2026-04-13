@@ -1,11 +1,11 @@
 # Sub Creator MOGRT Templates
 
-This folder is intended for your custom MOGRT templates.
-Files under this folder are auto-indexed into the panel gallery at build time.
+This folder contains the bundled Sub Creator template and any custom MOGRTs you add yourself.
+Files in this folder are indexed into the panel gallery when Sub Creator scans or refreshes the template library.
 
-Suggested naming convention:
-- `SubCreator-Clean.mogrt`
-- `SubCreator-Punch.mogrt`
-- `SubCreator-Minimal.mogrt`
+You can:
+- keep the bundled `Base` template
+- add your own `.mogrt` files at the root
+- sort custom templates into subfolders for a cleaner gallery
 
-The extension can insert one selected MOGRT per cue and tries to update the text field automatically when a property named `Source Text`, `Texte source`, or `Text` is available.
+Sub Creator inserts one selected MOGRT per subtitle cue and tries to update the text automatically when the template exposes a text control named `Text`, `Source Text`, or `Texte source`.

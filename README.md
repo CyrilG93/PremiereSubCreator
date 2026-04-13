@@ -4,7 +4,7 @@ Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs from a
 
 It is built for a simple workflow inside Premiere:
 - choose a subtitle source
-- choose a MOGRT style in the gallery
+- choose a MOGRT in the gallery
 - generate subtitle clips on the timeline
 - adjust exposed controls in the `Visual editor`
 - rebalance text and timing in the `Text editor`
@@ -13,7 +13,7 @@ It is built for a simple workflow inside Premiere:
 
 - `SRT`, `Whisper`, and `Whisper + SRT` creation modes
 - generation on `Entire sequence` or `In/Out points`
-- built-in MOGRT gallery with refresh support
+- bundled base MOGRT with gallery support for your own templates
 - support for custom `.mogrt` files from after effect and premiere
 - `Visual editor` for exposed controls
 - `Text editor` for subtitle text redistribution and timing rebuild
@@ -195,7 +195,7 @@ When the template exposes those controls cleanly, the rebuilt clips also keep th
 
 ## Custom MOGRTs
 
-Sub Creator includes a gallery, but you can also add your own `.mogrt` files.
+Sub Creator ships with one bundled base template, and you can also add your own `.mogrt` files.
 
 Basic flow:
 1. In the panel, click `Open MOGRT folder`.
@@ -203,7 +203,7 @@ Basic flow:
 3. Click `Refresh gallery`.
 
 For simple After Effects test templates, you can expose a slider named `Clip Duration`.
-Sub Creator will fill it automatically with each generated subtitle clip duration, which helps AE expressions adapt to the real timeline length without changing the behavior of existing Captioneer-style templates.
+Sub Creator will fill it automatically with each generated subtitle clip duration, which helps AE expressions adapt to the real timeline length without breaking older custom templates that already work.
 
 ## Add more Whisper models manually
 
@@ -260,3 +260,12 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 - My website: https://www.cyrilplugin.com/
 - Join my discord for any help: https://www.cyrilplugin.com/website/social/discord
+
+## Changelog
+
+### 0.9.0 - 2026-04-13
+
+- Sub Creator now ships with a single bundled base subtitle MOGRT instead of the previous template pack.
+- Custom After Effects templates are easier to support with the `Clip Duration` workflow for timeline-aware animation.
+- Whisper stop handling, installer behavior, and Windows runtime detection are more reliable.
+- Visual Editor and Text Editor are more stable with exposed MOGRT controls, duplicated AE parameters, and preserved layout values.

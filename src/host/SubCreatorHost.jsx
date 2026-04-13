@@ -7819,22 +7819,36 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
 }
 
 function subcreator_build_visual_clone_changes_from_track_item(trackItem) {
-  // // Snapshot editable visual controls from one clip so split/merge can recreate clips without losing style.
-  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
-  if (components.length < 1) {
+  // Snapshot the same filtered and deduplicated visual controls as the visual editor so AE duplicate components do not reapply hidden defaults.
+  var rawComponents = subcreator_get_mogrt_components_from_track_item(trackItem);
+  if (rawComponents.length < 1) {
     return [];
   }
 
   var properties = [];
+  var seenComponentSignatures = {};
   subcreator_visual_reset_group_sequence_axis_preferences();
   subcreator_visual_reset_text_style_option_cache();
-  for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+  for (var componentIndex = 0; componentIndex < rawComponents.length; componentIndex += 1) {
+    var componentGroupPath = rawComponents.length > 1 ? subcreator_visual_get_component_group_label(rawComponents[componentIndex], componentIndex) : "";
+    var componentProperties = [];
     subcreator_collect_mogrt_visual_properties_recursive(
-      components[componentIndex] ? components[componentIndex].properties : null,
+      rawComponents[componentIndex] ? rawComponents[componentIndex].properties : null,
       subcreator_visual_build_component_path_prefix(componentIndex),
-      "",
-      properties
+      componentGroupPath,
+      componentProperties
     );
+
+    componentProperties = subcreator_visual_filter_property_descriptors(componentProperties);
+    var componentSignature = subcreator_visual_build_component_descriptor_signature(componentProperties);
+    if (componentSignature && typeof seenComponentSignatures[componentSignature] !== "undefined") {
+      continue;
+    }
+
+    seenComponentSignatures[componentSignature] = componentIndex;
+    for (var componentPropertyIndex = 0; componentPropertyIndex < componentProperties.length; componentPropertyIndex += 1) {
+      properties.push(componentProperties[componentPropertyIndex]);
+    }
   }
 
   var changes = [];

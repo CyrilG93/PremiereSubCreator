@@ -48,6 +48,25 @@
 
       <section id="modeGenerate" class="mode-panel is-active" data-mode="generate">
         <section class="panel__grid">
+          <section class="field field--full field--actions">
+            <div class="generate-actions">
+              <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
+              <button
+                id="generateStopButton"
+                class="button button--danger"
+                type="button"
+                data-i18n="action.stopCurrentJob"
+                hidden
+              >
+                Stop current job
+              </button>
+              <div id="generateProgress" class="visual-progress" hidden>
+                <progress id="generateProgressBar" max="100" value="0"></progress>
+                <span id="generateProgressText" class="hint">0%</span>
+              </div>
+            </div>
+          </section>
+
           <label class="field field--full">
             <span data-i18n="field.source">Source des sous-titres</span>
             <select id="sourceMode">
@@ -152,25 +171,6 @@
             <span data-i18n="field.fontSize">Taille texte</span>
             <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
           </label>
-
-          <section class="field field--full field--actions">
-            <div class="generate-actions">
-              <button id="generateButton" class="button" data-i18n="action.generate">Generer sous-titres</button>
-              <button
-                id="generateStopButton"
-                class="button button--danger"
-                type="button"
-                data-i18n="action.stopCurrentJob"
-                hidden
-              >
-                Stop current job
-              </button>
-              <div id="generateProgress" class="visual-progress" hidden>
-                <progress id="generateProgressBar" max="100" value="0"></progress>
-                <span id="generateProgressText" class="hint">0%</span>
-              </div>
-            </div>
-          </section>
 
           <section class="field field--full" id="mogrtGalleryField">
             <div class="field__header">

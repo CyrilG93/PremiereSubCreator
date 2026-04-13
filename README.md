@@ -187,6 +187,8 @@ You can:
 - merge subtitle blocks
 - rebuild timing after text changes
 
+When the template exposes those controls cleanly, the rebuilt clips also keep the source clip visual settings instead of going back to the raw template defaults.
+
 ## Custom MOGRTs
 
 Sub Creator includes a gallery, but you can also add your own `.mogrt` files.

@@ -272,9 +272,10 @@ input[type="checkbox"] {
 
 .generate-actions {
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(150px, 180px) minmax(0, 1fr);
+  /* Keep the main Create action as a full-width primary CTA and stack secondary job controls underneath it. */
+  grid-template-columns: 1fr;
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .inline-row {
@@ -333,6 +334,7 @@ input[type="checkbox"] {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
+  width: 100%;
 }
 
 .visual-progress progress {

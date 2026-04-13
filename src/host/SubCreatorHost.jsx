@@ -3965,6 +3965,46 @@ function subcreator_visual_build_component_descriptor_signature(properties) {
   return parts.join("\n");
 }
 
+function subcreator_collect_unique_mogrt_components(trackItem) {
+  // // Reuse the same visible-descriptor deduplication as the Visual editor so hidden duplicate AE components do not receive conflicting writes.
+  var rawComponents = subcreator_get_mogrt_components_from_track_item(trackItem);
+  if (rawComponents.length < 2) {
+    return rawComponents;
+  }
+
+  var uniqueComponents = [];
+  var seenComponentSignatures = {};
+  subcreator_visual_reset_group_sequence_axis_preferences();
+  subcreator_visual_reset_text_style_option_cache();
+
+  for (var componentIndex = 0; componentIndex < rawComponents.length; componentIndex += 1) {
+    var rawComponent = rawComponents[componentIndex];
+    if (!rawComponent || !rawComponent.properties || rawComponent.properties.numItems < 1) {
+      continue;
+    }
+
+    var componentGroupPath = rawComponents.length > 1 ? subcreator_visual_get_component_group_label(rawComponent, componentIndex) : "";
+    var componentProperties = [];
+    subcreator_collect_mogrt_visual_properties_recursive(
+      rawComponent.properties,
+      subcreator_visual_build_component_path_prefix(componentIndex),
+      componentGroupPath,
+      componentProperties
+    );
+
+    componentProperties = subcreator_visual_filter_property_descriptors(componentProperties);
+    var componentSignature = subcreator_visual_build_component_descriptor_signature(componentProperties);
+    if (componentSignature && typeof seenComponentSignatures[componentSignature] !== "undefined") {
+      continue;
+    }
+
+    seenComponentSignatures[componentSignature] = componentIndex;
+    uniqueComponents.push(rawComponent);
+  }
+
+  return uniqueComponents;
+}
+
 function subcreator_visual_parse_component_prefixed_path(pathValue) {
   // // Decode optional component-prefixed visual-editor paths like `c2|0.4::textstyle.fontSize`.
   var pathText = subcreator_trim_string(String(pathValue || ""));
@@ -7793,7 +7833,7 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     };
   }
 
-  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  var components = subcreator_collect_unique_mogrt_components(trackItem);
   if (components.length < 1) {
     return {
       textUpdates: 0,

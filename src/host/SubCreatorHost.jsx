@@ -7781,11 +7781,24 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   return false;
 }
 
-function subcreator_try_set_controls_recursively(propertyCollection, textValue, animationMode, styleConfig, templatePayloadState, skipTextUpdates, stats, debugLines, debugPrefix) {
-  // // Traverse nested Essential Graphics property groups and apply text/animation updates.
+function subcreator_try_set_controls_recursively(
+  propertyCollection,
+  textValue,
+  animationMode,
+  styleConfig,
+  templatePayloadState,
+  skipTextUpdates,
+  stats,
+  debugLines,
+  debugPrefix,
+  passMode
+) {
+  // // Traverse nested Essential Graphics property groups in two passes so text is written last and can persist dependent animation metadata.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
     return;
   }
+
+  var normalizedPassMode = subcreator_trim_string(String(passMode || "")).toLowerCase();
 
   for (var i = 0; i < propertyCollection.numItems; i += 1) {
     var property = propertyCollection[i];
@@ -7794,16 +7807,22 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
     }
 
     if (typeof property.setValue === "function") {
-      if (!skipTextUpdates && subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix)) {
+      if (normalizedPassMode !== "text") {
+        if (subcreator_try_set_animation_mode_property(property, animationMode)) {
+          stats.animationUpdates += 1;
+        }
+
+        if (subcreator_try_set_layout_property(property, styleConfig)) {
+          stats.layoutUpdates += 1;
+        }
+      }
+
+      if (
+        normalizedPassMode !== "non_text" &&
+        !skipTextUpdates &&
+        subcreator_try_set_mogrt_text_property(property, textValue, templatePayloadState, debugLines, debugPrefix)
+      ) {
         stats.textUpdates += 1;
-      }
-
-      if (subcreator_try_set_animation_mode_property(property, animationMode)) {
-        stats.animationUpdates += 1;
-      }
-
-      if (subcreator_try_set_layout_property(property, styleConfig)) {
-        stats.layoutUpdates += 1;
       }
     }
 
@@ -7817,7 +7836,8 @@ function subcreator_try_set_controls_recursively(propertyCollection, textValue, 
         skipTextUpdates,
         stats,
         debugLines,
-        debugPrefix
+        debugPrefix,
+        normalizedPassMode
       );
     }
   }
@@ -7873,7 +7893,28 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
       Boolean(skipTextUpdates),
       stats,
       debugLines,
-      debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex)
+      debugPrefix ? debugPrefix + " component=" + String(componentIndex) : "component=" + String(componentIndex),
+      "non_text"
+    );
+  }
+
+  for (var textComponentIndex = 0; textComponentIndex < components.length; textComponentIndex += 1) {
+    var textComponent = components[textComponentIndex];
+    if (!textComponent || !textComponent.properties || textComponent.properties.numItems < 1) {
+      continue;
+    }
+
+    subcreator_try_set_controls_recursively(
+      textComponent.properties,
+      textValue,
+      animationMode,
+      styleConfig,
+      templatePayloadState,
+      Boolean(skipTextUpdates),
+      stats,
+      debugLines,
+      debugPrefix ? debugPrefix + " component=" + String(textComponentIndex) : "component=" + String(textComponentIndex),
+      "text"
     );
   }
 

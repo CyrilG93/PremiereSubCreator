@@ -176,6 +176,7 @@ Important:
 - for fonts, colors, and some template-specific controls, changing them directly in `Properties` is often the safest and fastest option
 - when a template exposes 2D box or offset controls, Sub Creator aims to keep the same pixel units shown in Premiere's `Properties` panel
 - for some After Effects MOGRTs with duplicated internal controls, Sub Creator avoids writing the same values twice so generated animations stay stable after reopening Premiere
+- for animated After Effects MOGRTs, Sub Creator writes animation/layout controls first and text last to better preserve the final saved animation state
 
 Sub Creator can still read some of those values and apply them to other selected clips when the template exposes them correctly.
 

@@ -7722,12 +7722,63 @@ function subcreator_try_set_animation_mode_property(property, animationMode) {
       return false;
     }
 
-    // // Most MOGRT menu controls are 1-based: 1=Words, 2=Lines.
-    var highlightValue = mode === "word" ? 1 : 2;
+    // // AE-authored subtitle templates commonly expose this dropdown as `0=Words / 1=Lines`, even when other menus look 1-based.
+    // // Prefer the 0-based mapping first so generated clips and exports keep the intended highlight animation state.
+    var currentValue = NaN;
     try {
-      property.setValue(highlightValue, true);
-      return true;
-    } catch (highlightError) {}
+      currentValue = Number(property.getValue());
+    } catch (readError) {}
+
+    var candidateValues = [];
+    function rememberCandidate(value) {
+      // // Keep fallbacks unique so we can try both enum bases without repeating the same write.
+      for (var candidateIndex = 0; candidateIndex < candidateValues.length; candidateIndex += 1) {
+        if (candidateValues[candidateIndex] === value) {
+          return;
+        }
+      }
+      candidateValues.push(value);
+    }
+
+    var preferZeroBased = true;
+    if (!isNaN(currentValue)) {
+      if (currentValue === 2) {
+        preferZeroBased = false;
+      } else if (currentValue === 0 || currentValue === 1) {
+        preferZeroBased = true;
+      }
+    }
+
+    if (mode === "word") {
+      if (preferZeroBased) {
+        rememberCandidate(0);
+        rememberCandidate(1);
+      } else {
+        rememberCandidate(1);
+        rememberCandidate(0);
+      }
+    } else {
+      if (preferZeroBased) {
+        rememberCandidate(1);
+        rememberCandidate(2);
+      } else {
+        rememberCandidate(2);
+        rememberCandidate(1);
+      }
+    }
+
+    for (var highlightIndex = 0; highlightIndex < candidateValues.length; highlightIndex += 1) {
+      try {
+        var highlightValue = candidateValues[highlightIndex];
+        property.setValue(highlightValue, true);
+        try {
+          if (typeof property.getValue === "function" && Number(property.getValue()) !== highlightValue) {
+            continue;
+          }
+        } catch (readbackError) {}
+        return true;
+      } catch (highlightError) {}
+    }
   }
 
   if (key === "animation") {

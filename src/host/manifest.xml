@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.cyrilg93.subcreator" ExtensionBundleVersion="0.8.6" ExtensionBundleName="Sub Creator" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.cyrilg93.subcreator" ExtensionBundleVersion="0.8.7" ExtensionBundleName="Sub Creator" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.cyrilg93.subcreator.panel" Version="0.8.6"/>
+    <Extension Id="com.cyrilg93.subcreator.panel" Version="0.8.7"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

@@ -2161,6 +2161,25 @@ function subcreator_visual_detect_vector_mode(displayName, groupPath) {
   return "raw";
 }
 
+function subcreator_visual_should_force_graphic_parameters_axis_scale(displayName, groupPath) {
+  // // Some AE Essential Graphics vectors stay normalized even when Premiere displays them as pixel X/Y values in Properties.
+  var displayKey = String(displayName || "").toLowerCase();
+  var groupKey = String(groupPath || "").toLowerCase();
+  if (groupKey.indexOf("graphic parameters") === -1) {
+    return false;
+  }
+
+  if (groupKey.indexOf("/ box controls") !== -1 && (displayKey.indexOf("padding") !== -1 || displayKey.indexOf("offset") !== -1)) {
+    return true;
+  }
+
+  if (groupKey.indexOf("/ offset") !== -1 && displayKey.indexOf("offset") !== -1) {
+    return true;
+  }
+
+  return false;
+}
+
 function subcreator_visual_vector_looks_normalized_position(vectorValues) {
   // // Detect normalized position vectors (0..1-ish) that should be displayed in sequence pixels.
   if (!vectorValues || vectorValues.length < 2) {
@@ -2231,6 +2250,17 @@ function subcreator_visual_choose_vector_scale(displayName, groupPath, vectorVal
   var vectorMode = subcreator_visual_detect_vector_mode(displayName, groupPath);
   var displayKey = String(displayName || "").toLowerCase();
   var looksLikeAnchor = displayKey.indexOf("anchor") !== -1;
+  var shouldForceGraphicParametersAxisScale = subcreator_visual_should_force_graphic_parameters_axis_scale(displayName, groupPath);
+
+  if (shouldForceGraphicParametersAxisScale) {
+    // // Keep AE Graphic Parameters vectors like Box Padding/Offset aligned with the pixel units shown in Premiere Properties.
+    return {
+      mode: vectorMode,
+      scale: [width, height, 1, 1].slice(0, vectorValues.length),
+      candidateId: "graphic_parameters_axis",
+      score: 0
+    };
+  }
 
   var candidates = [];
   if (vectorMode === "offset_scaled") {

@@ -174,6 +174,7 @@ Important:
 - not every MOGRT exposes every control to Premiere
 - some controls are more reliable in Premiere's `Properties` panel than in the `Visual editor`
 - for fonts, colors, and some template-specific controls, changing them directly in `Properties` is often the safest and fastest option
+- when a template exposes 2D box or offset controls, Sub Creator aims to keep the same pixel units shown in Premiere's `Properties` panel
 
 Sub Creator can still read some of those values and apply them to other selected clips when the template exposes them correctly.
 

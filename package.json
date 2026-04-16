@@ -1,6 +1,6 @@
 {
   "name": "premiere-sub-creator",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "Sub Creator - Adobe Premiere Pro extension for animated subtitles.",
   "type": "module",

@@ -11,6 +11,7 @@ const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilg93.subcreator
 const distMetaPath = path.join(distExtensionDir, "assets", "subcreator-meta.json");
 const distManifestPath = path.join(distExtensionDir, "CSXS", "manifest.xml");
 const bundledModelsDir = path.join(projectRoot, "Models");
+const bundledFontsDir = path.join(projectRoot, "Fonts");
 const releasesDir = path.join(projectRoot, "Releases");
 const stagingRoot = path.join(projectRoot, ".subcreator-release-staging");
 
@@ -174,6 +175,15 @@ async function subcreatorPackageRelease() {
     }
   } catch {
     // // Ignore missing bundled-model folders so packaging stays compatible with older working copies.
+  }
+  try {
+    const bundledFontsStat = await stat(bundledFontsDir);
+    if (bundledFontsStat.isDirectory()) {
+      // // Include optional bundled font archives in the release package when the workspace provides them.
+      copyTasks.push(cp(bundledFontsDir, path.join(stagingBundleDir, "Fonts"), { recursive: true }));
+    }
+  } catch {
+    // // Ignore missing bundled-font folders so packaging stays compatible with older working copies.
   }
 
   await Promise.all(copyTasks);

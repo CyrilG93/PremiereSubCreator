@@ -13,7 +13,7 @@ It is built for a simple workflow inside Premiere:
 
 - `SRT`, `Whisper`, and `Whisper + SRT` creation modes
 - generation on `Entire sequence` or `In/Out points`
-- bundled base MOGRT with gallery support for your own templates
+- bundled base MOGRT templates with gallery support for your own templates
 - support for custom `.mogrt` files from after effect and premiere
 - `Visual editor` for exposed controls
 - `Text editor` for subtitle text redistribution and timing rebuild
@@ -79,6 +79,7 @@ If the `ffmpeg` installer asks to add it to `PATH`, accept it.
 6. Open `Sub Creator` from the Premiere extensions panel.
 
 The installers copy the bundled `base` Whisper model into the local Whisper cache and write a config file that helps the panel find Python, Whisper, WhisperX, and `ffmpeg`.
+The release package can also include a `Fonts` folder with the font archives used by the bundled templates, so you can install matching fonts manually when needed.
 
 ### macOS
 
@@ -195,7 +196,7 @@ When the template exposes those controls cleanly, the rebuilt clips also keep th
 
 ## Custom MOGRTs
 
-Sub Creator ships with one bundled base template, and you can also add your own `.mogrt` files.
+Sub Creator ships with bundled base templates, and you can also add your own `.mogrt` files.
 
 Basic flow:
 1. In the panel, click `Open MOGRT folder`.

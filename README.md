@@ -178,6 +178,7 @@ Important:
 - not every MOGRT exposes every control to Premiere
 - some controls are more reliable in Premiere's `Properties` panel than in the `Visual editor`
 - for fonts, colors, and some template-specific controls, changing them directly in `Properties` is often the safest and fastest option
+- faux-style text toggles such as `Bold`, `Italic`, `All Caps`, and `Small Caps` only appear when the MOGRT actually exposes them as editable controls
 - when a template exposes 2D box or offset controls, Sub Creator aims to keep the same pixel units shown in Premiere's `Properties` panel
 - for some After Effects MOGRTs with duplicated internal controls, Sub Creator avoids writing the same values twice so generated animations stay stable after reopening Premiere
 - for animated After Effects MOGRTs, Sub Creator writes animation/layout controls first and text last to better preserve the final saved animation state

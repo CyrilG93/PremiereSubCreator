@@ -2998,6 +2998,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
     fontFamilyOptions: [],
     fontStyleOptions: [],
     fontStylesByFamily: {},
+    fontFauxStyleEditable: null,
     fontFsBold: null,
     fontFsItalic: null,
     fontFsAllCaps: null,
@@ -3104,6 +3105,11 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
         }
       }
 
+      if (result.fontFauxStyleEditable === null && normalizedKey === "cappropfontfauxstyleedit") {
+        // // Respect the text payload editability flags so the Visual Editor only exposes faux-style toggles when AE actually exported them.
+        result.fontFauxStyleEditable = subcreator_visual_extract_first_boolean(value);
+      }
+
       if (result.fontFsBold === null && subcreator_visual_is_font_flag_key(normalizedKey, "fontfsbold")) {
         result.fontFsBold = subcreator_visual_extract_first_boolean(value);
       }
@@ -3135,6 +3141,14 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
     subcreator_visual_register_style_for_family(result.fontStylesByFamily, result.fontFamily, result.fontStyle);
   }
 
+  if (result.fontFauxStyleEditable === false) {
+    // // Hide Bold/Italic/All Caps/Small Caps when the MOGRT payload marks faux styles as non-editable.
+    result.fontFsBold = null;
+    result.fontFsItalic = null;
+    result.fontFsAllCaps = null;
+    result.fontFsSmallCaps = null;
+  }
+
   if (!result.fontFamily && result.fontFamilyOptions.length === 1) {
     // // Keep font controls visible when readback returns only one family candidate.
     result.fontFamily = result.fontFamilyOptions[0];
@@ -3157,6 +3171,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
     result.fontFamilyOptions.length < 1 &&
     result.fontStyleOptions.length < 1 &&
     !subcreator_visual_has_own_entries(result.fontStylesByFamily) &&
+    result.fontFauxStyleEditable === null &&
     result.fontFsBold === null &&
     result.fontFsItalic === null &&
     result.fontFsAllCaps === null &&

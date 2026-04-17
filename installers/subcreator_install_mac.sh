@@ -17,7 +17,9 @@ SUBCREATOR_PYTHON_SEEN=""
 SUBCREATOR_WHISPER_PATH=""
 SUBCREATOR_FFMPEG_PATH=""
 SUBCREATOR_PATH_HINTS=""
+SUBCREATOR_TEMPLATES_BACKUP_ROOT=""
 SUBCREATOR_TEMPLATES_BACKUP_DIR=""
+SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE=""
 
 subcreator_enable_cep_debug_mode() {
   # // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
@@ -47,16 +49,56 @@ subcreator_append_path_to_profile() {
   return 0
 }
 
+subcreator_extract_bundled_template_paths() {
+  # // Extract previously bundled template relative paths so installer updates only preserve user-added templates.
+  local catalog_path="$1"
+  local output_path="$2"
+
+  : >"${output_path}"
+
+  if [ ! -f "${catalog_path}" ]; then
+    return 0
+  fi
+
+  sed -n 's/.*"relativePath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${catalog_path}" |
+    while IFS= read -r relative_path; do
+      local normalized_path="${relative_path#./}"
+      normalized_path="${normalized_path#/}"
+      if [ -n "${normalized_path}" ]; then
+        printf "%s\n" "${normalized_path}" >>"${output_path}"
+      fi
+    done
+}
+
 subcreator_backup_existing_templates() {
-  # // Preserve previously added MOGRT files before replacing the installed CEP extension payload.
+  # // Preserve only user-added MOGRT files before replacing the installed CEP extension payload.
   if [ ! -d "${SUBCREATOR_DEST_DIR}/templates/mogrt" ]; then
     return 0
   fi
 
   local backup_root=""
+  local source_root="${SUBCREATOR_DEST_DIR}/templates/mogrt"
+  local old_catalog_path="${SUBCREATOR_DEST_DIR}/assets/mogrt-catalog.json"
   backup_root="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-mogrt.XXXXXX")"
-  cp -R "${SUBCREATOR_DEST_DIR}/templates/mogrt" "${backup_root}/mogrt"
+  SUBCREATOR_TEMPLATES_BACKUP_ROOT="${backup_root}"
   SUBCREATOR_TEMPLATES_BACKUP_DIR="${backup_root}/mogrt"
+  SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE="${backup_root}/bundled-relative-paths.txt"
+  mkdir -p "${SUBCREATOR_TEMPLATES_BACKUP_DIR}"
+  subcreator_extract_bundled_template_paths "${old_catalog_path}" "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}"
+
+  while IFS= read -r -d '' source_path; do
+    local relative_path=""
+    local target_path=""
+    relative_path="${source_path#${source_root}/}"
+
+    if [ -s "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}" ] && grep -Fqx "${relative_path}" "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    target_path="${SUBCREATOR_TEMPLATES_BACKUP_DIR}/${relative_path}"
+    mkdir -p "$(dirname "${target_path}")"
+    cp "${source_path}" "${target_path}"
+  done < <(find "${source_root}" -type f -print0)
 }
 
 subcreator_restore_existing_templates() {
@@ -72,8 +114,12 @@ subcreator_restore_existing_templates() {
   else
     cp -Rn "${SUBCREATOR_TEMPLATES_BACKUP_DIR}/." "${SUBCREATOR_DEST_DIR}/templates/mogrt/" || true
   fi
-  rm -rf "$(dirname "${SUBCREATOR_TEMPLATES_BACKUP_DIR}")"
+  if [ -n "${SUBCREATOR_TEMPLATES_BACKUP_ROOT}" ] && [ -d "${SUBCREATOR_TEMPLATES_BACKUP_ROOT}" ]; then
+    rm -rf "${SUBCREATOR_TEMPLATES_BACKUP_ROOT}"
+  fi
+  SUBCREATOR_TEMPLATES_BACKUP_ROOT=""
   SUBCREATOR_TEMPLATES_BACKUP_DIR=""
+  SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE=""
 }
 
 subcreator_copy_bundled_whisper_models() {

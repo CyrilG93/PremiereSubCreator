@@ -189,6 +189,10 @@ body {
   color: var(--text-dim);
 }
 
+.field__header--gallery {
+  grid-template-columns: 1fr;
+}
+
 .field__header-control {
   margin: 0;
   min-width: 168px;
@@ -206,9 +210,34 @@ body {
   flex-wrap: wrap;
 }
 
+.field__header-actions--gallery {
+  width: 100%;
+  gap: 6px;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
 .field__header-actions .button {
   width: auto;
   min-width: 160px;
+}
+
+.field__header-actions--gallery .button {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding-inline: 10px;
+  font-size: 0.76rem;
+}
+
+.field__header-actions--gallery .field__header-control--search {
+  flex: 0 1 150px;
+  min-width: 120px;
+  max-width: 170px;
+}
+
+.field__header-control--gallery-filter {
+  flex: 0 0 132px;
+  min-width: 132px;
 }
 
 .field__header-control--search input {

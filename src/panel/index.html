@@ -168,20 +168,13 @@
           </label>
 
           <label class="field">
-            <span data-i18n="field.fontSize">Taille texte</span>
-            <input id="fontSize" type="number" value="78" min="24" max="180" step="1" />
+            <span data-i18n="field.maxWords">Mots max par ligne</span>
+            <input id="maxWords" type="number" value="12" min="1" max="12" step="1" />
           </label>
 
           <section class="field field--full" id="mogrtGalleryField">
-            <div class="field__header">
-              <span data-i18n="field.mogrtGallery">Galerie MOGRT</span>
-              <div class="field__header-actions">
-                <label class="field__header-control">
-                  <span class="sr-only" data-i18n="field.mogrtFormat">Format galerie</span>
-                  <select id="mogrtAspectFilter">
-                    <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
-                  </select>
-                </label>
+            <div class="field__header field__header--gallery">
+              <div class="field__header-actions field__header-actions--gallery">
                 <label class="field__header-control field__header-control--search">
                   <span class="sr-only" data-i18n="field.mogrtSearch">Recherche galerie</span>
                   <input
@@ -192,6 +185,12 @@
                     autocomplete="off"
                     spellcheck="false"
                   />
+                </label>
+                <label class="field__header-control field__header-control--gallery-filter">
+                  <span class="sr-only" data-i18n="field.mogrtFormat">Format galerie</span>
+                  <select id="mogrtAspectFilter">
+                    <option value="all" data-i18n="gallery.allFormats">Tous formats</option>
+                  </select>
                 </label>
                 <button id="mogrtFolderButton" type="button" class="button button--secondary" data-i18n="action.openMogrtFolder">
                   Ouvrir dossier MOGRT

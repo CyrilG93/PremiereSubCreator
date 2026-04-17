@@ -13,7 +13,7 @@
   "field.animation": "Mode animation",
   "field.maxChars": "Lettres max par ligne",
   "field.linesPerCaption": "Lignes max par sous-titre",
-  "field.fontSize": "Taille texte",
+  "field.maxWords": "Mots max par ligne",
   "field.mogrtFormat": "Format galerie",
   "field.mogrtSearch": "Recherche galerie",
   "field.mogrtGallery": "Galerie MOGRT",

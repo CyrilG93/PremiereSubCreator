@@ -7807,7 +7807,7 @@ function subcreator_try_set_animation_mode_property(property, animationMode) {
 }
 
 function subcreator_try_set_layout_property(property, styleConfig) {
-  // // Apply layout controls (characters/lines/font size) when available in a template.
+  // // Apply layout controls (characters/lines/clip duration) when available in a template.
   if (!property || typeof property.setValue !== "function" || !styleConfig) {
     return false;
   }
@@ -7815,7 +7815,6 @@ function subcreator_try_set_layout_property(property, styleConfig) {
   var key = String(property.displayName || "").toLowerCase();
   var maxChars = Number(styleConfig.maxCharsPerLine || 0);
   var maxLines = Number(styleConfig.linesPerCaption || 0);
-  var fontSize = Number(styleConfig.fontSize || 0);
   var clipDurationSeconds = Number(styleConfig.clipDurationSeconds || 0);
 
   if (
@@ -7849,15 +7848,6 @@ function subcreator_try_set_layout_property(property, styleConfig) {
         property.setValue(maxLines, true);
         return true;
       } catch (linesError) {}
-    }
-  }
-
-  if (key.indexOf("font size") !== -1 || key.indexOf("taille") !== -1) {
-    if (!isNaN(fontSize) && fontSize > 0) {
-      try {
-        property.setValue(fontSize, true);
-        return true;
-      } catch (fontSizeError) {}
     }
   }
 

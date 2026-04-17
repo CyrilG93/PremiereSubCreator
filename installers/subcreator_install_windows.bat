@@ -49,7 +49,7 @@ if exist "%SUBCREATOR_DEST_DIR%\templates\mogrt" (
   set "SUBCREATOR_TEMPLATE_BACKUP_ROOT=%TEMP%\subcreator-mogrt-backup-%RANDOM%%RANDOM%"
   set "SUBCREATOR_TEMPLATE_BACKUP_DIR=!SUBCREATOR_TEMPLATE_BACKUP_ROOT!\mogrt"
   mkdir "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" >nul 2>nul
-  xcopy "%SUBCREATOR_DEST_DIR%\templates\mogrt" "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" /e /i /h /y >nul
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$templates = [IO.Path]::GetFullPath($env:SUBCREATOR_DEST_DIR + '\templates\mogrt'); $backup = [IO.Path]::GetFullPath($env:SUBCREATOR_TEMPLATE_BACKUP_DIR); $catalogPath = Join-Path ([IO.Path]::GetFullPath($env:SUBCREATOR_DEST_DIR)) 'assets\mogrt-catalog.json'; $bundled = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase); if (Test-Path -LiteralPath $catalogPath) { try { $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json; foreach ($template in @($catalog.templates)) { $relative = [string]$template.relativePath; if ($relative) { $null = $bundled.Add(($relative -replace '\\','/').TrimStart('/')) } } } catch {} }; if (Test-Path -LiteralPath $templates) { Get-ChildItem -LiteralPath $templates -Recurse -File | ForEach-Object { $relative = ($_.FullName.Substring($templates.Length).TrimStart('\') -replace '\\','/'); if (-not $bundled.Contains($relative)) { $target = Join-Path $backup $relative; $parent = Split-Path -Parent $target; if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $target -Force } } }" >nul
 )
 if exist "%SUBCREATOR_DEST_DIR%" rmdir /s /q "%SUBCREATOR_DEST_DIR%"
 xcopy "%SUBCREATOR_SOURCE_DIR%" "%SUBCREATOR_DEST_DIR%" /e /i /h /y >nul

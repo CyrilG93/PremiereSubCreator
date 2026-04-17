@@ -8,8 +8,8 @@ const baseOptions: CaptionBuildOptions = {
   languageCode: "fr",
   style: {
     presetId: "clean",
-    fontSize: 78,
     maxCharsPerLine: 12,
+    maxWordsPerLine: 12,
     animationMode: "line",
     uppercase: false,
     linesPerCaption: 2
@@ -253,5 +253,32 @@ describe("buildCaptionPlan", () => {
 
     const laterChunks = planned.slice(1).map((cue) => cue.text.replace(/\n/g, " ").trim().toLowerCase());
     expect(laterChunks.some((text) => text.startsWith("et "))).toBe(false);
+  });
+
+  it("respects the max words per line limit when wrapping", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-10",
+          startSeconds: 0,
+          endSeconds: 4,
+          text: "one two three four",
+          words: []
+        }
+      ],
+      {
+        ...baseOptions,
+        style: {
+          ...baseOptions.style,
+          maxCharsPerLine: 24,
+          maxWordsPerLine: 1,
+          linesPerCaption: 2
+        }
+      }
+    );
+
+    expect(planned).toHaveLength(2);
+    expect(planned[0].text).toBe("one\ntwo");
+    expect(planned[1].text).toBe("three\nfour");
   });
 });

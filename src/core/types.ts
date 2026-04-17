@@ -25,8 +25,8 @@ export interface CaptionCue {
 
 // // Describe the style and animation configuration selected in the UI.
 export interface CaptionStyleConfig {
-  fontSize: number;
   maxCharsPerLine: number;
+  maxWordsPerLine: number;
   animationMode: AnimationMode;
   uppercase: boolean;
   linesPerCaption: number;

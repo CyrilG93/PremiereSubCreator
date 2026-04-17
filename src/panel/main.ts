@@ -123,8 +123,8 @@ interface PanelStateSnapshot {
   whisperSequenceRange: WhisperSequenceRangeMode;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
+  maxWordsPerLine: number;
   linesPerCaption: number;
-  fontSize: number;
   mogrtAspectFilter: string;
   mogrtSearchQuery: string;
   selectedMogrtId: string;
@@ -195,8 +195,8 @@ const elements = {
   whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
+  maxWords: document.querySelector<HTMLInputElement>("#maxWords"),
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
-  fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
   mogrtSearchInput: document.querySelector<HTMLInputElement>("#mogrtSearchInput"),
   mogrtFolderButton: document.querySelector<HTMLButtonElement>("#mogrtFolderButton"),
@@ -1184,8 +1184,8 @@ function persistPanelState(): void {
     !elements.whisperSequenceRange ||
     !elements.animationMode ||
     !elements.maxChars ||
+    !elements.maxWords ||
     !elements.linesPerCaption ||
-    !elements.fontSize ||
     !elements.mogrtAspectFilter ||
     !elements.mogrtSearchInput
   ) {
@@ -1203,8 +1203,8 @@ function persistPanelState(): void {
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
     animationMode: (elements.animationMode.value as AnimationMode) || "line",
     maxCharsPerLine: Number(elements.maxChars.value),
+    maxWordsPerLine: Number(elements.maxWords.value),
     linesPerCaption: Number(elements.linesPerCaption.value),
-    fontSize: Number(elements.fontSize.value),
     mogrtAspectFilter: pendingMogrtAspectFilter || elements.mogrtAspectFilter.value || "all",
     mogrtSearchQuery: pendingMogrtSearchQuery || elements.mogrtSearchInput.value || "",
     selectedMogrtId: selectedMogrt?.id || pendingSelectedMogrtId || "",
@@ -1274,12 +1274,12 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     elements.maxChars.value = String(snapshot.maxCharsPerLine);
   }
 
-  if (elements.linesPerCaption && Number.isFinite(Number(snapshot.linesPerCaption))) {
-    elements.linesPerCaption.value = String(snapshot.linesPerCaption);
+  if (elements.maxWords && Number.isFinite(Number(snapshot.maxWordsPerLine))) {
+    elements.maxWords.value = String(snapshot.maxWordsPerLine);
   }
 
-  if (elements.fontSize && Number.isFinite(Number(snapshot.fontSize))) {
-    elements.fontSize.value = String(snapshot.fontSize);
+  if (elements.linesPerCaption && Number.isFinite(Number(snapshot.linesPerCaption))) {
+    elements.linesPerCaption.value = String(snapshot.linesPerCaption);
   }
 
   if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter) {
@@ -2113,11 +2113,11 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   if (elements.maxChars) {
     elements.maxChars.disabled = isBusy;
   }
+  if (elements.maxWords) {
+    elements.maxWords.disabled = isBusy;
+  }
   if (elements.linesPerCaption) {
     elements.linesPerCaption.disabled = isBusy;
-  }
-  if (elements.fontSize) {
-    elements.fontSize.disabled = isBusy;
   }
   if (elements.mogrtAspectFilter) {
     elements.mogrtAspectFilter.disabled = isBusy;
@@ -4251,8 +4251,8 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.sourceMode ||
     !elements.languageSelect ||
     !elements.whisperLanguage ||
-    !elements.fontSize ||
     !elements.maxChars ||
+    !elements.maxWords ||
     !elements.linesPerCaption ||
     !elements.animationMode ||
     !elements.correctedTranscriptPath ||
@@ -4287,8 +4287,8 @@ function collectBuildOptions(): CaptionBuildOptions {
     sourceMode: getSourceMode(),
     languageCode: getSelectedWhisperLanguageCode(),
     style: {
-      fontSize: Number(elements.fontSize.value),
       maxCharsPerLine: Number(elements.maxChars.value),
+      maxWordsPerLine: Number(elements.maxWords.value),
       animationMode: elements.animationMode.value as AnimationMode,
       uppercase: false,
       linesPerCaption: Number(elements.linesPerCaption.value)
@@ -4736,10 +4736,10 @@ async function initialize(): Promise<void> {
   elements.maxChars?.addEventListener("input", () => {
     persistPanelState();
   });
-  elements.linesPerCaption?.addEventListener("input", () => {
+  elements.maxWords?.addEventListener("input", () => {
     persistPanelState();
   });
-  elements.fontSize?.addEventListener("input", () => {
+  elements.linesPerCaption?.addEventListener("input", () => {
     persistPanelState();
   });
   elements.srtPath?.addEventListener("change", () => {

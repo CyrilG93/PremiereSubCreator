@@ -12,31 +12,50 @@ function normalizeWords(text: string): string[] {
     .filter(Boolean);
 }
 
-function wrapWordsByChars(words: string[], maxCharsPerLine: number): string[] {
-  // // Wrap words greedily before optional balancing pass.
+interface LineWrapConstraints {
+  maxCharsPerLine: number;
+  maxWordsPerLine: number;
+}
+
+function sanitizeMaxWordsPerLine(maxWordsPerLine: number): number {
+  // // Treat invalid or missing word limits as "no extra limit" so legacy behavior stays intact by default.
+  const normalizedValue = Number(maxWordsPerLine || 0);
+  if (!Number.isFinite(normalizedValue) || normalizedValue < 1) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return Math.max(1, Math.floor(normalizedValue));
+}
+
+function wrapWordsWithConstraints(words: string[], constraints: LineWrapConstraints): string[] {
+  // // Wrap words greedily while respecting both the character limit and the optional max-words-per-line limit.
   const lines: string[] = [];
-  let currentLine = "";
+  let currentLineWords: string[] = [];
 
   for (const word of words) {
-    const candidate = currentLine ? `${currentLine} ${word}` : word;
-    if (currentLine && candidate.length > maxCharsPerLine) {
-      lines.push(currentLine);
-      currentLine = word;
+    const candidateWords = [...currentLineWords, word];
+    const candidate = candidateWords.join(" ");
+    if (
+      currentLineWords.length > 0 &&
+      (candidate.length > constraints.maxCharsPerLine || candidateWords.length > constraints.maxWordsPerLine)
+    ) {
+      lines.push(currentLineWords.join(" "));
+      currentLineWords = [word];
       continue;
     }
 
-    currentLine = candidate;
+    currentLineWords = candidateWords;
   }
 
-  if (currentLine) {
-    lines.push(currentLine);
+  if (currentLineWords.length > 0) {
+    lines.push(currentLineWords.join(" "));
   }
 
   return lines;
 }
 
-function rebalanceWrappedLines(lines: string[], maxCharsPerLine: number): string[] {
-  // // Balance neighboring lines so we avoid one long line and one very short line.
+function rebalanceWrappedLines(lines: string[], constraints: LineWrapConstraints): string[] {
+  // // Balance neighboring lines so we avoid one long line and one very short line without breaking the wrap limits.
   if (lines.length < 2) {
     return lines;
   }
@@ -59,7 +78,11 @@ function rebalanceWrappedLines(lines: string[], maxCharsPerLine: number): string
       const movedWord = currentWords[currentWords.length - 1];
       const candidateCurrent = currentWords.slice(0, -1).join(" ");
       const candidateNext = [movedWord, ...nextWords].join(" ");
-      if (candidateNext.length > maxCharsPerLine || candidateCurrent.length < 1) {
+      if (
+        candidateNext.length > constraints.maxCharsPerLine ||
+        nextWords.length + 1 > constraints.maxWordsPerLine ||
+        candidateCurrent.length < 1
+      ) {
         continue;
       }
 
@@ -76,13 +99,13 @@ function rebalanceWrappedLines(lines: string[], maxCharsPerLine: number): string
   return balanced;
 }
 
-function findChunkEndIndex(words: string[], startIndex: number, maxCharsPerLine: number, linesPerCaption: number): number {
+function findChunkEndIndex(words: string[], startIndex: number, constraints: LineWrapConstraints, linesPerCaption: number): number {
   // // Find the largest contiguous word range that still fits the configured line count.
   let bestEnd = Math.min(startIndex + 1, words.length);
 
   for (let endIndex = startIndex + 1; endIndex <= words.length; endIndex += 1) {
     const chunkWords = words.slice(startIndex, endIndex);
-    const wrapped = wrapWordsByChars(chunkWords, maxCharsPerLine);
+    const wrapped = wrapWordsWithConstraints(chunkWords, constraints);
     if (wrapped.length > linesPerCaption) {
       break;
     }
@@ -173,23 +196,23 @@ function wordIsWeakEnding(word: string): boolean {
   return wordIsBoundaryConnector(word);
 }
 
-function chunkFits(words: string[], range: ChunkRange, maxCharsPerLine: number, linesPerCaption: number): boolean {
+function chunkFits(words: string[], range: ChunkRange, constraints: LineWrapConstraints, linesPerCaption: number): boolean {
   // // Validate whether a chunk range still respects the max-lines wrapping rule.
   if (range.end <= range.start) {
     return false;
   }
 
-  const wrapped = wrapWordsByChars(words.slice(range.start, range.end), maxCharsPerLine);
+  const wrapped = wrapWordsWithConstraints(words.slice(range.start, range.end), constraints);
   return wrapped.length <= linesPerCaption;
 }
 
-function buildInitialChunkRanges(words: string[], maxCharsPerLine: number, linesPerCaption: number): ChunkRange[] {
+function buildInitialChunkRanges(words: string[], constraints: LineWrapConstraints, linesPerCaption: number): ChunkRange[] {
   // // Build first-pass chunk ranges using the widest valid contiguous groups.
   const ranges: ChunkRange[] = [];
   let cursor = 0;
 
   while (cursor < words.length) {
-    const chunkEnd = findChunkEndIndex(words, cursor, maxCharsPerLine, linesPerCaption);
+    const chunkEnd = findChunkEndIndex(words, cursor, constraints, linesPerCaption);
     const safeEnd = Math.max(cursor + 1, chunkEnd);
     ranges.push({ start: cursor, end: safeEnd });
     cursor = safeEnd;
@@ -198,7 +221,7 @@ function buildInitialChunkRanges(words: string[], maxCharsPerLine: number, lines
   return ranges;
 }
 
-function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPerLine: number, linesPerCaption: number): ChunkRange[] {
+function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], constraints: LineWrapConstraints, linesPerCaption: number): ChunkRange[] {
   // // Rebalance neighbor chunks to avoid tiny trailing chunks like a single-word caption.
   if (ranges.length < 2) {
     return ranges;
@@ -219,7 +242,7 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
       while (rightSize < 2 && leftSize > 1) {
         const candidateBoundary = right.start - 1;
         const candidateRight = { start: candidateBoundary, end: right.end };
-        if (!chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)) {
+        if (!chunkFits(words, candidateRight, constraints, linesPerCaption)) {
           break;
         }
 
@@ -233,7 +256,7 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
       while (leftSize - rightSize > 2 && leftSize > 1) {
         const candidateBoundary = right.start - 1;
         const candidateRight = { start: candidateBoundary, end: right.end };
-        if (!chunkFits(words, candidateRight, maxCharsPerLine, linesPerCaption)) {
+        if (!chunkFits(words, candidateRight, constraints, linesPerCaption)) {
           break;
         }
 
@@ -252,8 +275,8 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
         const rightIfMoveRight = { start: moveRightBoundary, end: right.end };
         if (
           rightIfMoveRight.end - rightIfMoveRight.start > 0 &&
-          chunkFits(words, leftIfMoveRight, maxCharsPerLine, linesPerCaption) &&
-          chunkFits(words, rightIfMoveRight, maxCharsPerLine, linesPerCaption)
+          chunkFits(words, leftIfMoveRight, constraints, linesPerCaption) &&
+          chunkFits(words, rightIfMoveRight, constraints, linesPerCaption)
         ) {
           left.end = moveRightBoundary;
           right.start = moveRightBoundary;
@@ -267,8 +290,8 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
           const rightIfMoveLeftSize = rightIfMoveLeft.end - rightIfMoveLeft.start;
           if (
             rightIfMoveLeftSize > 1 &&
-            chunkFits(words, leftIfMoveLeft, maxCharsPerLine, linesPerCaption) &&
-            chunkFits(words, rightIfMoveLeft, maxCharsPerLine, linesPerCaption)
+            chunkFits(words, leftIfMoveLeft, constraints, linesPerCaption) &&
+            chunkFits(words, rightIfMoveLeft, constraints, linesPerCaption)
           ) {
             left.end = moveLeftBoundary;
             right.start = moveLeftBoundary;
@@ -287,8 +310,8 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
         const rightIfMoveWeak = { start: moveWeakEnding, end: right.end };
         if (
           rightIfMoveWeak.end - rightIfMoveWeak.start > 1 &&
-          chunkFits(words, leftIfMoveWeak, maxCharsPerLine, linesPerCaption) &&
-          chunkFits(words, rightIfMoveWeak, maxCharsPerLine, linesPerCaption)
+          chunkFits(words, leftIfMoveWeak, constraints, linesPerCaption) &&
+          chunkFits(words, rightIfMoveWeak, constraints, linesPerCaption)
         ) {
           left.end = moveWeakEnding;
           right.start = moveWeakEnding;
@@ -307,8 +330,8 @@ function rebalanceChunkRanges(ranges: ChunkRange[], words: string[], maxCharsPer
         const rightIfAbsorbConnector = { start: absorbConnectorBoundary, end: right.end };
         if (
           rightIfAbsorbConnector.end - rightIfAbsorbConnector.start > 0 &&
-          chunkFits(words, leftIfAbsorbConnector, maxCharsPerLine, linesPerCaption) &&
-          chunkFits(words, rightIfAbsorbConnector, maxCharsPerLine, linesPerCaption)
+          chunkFits(words, leftIfAbsorbConnector, constraints, linesPerCaption) &&
+          chunkFits(words, rightIfAbsorbConnector, constraints, linesPerCaption)
         ) {
           left.end = absorbConnectorBoundary;
           right.start = absorbConnectorBoundary;
@@ -350,20 +373,20 @@ function ensureCueWords(cue: CaptionCue, forceUppercase: boolean): CaptionWord[]
   return buildWeightedCaptionWords(words, cue.startSeconds, cue.endSeconds);
 }
 
-function renderChunkText(words: CaptionWord[], maxCharsPerLine: number): string {
+function renderChunkText(words: CaptionWord[], constraints: LineWrapConstraints): string {
   // // Render final chunk text with explicit line breaks to stabilize MOGRT layout.
-  const wrapped = wrapWordsByChars(
-    words.map((word) => word.text),
-    maxCharsPerLine
-  );
-  const balanced = rebalanceWrappedLines(wrapped, maxCharsPerLine);
+  const wrapped = wrapWordsWithConstraints(words.map((word) => word.text), constraints);
+  const balanced = rebalanceWrappedLines(wrapped, constraints);
   return balanced.join("\n");
 }
 
 export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOptions): CaptionCue[] {
   // // Split cues by contiguous word groups with timing proportional to word distribution.
   const plannedCues: CaptionCue[] = [];
-  const maxCharsPerLine = Math.max(6, Number(options.style.maxCharsPerLine || 28));
+  const constraints: LineWrapConstraints = {
+    maxCharsPerLine: Math.max(6, Number(options.style.maxCharsPerLine || 28)),
+    maxWordsPerLine: sanitizeMaxWordsPerLine(Number(options.style.maxWordsPerLine || 12))
+  };
   const linesPerCaption = Math.max(1, Number(options.style.linesPerCaption || 2));
 
   for (const cue of cues) {
@@ -383,9 +406,9 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
 
     const cueWordTexts = normalizedWords.map((word) => word.text);
     const chunkRanges = rebalanceChunkRanges(
-      buildInitialChunkRanges(cueWordTexts, maxCharsPerLine, linesPerCaption),
+      buildInitialChunkRanges(cueWordTexts, constraints, linesPerCaption),
       cueWordTexts,
-      maxCharsPerLine,
+      constraints,
       linesPerCaption
     );
 
@@ -400,7 +423,7 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
         id: `${cue.id}-part-${chunkIndex + 1}`,
         startSeconds,
         endSeconds,
-        text: renderChunkText(chunkWords, maxCharsPerLine),
+        text: renderChunkText(chunkWords, constraints),
         words: chunkWords
       });
     });

@@ -126,6 +126,7 @@ interface PanelStateSnapshot {
   linesPerCaption: number;
   fontSize: number;
   mogrtAspectFilter: string;
+  mogrtSearchQuery: string;
   selectedMogrtId: string;
   visualLiveUpdate: boolean;
   logExpanded: boolean;
@@ -197,6 +198,7 @@ const elements = {
   linesPerCaption: document.querySelector<HTMLInputElement>("#linesPerCaption"),
   fontSize: document.querySelector<HTMLInputElement>("#fontSize"),
   mogrtAspectFilter: document.querySelector<HTMLSelectElement>("#mogrtAspectFilter"),
+  mogrtSearchInput: document.querySelector<HTMLInputElement>("#mogrtSearchInput"),
   mogrtFolderButton: document.querySelector<HTMLButtonElement>("#mogrtFolderButton"),
   mogrtRefreshButton: document.querySelector<HTMLButtonElement>("#mogrtRefreshButton"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
@@ -235,6 +237,7 @@ let currentLocale: LocaleMap = {};
 let availableMogrts: MogrtTemplateItem[] = [];
 let selectedMogrt: MogrtTemplateItem | null = null;
 let pendingMogrtAspectFilter = "";
+let pendingMogrtSearchQuery = "";
 const FALLBACK_PANEL_META: PanelMeta = {
   version: "0.0.0",
   repository: "CyrilG93/PremiereSubCreator",
@@ -291,6 +294,14 @@ let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
+const FLOATING_SELECT_ROW_HEIGHT_PX = 28;
+const FLOATING_SELECT_MIN_ROWS = 4;
+const FLOATING_SELECT_MAX_ROWS = 10;
+let activeFloatingPanelSelect: {
+  sourceSelect: HTMLSelectElement;
+  overlayRoot: HTMLDivElement;
+  cleanup: (restoreFocus?: boolean) => void;
+} | null = null;
 const SUBCREATOR_WHISPER_LANGUAGE_DEFINITIONS: Array<{ code: string; label: string }> = [
   ["af", "afrikaans"],
   ["am", "amharic"],
@@ -728,6 +739,307 @@ function hasSelectOption(select: HTMLSelectElement | null | undefined, value: st
   return Array.from(select.options).some((option) => option.value === value);
 }
 
+function getFloatingSelectViewportSpaceBelow(select: HTMLSelectElement): number {
+  // // Measure the visible space below one select so long CEP dropdowns can decide whether to open downward.
+  const rect = select.getBoundingClientRect();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  return Math.max(0, viewportHeight - rect.bottom - 8);
+}
+
+function getFloatingSelectViewportSpaceAbove(select: HTMLSelectElement): number {
+  // // Measure the visible space above one select so the fallback popover can open upward when needed.
+  const rect = select.getBoundingClientRect();
+  return Math.max(0, rect.top - 8);
+}
+
+function getDesiredFloatingSelectRows(select: HTMLSelectElement): number {
+  // // Keep floating select lists compact and predictable even for very long option sets.
+  return Math.min(
+    Math.max(FLOATING_SELECT_MIN_ROWS, Math.min(select.options.length || FLOATING_SELECT_MIN_ROWS, FLOATING_SELECT_MAX_ROWS)),
+    FLOATING_SELECT_MAX_ROWS
+  );
+}
+
+function getDesiredFloatingSelectHeight(rows: number): number {
+  // // Convert row counts into one stable popover height so placement logic stays simple.
+  return rows * FLOATING_SELECT_ROW_HEIGHT_PX + 12;
+}
+
+function shouldUseFloatingSelect(select: HTMLSelectElement): boolean {
+  // // Prefer the custom popover for long lists and for selects that do not have enough room below in CEP.
+  const desiredHeight = getDesiredFloatingSelectHeight(getDesiredFloatingSelectRows(select));
+  return (select.options.length || 0) > FLOATING_SELECT_MAX_ROWS || getFloatingSelectViewportSpaceBelow(select) < desiredHeight;
+}
+
+function getFloatingSelectRowsForHeight(availableHeight: number, optionCount: number): number {
+  // // Fit as many rows as safely visible while keeping the fallback list usable in tight panels.
+  const rowsFromHeight = Math.floor((Math.max(availableHeight, 84) - 12) / FLOATING_SELECT_ROW_HEIGHT_PX);
+  return Math.max(2, Math.min(optionCount || FLOATING_SELECT_MIN_ROWS, Math.min(FLOATING_SELECT_MAX_ROWS, Math.max(2, rowsFromHeight))));
+}
+
+function closeFloatingPanelSelect(restoreFocus = false): void {
+  // // Destroy the active floating select popover before opening another one or when viewport context changes.
+  if (!activeFloatingPanelSelect) {
+    return;
+  }
+
+  const currentOverlay = activeFloatingPanelSelect;
+  activeFloatingPanelSelect = null;
+  currentOverlay.cleanup(restoreFocus);
+}
+
+function syncNativeSelectValue(sourceSelect: HTMLSelectElement, nextValue: string): void {
+  // // Mirror one floating-select choice back into the real select so existing handlers keep working unchanged.
+  if (sourceSelect.value === nextValue) {
+    return;
+  }
+
+  sourceSelect.value = nextValue;
+  sourceSelect.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function openFloatingPanelSelect(sourceSelect: HTMLSelectElement): void {
+  // // Render one viewport-fixed popover so CEP never depends on unreliable native dropdown placement.
+  closeFloatingPanelSelect(false);
+
+  const optionCount = Math.max(1, sourceSelect.options.length || 1);
+  const desiredRows = getDesiredFloatingSelectRows(sourceSelect);
+  const desiredHeight = getDesiredFloatingSelectHeight(desiredRows);
+  const spaceBelow = getFloatingSelectViewportSpaceBelow(sourceSelect);
+  const spaceAbove = getFloatingSelectViewportSpaceAbove(sourceSelect);
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const rect = sourceSelect.getBoundingClientRect();
+
+  let placement: "below" | "above" | "center" = "below";
+  let overlayRows = desiredRows;
+  if (spaceBelow >= desiredHeight) {
+    placement = "below";
+  } else if (spaceAbove >= desiredHeight) {
+    placement = "above";
+  } else if (spaceAbove > spaceBelow) {
+    placement = "above";
+    overlayRows = getFloatingSelectRowsForHeight(spaceAbove, optionCount);
+  } else if (spaceBelow > 0) {
+    placement = "below";
+    overlayRows = getFloatingSelectRowsForHeight(spaceBelow, optionCount);
+  } else {
+    placement = "center";
+    overlayRows = getFloatingSelectRowsForHeight(Math.max(spaceAbove, spaceBelow, viewportHeight - 24), optionCount);
+  }
+
+  const overlayHeight = getDesiredFloatingSelectHeight(overlayRows);
+  const overlayWidth = Math.max(rect.width, 160);
+  let overlayTop = rect.bottom + 4;
+  if (placement === "above") {
+    overlayTop = rect.top - overlayHeight - 4;
+  } else if (placement === "center") {
+    overlayTop = rect.top + rect.height / 2 - overlayHeight / 2;
+  }
+
+  overlayTop = Math.max(8, Math.min(overlayTop, Math.max(8, viewportHeight - overlayHeight - 8)));
+  const overlayLeft = Math.max(8, Math.min(rect.left, Math.max(8, viewportWidth - overlayWidth - 8)));
+
+  const overlayRoot = document.createElement("div");
+  overlayRoot.className = "panel-floating-select";
+  overlayRoot.tabIndex = -1;
+  overlayRoot.style.left = `${Math.round(overlayLeft)}px`;
+  overlayRoot.style.top = `${Math.round(overlayTop)}px`;
+  overlayRoot.style.width = `${Math.round(overlayWidth)}px`;
+  overlayRoot.style.maxHeight = `${Math.round(overlayHeight)}px`;
+
+  const overlayList = document.createElement("div");
+  overlayList.className = "panel-floating-select__list";
+  overlayRoot.appendChild(overlayList);
+
+  const sourceOptions = Array.from(sourceSelect.options);
+  const selectedIndex = Math.max(0, sourceOptions.findIndex((option) => option.value === sourceSelect.value));
+  let highlightedIndex = selectedIndex;
+  const overlayItems: HTMLButtonElement[] = [];
+
+  const renderOverlayState = (): void => {
+    // // Keep keyboard and pointer navigation in sync with the currently highlighted floating option.
+    for (let itemIndex = 0; itemIndex < overlayItems.length; itemIndex += 1) {
+      const button = overlayItems[itemIndex];
+      const sourceOption = sourceOptions[itemIndex];
+      button.classList.toggle("is-highlighted", itemIndex === highlightedIndex);
+      button.classList.toggle("is-selected", Boolean(sourceOption?.value === sourceSelect.value));
+    }
+
+    const highlightedItem = overlayItems[highlightedIndex];
+    if (highlightedItem) {
+      highlightedItem.scrollIntoView({ block: "nearest" });
+    }
+  };
+
+  const chooseIndex = (itemIndex: number): void => {
+    // // Commit one floating option back into the native field before closing the popover.
+    const sourceOption = sourceOptions[itemIndex];
+    if (!sourceOption) {
+      return;
+    }
+
+    syncNativeSelectValue(sourceSelect, sourceOption.value);
+    closeFloatingPanelSelect(true);
+  };
+
+  for (let optionIndex = 0; optionIndex < sourceOptions.length; optionIndex += 1) {
+    const sourceOption = sourceOptions[optionIndex];
+    const optionButton = document.createElement("button");
+    optionButton.type = "button";
+    optionButton.className = "panel-floating-select__option";
+    optionButton.textContent = sourceOption.textContent || sourceOption.label || sourceOption.value;
+    optionButton.dataset.optionValue = sourceOption.value;
+    optionButton.addEventListener("mouseenter", () => {
+      highlightedIndex = optionIndex;
+      renderOverlayState();
+    });
+    optionButton.addEventListener("click", () => {
+      chooseIndex(optionIndex);
+    });
+    overlayItems.push(optionButton);
+    overlayList.appendChild(optionButton);
+  }
+
+  document.body.appendChild(overlayRoot);
+  const openedAt = Date.now();
+  renderOverlayState();
+
+  const cleanup = (restoreFocus = false): void => {
+    // // Remove the temporary popover and every listener tied to this one floating select instance.
+    document.removeEventListener("mousedown", onDocumentPointerDown, true);
+    document.removeEventListener("touchstart", onDocumentPointerDown, true);
+    window.removeEventListener("resize", onViewportChanged, true);
+    document.removeEventListener("scroll", onViewportChanged, true);
+    overlayRoot.removeEventListener("keydown", onKeydown);
+    if (overlayRoot.parentElement) {
+      overlayRoot.parentElement.removeChild(overlayRoot);
+    }
+    if (restoreFocus) {
+      sourceSelect.focus();
+    }
+  };
+
+  const onViewportChanged = (event?: Event): void => {
+    const scrollTarget = event?.target as Node | null;
+    if (scrollTarget && overlayRoot.contains(scrollTarget)) {
+      return;
+    }
+    closeFloatingPanelSelect(false);
+  };
+
+  const onDocumentPointerDown = (event: Event): void => {
+    // // Ignore the opening click itself; CEP can otherwise close the popover right after opening it.
+    if (Date.now() - openedAt < 120) {
+      return;
+    }
+    const target = event.target as Node | null;
+    if (target && (overlayRoot.contains(target) || sourceSelect.contains(target))) {
+      return;
+    }
+    closeFloatingPanelSelect(false);
+  };
+
+  const onKeydown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeFloatingPanelSelect(true);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      highlightedIndex = Math.min(sourceOptions.length - 1, highlightedIndex + 1);
+      renderOverlayState();
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      highlightedIndex = Math.max(0, highlightedIndex - 1);
+      renderOverlayState();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      chooseIndex(highlightedIndex);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      highlightedIndex = 0;
+      renderOverlayState();
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      highlightedIndex = Math.max(0, sourceOptions.length - 1);
+      renderOverlayState();
+    }
+  };
+
+  document.addEventListener("mousedown", onDocumentPointerDown, true);
+  document.addEventListener("touchstart", onDocumentPointerDown, true);
+  window.addEventListener("resize", onViewportChanged, true);
+  document.addEventListener("scroll", onViewportChanged, true);
+  overlayRoot.addEventListener("keydown", onKeydown);
+
+  activeFloatingPanelSelect = {
+    sourceSelect,
+    overlayRoot,
+    cleanup
+  };
+
+  overlayRoot.focus();
+}
+
+function tryOpenFloatingPanelSelect(select: HTMLSelectElement, event?: Event): void {
+  // // Intercept native dropdown opening only when the viewport or option count would make it unreliable in CEP.
+  if ((activeFloatingPanelSelect && activeFloatingPanelSelect.sourceSelect === select) || Number(select.size || 1) > 1) {
+    return;
+  }
+
+  if (!shouldUseFloatingSelect(select)) {
+    return;
+  }
+
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  select.blur();
+  openFloatingPanelSelect(select);
+}
+
+function bindFloatingPanelSelect(select: HTMLSelectElement | null | undefined): void {
+  // // Reuse the same floating-select fallback for static panel controls and dynamic visual-editor selects.
+  if (!select || select.dataset.floatingPanelSelectBound === "1") {
+    return;
+  }
+
+  select.dataset.floatingPanelSelectBound = "1";
+
+  select.addEventListener("mousedown", (event) => {
+    tryOpenFloatingPanelSelect(select, event);
+  });
+  select.addEventListener("touchstart", (event) => {
+    tryOpenFloatingPanelSelect(select, event);
+  });
+  select.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      tryOpenFloatingPanelSelect(select, event);
+    }
+  });
+  select.addEventListener("click", (event) => {
+    if (!shouldUseFloatingSelect(select)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeFloatingPanelSelect || activeFloatingPanelSelect.sourceSelect !== select) {
+      openFloatingPanelSelect(select);
+    }
+  });
+}
+
 function sortWhisperModels(models: string[]): string[] {
   // // Keep Whisper models in a stable, user-facing order instead of cache-discovery order.
   const preferredOrder = ["tiny", "base", "small", "medium", "large-v3", "turbo"];
@@ -874,7 +1186,8 @@ function persistPanelState(): void {
     !elements.maxChars ||
     !elements.linesPerCaption ||
     !elements.fontSize ||
-    !elements.mogrtAspectFilter
+    !elements.mogrtAspectFilter ||
+    !elements.mogrtSearchInput
   ) {
     return;
   }
@@ -893,6 +1206,7 @@ function persistPanelState(): void {
     linesPerCaption: Number(elements.linesPerCaption.value),
     fontSize: Number(elements.fontSize.value),
     mogrtAspectFilter: pendingMogrtAspectFilter || elements.mogrtAspectFilter.value || "all",
+    mogrtSearchQuery: pendingMogrtSearchQuery || elements.mogrtSearchInput.value || "",
     selectedMogrtId: selectedMogrt?.id || pendingSelectedMogrtId || "",
     visualLiveUpdate: visualLiveUpdateEnabled,
     logExpanded: logPanelExpanded,
@@ -973,6 +1287,13 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
       elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
     } else {
       pendingMogrtAspectFilter = snapshot.mogrtAspectFilter;
+    }
+  }
+
+  if (typeof snapshot.mogrtSearchQuery === "string") {
+    pendingMogrtSearchQuery = snapshot.mogrtSearchQuery;
+    if (elements.mogrtSearchInput) {
+      elements.mogrtSearchInput.value = snapshot.mogrtSearchQuery;
     }
   }
 
@@ -2568,294 +2889,6 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     });
   };
 
-  const selectRowHeightPx = 28;
-  const selectMinRows = 4;
-  const selectMaxRows = 10;
-  let activeFloatingVisualSelect: {
-    sourceSelect: HTMLSelectElement;
-    overlayRoot: HTMLDivElement;
-    cleanup: (restoreFocus?: boolean) => void;
-  } | null = null;
-
-  const getViewportSpaceBelow = (select: HTMLSelectElement): number => {
-    // // Measure free viewport space below the select so floating dropdowns can choose a safe direction.
-    const rect = select.getBoundingClientRect();
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    return Math.max(0, viewportHeight - rect.bottom - 8);
-  };
-
-  const getViewportSpaceAbove = (select: HTMLSelectElement): number => {
-    // // Measure free viewport space above the select so long menus can open upward when needed.
-    const rect = select.getBoundingClientRect();
-    return Math.max(0, rect.top - 8);
-  };
-
-  const getDesiredSelectRows = (select: HTMLSelectElement): number =>
-    Math.min(Math.max(selectMinRows, Math.min(select.options.length || selectMinRows, selectMaxRows)), selectMaxRows);
-
-  const getDesiredSelectHeight = (rows: number): number => rows * selectRowHeightPx + 12;
-
-  const shouldUseConstrainedSelect = (select: HTMLSelectElement): boolean => {
-    // // Decide once whether this select needs the custom popover instead of the native dropdown.
-    const desiredHeight = getDesiredSelectHeight(getDesiredSelectRows(select));
-    return (select.options.length || 0) > selectMaxRows || getViewportSpaceBelow(select) < desiredHeight;
-  };
-
-  const getRowsForAvailableHeight = (availableHeight: number, optionCount: number): number => {
-    // // Fit as many rows as possible in the visible viewport while keeping the list usable.
-    const rowsFromHeight = Math.floor((Math.max(availableHeight, 84) - 12) / selectRowHeightPx);
-    return Math.max(2, Math.min(optionCount || selectMinRows, Math.min(selectMaxRows, Math.max(2, rowsFromHeight))));
-  };
-
-  const closeFloatingVisualSelect = (restoreFocus = false): void => {
-    // // Tear down the temporary floating dropdown and optionally return focus to the original select.
-    if (!activeFloatingVisualSelect) {
-      return;
-    }
-    const currentOverlay = activeFloatingVisualSelect;
-    activeFloatingVisualSelect = null;
-    currentOverlay.cleanup(restoreFocus);
-  };
-
-  const syncSelectValueAndTriggerChange = (sourceSelect: HTMLSelectElement, nextValue: string): void => {
-    // // Mirror a custom popover choice back into the real field so existing change handlers and dirty tracking stay untouched.
-    if (sourceSelect.value === nextValue) {
-      return;
-    }
-    sourceSelect.value = nextValue;
-    sourceSelect.dispatchEvent(new Event("change", { bubbles: true }));
-  };
-
-  const openFloatingVisualSelect = (sourceSelect: HTMLSelectElement): void => {
-    // // Render a temporary viewport-fixed HTML list so CEP does not rely on buggy native expanded `<select>` rendering.
-    closeFloatingVisualSelect(false);
-
-    const optionCount = Math.max(1, sourceSelect.options.length || 1);
-    const desiredRows = getDesiredSelectRows(sourceSelect);
-    const desiredHeight = getDesiredSelectHeight(desiredRows);
-    const spaceBelow = getViewportSpaceBelow(sourceSelect);
-    const spaceAbove = getViewportSpaceAbove(sourceSelect);
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-    const rect = sourceSelect.getBoundingClientRect();
-
-    let placement: "below" | "above" | "center" = "below";
-    let overlayRows = desiredRows;
-    if (spaceBelow >= desiredHeight) {
-      placement = "below";
-    } else if (spaceAbove >= desiredHeight) {
-      placement = "above";
-    } else if (spaceAbove > spaceBelow) {
-      placement = "above";
-      overlayRows = getRowsForAvailableHeight(spaceAbove, optionCount);
-    } else if (spaceBelow > 0) {
-      placement = "below";
-      overlayRows = getRowsForAvailableHeight(spaceBelow, optionCount);
-    } else {
-      placement = "center";
-      overlayRows = getRowsForAvailableHeight(Math.max(spaceAbove, spaceBelow, viewportHeight - 24), optionCount);
-    }
-
-    const overlayHeight = getDesiredSelectHeight(overlayRows);
-    const overlayWidth = Math.max(rect.width, 160);
-    let overlayTop = rect.bottom + 4;
-    if (placement === "above") {
-      overlayTop = rect.top - overlayHeight - 4;
-    } else if (placement === "center") {
-      overlayTop = rect.top + rect.height / 2 - overlayHeight / 2;
-    }
-    overlayTop = Math.max(8, Math.min(overlayTop, Math.max(8, viewportHeight - overlayHeight - 8)));
-    const overlayLeft = Math.max(8, Math.min(rect.left, Math.max(8, viewportWidth - overlayWidth - 8)));
-
-    const overlayRoot = document.createElement("div");
-    overlayRoot.className = "visual-floating-select";
-    overlayRoot.tabIndex = -1;
-    overlayRoot.style.left = `${Math.round(overlayLeft)}px`;
-    overlayRoot.style.top = `${Math.round(overlayTop)}px`;
-    overlayRoot.style.width = `${Math.round(overlayWidth)}px`;
-    overlayRoot.style.maxHeight = `${Math.round(overlayHeight)}px`;
-    overlayRoot.dataset.visualFloatingSource = String(sourceSelect.dataset.visualPath || "");
-
-    const overlayList = document.createElement("div");
-    overlayList.className = "visual-floating-select__list";
-    overlayRoot.appendChild(overlayList);
-
-    const sourceOptions = Array.from(sourceSelect.options);
-    const selectedIndex = Math.max(0, sourceOptions.findIndex((option) => option.value === sourceSelect.value));
-    let highlightedIndex = selectedIndex;
-
-    const overlayItems: HTMLButtonElement[] = [];
-    const renderOverlayState = (): void => {
-      // // Keep selected/highlighted visuals in sync with keyboard and pointer navigation.
-      for (let itemIndex = 0; itemIndex < overlayItems.length; itemIndex += 1) {
-        const button = overlayItems[itemIndex];
-        const sourceOption = sourceOptions[itemIndex];
-        button.classList.toggle("is-highlighted", itemIndex === highlightedIndex);
-        button.classList.toggle("is-selected", Boolean(sourceOption?.value === sourceSelect.value));
-      }
-      const highlightedItem = overlayItems[highlightedIndex];
-      if (highlightedItem) {
-        highlightedItem.scrollIntoView({ block: "nearest" });
-      }
-    };
-
-    const chooseIndex = (itemIndex: number): void => {
-      // // Commit one option from the popover back to the native select.
-      const sourceOption = sourceOptions[itemIndex];
-      if (!sourceOption) {
-        return;
-      }
-      syncSelectValueAndTriggerChange(sourceSelect, sourceOption.value);
-      closeFloatingVisualSelect(true);
-    };
-
-    for (let optionIndex = 0; optionIndex < sourceOptions.length; optionIndex += 1) {
-      const sourceOption = sourceOptions[optionIndex];
-      const optionButton = document.createElement("button");
-      optionButton.type = "button";
-      optionButton.className = "visual-floating-select__option";
-      optionButton.textContent = sourceOption.textContent || sourceOption.label || sourceOption.value;
-      optionButton.dataset.optionValue = sourceOption.value;
-      optionButton.addEventListener("mouseenter", () => {
-        highlightedIndex = optionIndex;
-        renderOverlayState();
-      });
-      optionButton.addEventListener("click", () => {
-        chooseIndex(optionIndex);
-      });
-      overlayItems.push(optionButton);
-      overlayList.appendChild(optionButton);
-    }
-
-    document.body.appendChild(overlayRoot);
-    const openedAt = Date.now();
-    renderOverlayState();
-
-    const cleanup = (restoreFocus = false): void => {
-      // // Remove all temporary listeners and destroy the floating popover after use.
-      document.removeEventListener("mousedown", onDocumentPointerDown, true);
-      document.removeEventListener("touchstart", onDocumentPointerDown, true);
-      window.removeEventListener("resize", onViewportChanged, true);
-      document.removeEventListener("scroll", onViewportChanged, true);
-      overlayRoot.removeEventListener("keydown", onKeydown);
-      if (overlayRoot.parentElement) {
-        overlayRoot.parentElement.removeChild(overlayRoot);
-      }
-      if (restoreFocus) {
-        sourceSelect.focus();
-      }
-    };
-
-    const onViewportChanged = (event?: Event): void => {
-      const scrollTarget = event?.target as Node | null;
-      if (scrollTarget && overlayRoot.contains(scrollTarget)) {
-        return;
-      }
-      closeFloatingVisualSelect(false);
-    };
-    const onDocumentPointerDown = (event: Event): void => {
-      // // Ignore the opening gesture itself; CEP can otherwise close the floating select immediately after it appears.
-      if (Date.now() - openedAt < 120) {
-        return;
-      }
-      const target = event.target as Node | null;
-      if (target && (overlayRoot.contains(target) || sourceSelect.contains(target))) {
-        return;
-      }
-      closeFloatingVisualSelect(false);
-    };
-    const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeFloatingVisualSelect(true);
-        return;
-      }
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        highlightedIndex = Math.min(sourceOptions.length - 1, highlightedIndex + 1);
-        renderOverlayState();
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        highlightedIndex = Math.max(0, highlightedIndex - 1);
-        renderOverlayState();
-        return;
-      }
-      if (event.key === "Enter") {
-        event.preventDefault();
-        chooseIndex(highlightedIndex);
-        return;
-      }
-      if (event.key === "Home") {
-        event.preventDefault();
-        highlightedIndex = 0;
-        renderOverlayState();
-        return;
-      }
-      if (event.key === "End") {
-        event.preventDefault();
-        highlightedIndex = Math.max(0, sourceOptions.length - 1);
-        renderOverlayState();
-      }
-    };
-
-    document.addEventListener("mousedown", onDocumentPointerDown, true);
-    document.addEventListener("touchstart", onDocumentPointerDown, true);
-    window.addEventListener("resize", onViewportChanged, true);
-    document.addEventListener("scroll", onViewportChanged, true);
-    overlayRoot.addEventListener("keydown", onKeydown);
-
-    activeFloatingVisualSelect = {
-      sourceSelect,
-      overlayRoot,
-      cleanup
-    };
-
-    overlayRoot.focus();
-  };
-
-  const tryOpenConstrainedSelect = (select: HTMLSelectElement, event?: Event): void => {
-    // // Intercept selects only when viewport space is tight or the option list is long; otherwise let the native dropdown open normally.
-    if ((activeFloatingVisualSelect && activeFloatingVisualSelect.sourceSelect === select) || Number(select.size || 1) > 1) {
-      return;
-    }
-    const shouldConstrain = shouldUseConstrainedSelect(select);
-    if (shouldConstrain) {
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      select.blur();
-      openFloatingVisualSelect(select);
-    }
-  };
-
-  const bindConstrainedSelectOpen = (select: HTMLSelectElement): void => {
-    // // Reuse the same constrained-dropdown behavior for all select controls, not only font pickers.
-    select.addEventListener("mousedown", (event) => {
-      tryOpenConstrainedSelect(select, event);
-    });
-    select.addEventListener("touchstart", (event) => {
-      tryOpenConstrainedSelect(select, event);
-    });
-    select.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-        tryOpenConstrainedSelect(select, event);
-      }
-    });
-    select.addEventListener("click", (event) => {
-      if (!shouldUseConstrainedSelect(select)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if (!activeFloatingVisualSelect || activeFloatingVisualSelect.sourceSelect !== select) {
-        openFloatingVisualSelect(select);
-      }
-    });
-  };
-
   const clipLevelSectionOrder = new Map([
     ["motion", 0],
     ["vector motion", 1],
@@ -3482,7 +3515,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           select.dataset.visualCloneOnlyWhenDirty = "1";
         }
-        bindConstrainedSelectOpen(select);
+        bindFloatingPanelSelect(select);
         bindLiveUpdateEvent(select, "change");
 
         controlWrap.appendChild(select);
@@ -4075,6 +4108,13 @@ function selectMogrt(templateId: string): void {
   persistPanelState();
 }
 
+function getNormalizedMogrtSearchQuery(): string {
+  // // Keep gallery search matching case-insensitive and whitespace-tolerant across sessions.
+  return String(elements.mogrtSearchInput?.value || pendingMogrtSearchQuery || "")
+    .trim()
+    .toLocaleLowerCase();
+}
+
 function renderMogrtGallery(): void {
   // // Render gallery cards with lightweight visual previews and aspect filtering.
   if (!elements.mogrtGallery || !elements.mogrtAspectFilter) {
@@ -4082,8 +4122,12 @@ function renderMogrtGallery(): void {
   }
 
   const selectedAspect = elements.mogrtAspectFilter.value;
+  const normalizedSearchQuery = getNormalizedMogrtSearchQuery();
   const filtered = availableMogrts.filter((template) => {
-    return selectedAspect === "all" || template.aspect === selectedAspect;
+    const matchesAspect = selectedAspect === "all" || template.aspect === selectedAspect;
+    const matchesSearch =
+      normalizedSearchQuery.length < 1 || String(template.name || "").toLocaleLowerCase().includes(normalizedSearchQuery);
+    return matchesAspect && matchesSearch;
   });
 
   if (!selectedMogrt && filtered.length > 0) {
@@ -4578,6 +4622,10 @@ async function stopCurrentGenerateJob(): Promise<void> {
 async function initialize(): Promise<void> {
   // // Initialize locale, controls, and event listeners once panel is loaded.
   assertDomBindings();
+  document.querySelectorAll<HTMLSelectElement>("select").forEach((select) => {
+    // // Bind the durable floating dropdown fallback once for all static panel selects, including Whisper language.
+    bindFloatingPanelSelect(select);
+  });
   applyHostPanelTheme();
   bindHostThemeListener();
   await loadPanelMeta();
@@ -4648,6 +4696,11 @@ async function initialize(): Promise<void> {
   });
 
   elements.mogrtAspectFilter?.addEventListener("change", () => {
+    renderMogrtGallery();
+    persistPanelState();
+  });
+  elements.mogrtSearchInput?.addEventListener("input", () => {
+    pendingMogrtSearchQuery = elements.mogrtSearchInput?.value || "";
     renderMogrtGallery();
     persistPanelState();
   });

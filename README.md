@@ -14,6 +14,7 @@ It is built for a simple workflow inside Premiere:
 - `SRT`, `Whisper`, and `Whisper + SRT` creation modes
 - generation on `Entire sequence` or `In/Out points`
 - bundled base MOGRT templates with gallery support for your own templates
+- searchable MOGRT gallery with remembered folder/view state between sessions
 - support for custom `.mogrt` files from after effect and premiere
 - `Visual editor` for exposed controls
 - `Text editor` for subtitle text redistribution and timing rebuild

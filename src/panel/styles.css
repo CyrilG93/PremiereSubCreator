@@ -194,6 +194,10 @@ body {
   min-width: 168px;
 }
 
+.field__header-control--search {
+  flex: 1 1 180px;
+}
+
 .field__header-actions {
   display: flex;
   gap: 8px;
@@ -205,6 +209,10 @@ body {
 .field__header-actions .button {
   width: auto;
   min-width: 160px;
+}
+
+.field__header-control--search input {
+  min-width: 0;
 }
 
 .sr-only {
@@ -714,7 +722,7 @@ input[type="checkbox"] {
   color: var(--text-muted);
 }
 
-.visual-floating-select {
+.panel-floating-select {
   position: fixed;
   z-index: 9999;
   display: flex;
@@ -729,17 +737,17 @@ input[type="checkbox"] {
   opacity: 1;
 }
 
-.visual-floating-select:focus-visible {
+.panel-floating-select:focus-visible {
   outline: 1px solid var(--accent-soft);
   outline-offset: 1px;
 }
 
-.visual-floating-select__list {
+.panel-floating-select__list {
   background: rgb(var(--bg-surface-rgb));
   overflow-y: auto;
 }
 
-.visual-floating-select__option {
+.panel-floating-select__option {
   appearance: none;
   display: block;
   width: 100%;
@@ -753,12 +761,12 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-.visual-floating-select__option:hover,
-.visual-floating-select__option.is-highlighted {
+.panel-floating-select__option:hover,
+.panel-floating-select__option.is-highlighted {
   background: rgba(var(--accent-rgb), 0.18);
 }
 
-.visual-floating-select__option.is-selected {
+.panel-floating-select__option.is-selected {
   background: rgba(var(--accent-rgb), 0.26);
 }
 

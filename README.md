@@ -269,6 +269,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.10.0 - 2026-04-17
+
+- The bundled Base templates, gallery search, and remembered gallery folder/view state are more polished for daily use.
+- Subtitle generation is more flexible with separate limits for max letters, max words, and max lines per subtitle.
+- Windows and macOS installs are more reliable for updates, bundled models, and custom MOGRT preservation.
+- Bundled and custom MOGRT filenames now stay unchanged after install, which avoids confusing renamed templates in the MOGRT folder.
+
 ### 0.9.0 - 2026-04-13
 
 - Sub Creator now ships with a single bundled base subtitle MOGRT instead of the previous template pack.

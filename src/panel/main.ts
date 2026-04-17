@@ -4022,7 +4022,12 @@ async function reloadMogrtCatalogPreservingSelection(): Promise<void> {
   // // Refresh gallery content after manual filesystem edits while keeping current filter/selection when possible.
   const previousSelectionId = selectedMogrt?.id || pendingSelectedMogrtId;
   const previousSelectionPath = selectedMogrt?.relativePath || "";
-  pendingMogrtAspectFilter = elements.mogrtAspectFilter?.value || pendingMogrtAspectFilter;
+  const previousAspectFilter = pendingMogrtAspectFilter || elements.mogrtAspectFilter?.value || "all";
+  const previousSearchQuery = pendingMogrtSearchQuery || elements.mogrtSearchInput?.value || "";
+
+  // // Keep startup-restored gallery state authoritative so the default `all` option does not wipe the persisted folder filter.
+  pendingMogrtAspectFilter = previousAspectFilter;
+  pendingMogrtSearchQuery = previousSearchQuery;
 
   await loadMogrtCatalog();
 

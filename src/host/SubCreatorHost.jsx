@@ -1908,6 +1908,16 @@ function subcreator_visual_build_select_options(displayName, rawValue, groupPath
     }
   }
 
+  if (key.indexOf("highlight mode") !== -1) {
+    // // Keep AE dropdowns readable in the Visual Editor even when CEP exposes them as plain numeric controls.
+    if (numericValue >= 0 && numericValue <= 1) {
+      return buildLabeledRange(0, ["Progressive", "Cumulative"]);
+    }
+    if (numericValue >= 1 && numericValue <= 2) {
+      return buildLabeledRange(1, ["Progressive", "Cumulative"]);
+    }
+  }
+
   if (key.indexOf("paragraph") !== -1 || key.indexOf("align") !== -1 || key.indexOf("alignment") !== -1) {
     if (numericValue >= 0 && numericValue <= 3) {
       return buildLabeledRange(0, ["Left", "Center", "Right", "Justify"]);

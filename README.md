@@ -206,6 +206,8 @@ Basic flow:
 2. Add your `.mogrt` files at the root or in subfolders.
 3. Click `Refresh gallery`.
 
+Sub Creator keeps your original `.mogrt` filenames in the installed template folder, so updates do not silently rename bundled or custom templates.
+
 For simple After Effects test templates, you can expose a slider named `Clip Duration`.
 Sub Creator will fill it automatically with each generated subtitle clip duration, which helps AE expressions adapt to the real timeline length without breaking older custom templates that already work.
 

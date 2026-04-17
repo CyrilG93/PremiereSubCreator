@@ -206,6 +206,7 @@ async function subcreatorScanMogrt(dir, rootDir, collector) {
 
     collector.push({
       sourcePath: fullPath,
+      relativePath,
       name,
       aspect,
       previewClass: subcreatorDetectPreviewClass(name)
@@ -214,7 +215,7 @@ async function subcreatorScanMogrt(dir, rootDir, collector) {
 }
 
 async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
-  // // Copy templates into extension bundle with ASCII-safe paths and emit gallery catalog.
+  // // Copy templates into extension bundle with their original relative paths and emit gallery catalog.
   const discovered = [];
   const templates = [];
   const previewRootDir = path.join(distAssetsDir, "mogrt-previews");
@@ -233,22 +234,16 @@ async function subcreatorBuildMogrtCatalog(distAssetsDir, distTemplatesDir) {
     return left.name.localeCompare(right.name);
   });
 
-  const dedupe = new Map();
-
   for (let index = 0; index < discovered.length; index += 1) {
     const item = discovered[index];
     const safeAspect = subcreatorSanitizeSegment(item.aspect);
-    const safeName = subcreatorSanitizeSegment(item.name).toLowerCase();
-    const dedupeKey = `${safeAspect}/${safeName}`;
-    const nextCount = (dedupe.get(dedupeKey) ?? 0) + 1;
-    dedupe.set(dedupeKey, nextCount);
-
-    const safeFileName = `${safeName}-${nextCount}.mogrt`;
-    const relativePath = `${safeAspect}/${safeFileName}`;
-    const destDir = path.join(distTemplatesDir, safeAspect);
-    const destPath = path.join(destDir, safeFileName);
+    const relativePath = String(item.relativePath || `${item.aspect}/${item.name}.mogrt`).split("\\").join("/");
+    const pathParts = relativePath.split("/").filter(Boolean);
+    const relativeDir = pathParts.length > 1 ? pathParts.slice(0, -1) : [];
+    const destDir = path.join(distTemplatesDir, ...relativeDir);
+    const destPath = path.join(distTemplatesDir, ...pathParts);
     const previewDir = path.join(previewRootDir, safeAspect);
-    const previewStem = `${safeName}-${nextCount}`;
+    const previewStem = `${subcreatorSlugify(relativePath || item.name)}-${index + 1}`;
 
     await mkdir(destDir, { recursive: true });
     await mkdir(previewDir, { recursive: true });

@@ -3856,6 +3856,11 @@ function subcreator_visual_should_hide_descriptor(descriptor) {
     return true;
   }
 
+  if (normalizedKey === "roundedcrop") {
+    // // Premiere can expose this internal crop helper only after some write/refresh cycles even when the MOGRT never exposed it in Essential Graphics.
+    return true;
+  }
+
   if (
     normalizedKey === "parentwidth" ||
     normalizedKey === "parentheight" ||

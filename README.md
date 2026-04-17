@@ -270,6 +270,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.10.5 - 2026-04-17
+
+- The Visual Editor is more reliable with cleaner AE control detection, including proper dropdowns for subtitle animation options like `Highlight Mode`.
+- The MOGRT gallery now better remembers the selected folder and search state between sessions.
+- After Effects text-style handling is cleaner, with non-editable faux-style controls hidden when the template does not actually expose them.
+- Visual refresh after apply is safer, with transient internal controls filtered out instead of appearing in the panel unexpectedly.
+
 ### 0.10.0 - 2026-04-17
 
 - The bundled Base templates, gallery search, and remembered gallery folder/view state are more polished for daily use.

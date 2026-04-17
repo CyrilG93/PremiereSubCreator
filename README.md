@@ -80,6 +80,7 @@ If the `ffmpeg` installer asks to add it to `PATH`, accept it.
 
 The installers copy the bundled `base` Whisper model into the local Whisper cache and write a config file that helps the panel find Python, Whisper, WhisperX, and `ffmpeg`.
 The release package can also include a `Fonts` folder with the font archives used by the bundled templates, so you can install matching fonts manually when needed.
+The GitHub repository can also contain an `AE` folder with After Effects source projects for bundled templates, but that folder is not included in release `.zip` files.
 
 ### macOS
 

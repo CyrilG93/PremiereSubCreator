@@ -188,6 +188,9 @@ async function subcreatorPackageRelease() {
 
   await Promise.all(copyTasks);
 
+  // // Keep After Effects source projects versioned in the repository only, never inside install release zips.
+  await rm(path.join(stagingBundleDir, "AE"), { recursive: true, force: true });
+
   await subcreatorPruneReleaseMetadata(stagingBundleDir);
 
   await rm(zipPath, { force: true });

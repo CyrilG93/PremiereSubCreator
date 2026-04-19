@@ -1,15 +1,11 @@
 // // Build subtitle cues from parsed content based on style constraints.
 import type { CaptionBuildOptions, CaptionCue, CaptionWord } from "./types";
+import { normalizeCaptionWords, tokenizeSubtitleText } from "./textNormalization";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
 function normalizeWords(text: string): string[] {
   // // Keep contiguous word order so chunk timing stays coherent with speech rhythm.
-  return text
-    .replace(/\r/g, "\n")
-    .replace(/\n+/g, " ")
-    .split(/\s+/)
-    .map((word) => word.trim())
-    .filter(Boolean);
+  return tokenizeSubtitleText(text);
 }
 
 interface LineWrapConstraints {
@@ -356,7 +352,7 @@ function uppercaseIfNeeded(text: string, forceUppercase: boolean): string {
 function ensureCueWords(cue: CaptionCue, forceUppercase: boolean): CaptionWord[] {
   // // Guarantee word-level timing exists, synthesizing it when source lacks per-word data.
   if (cue.words.length > 0) {
-    return cue.words.map((word) => {
+    return normalizeCaptionWords(cue.words).map((word) => {
       return {
         ...word,
         text: uppercaseIfNeeded(word.text, forceUppercase)

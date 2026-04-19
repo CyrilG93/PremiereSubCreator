@@ -3560,6 +3560,7 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
     selectedCount: Number(response.data?.selectedCount || 0),
     rebuiltCount: Number(response.data?.rebuiltCount || 0),
     failedCount: Number(response.data?.failedCount || 0),
+    selectionSignature: typeof response.data?.selectionSignature === "string" ? response.data.selectionSignature : undefined,
     sourceTrackIndex: Number.isFinite(Number(response.data?.sourceTrackIndex))
       ? Number(response.data?.sourceTrackIndex)
       : undefined,

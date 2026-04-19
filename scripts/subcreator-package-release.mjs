@@ -131,6 +131,20 @@ async function copyBundledModelPayload(sourceDir, targetDir) {
   await Promise.all(copyTasks);
 }
 
+async function copyInstallerPayloadToReleaseRoot(sourceDir, targetDir) {
+  // // Keep installer launchers at the release root so Windows/macOS users can find them immediately after unzip.
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  const copyTasks = entries
+    .filter((entry) => entry.isFile() && entry.name !== ".DS_Store")
+    .map((entry) => cp(path.join(sourceDir, entry.name), path.join(targetDir, entry.name)));
+
+  if (copyTasks.length < 1) {
+    return;
+  }
+
+  await Promise.all(copyTasks);
+}
+
 async function subcreatorPackageRelease() {
   // // Validate build output exists before packaging release assets.
   await stat(distExtensionDir);
@@ -162,10 +176,10 @@ async function subcreatorPackageRelease() {
   await mkdir(stagingBundleDir, { recursive: true });
   await mkdir(releasesDir, { recursive: true });
 
-  // // Copy only mandatory installation payload: extension, installers, README, and bundled Whisper models when available.
+  // // Copy only mandatory installation payload: extension, root-level installers, README, and bundled Whisper models when available.
   const copyTasks = [
     cp(path.join(projectRoot, "README.md"), path.join(stagingBundleDir, "README.md")),
-    cp(path.join(projectRoot, "installers"), path.join(stagingBundleDir, "installers"), { recursive: true }),
+    copyInstallerPayloadToReleaseRoot(path.join(projectRoot, "installers"), stagingBundleDir),
     cp(path.join(projectRoot, "dist"), path.join(stagingBundleDir, "dist"), { recursive: true })
   ];
   try {

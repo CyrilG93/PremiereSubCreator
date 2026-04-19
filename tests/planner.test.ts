@@ -281,4 +281,29 @@ describe("buildCaptionPlan", () => {
     expect(planned[0].text).toBe("one\ntwo");
     expect(planned[1].text).toBe("three\nfour");
   });
+
+  it("normalizes split apostrophes and punctuation from timed word payloads", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-11",
+          startSeconds: 0,
+          endSeconds: 2,
+          text: "placeholder",
+          words: [
+            { text: "c", startSeconds: 0, endSeconds: 0.2 },
+            { text: "'", startSeconds: 0.2, endSeconds: 0.25 },
+            { text: "est", startSeconds: 0.25, endSeconds: 0.7 },
+            { text: "fini", startSeconds: 0.7, endSeconds: 1.6 },
+            { text: "!", startSeconds: 1.6, endSeconds: 2 }
+          ]
+        }
+      ],
+      baseOptions
+    );
+
+    expect(planned).toHaveLength(1);
+    expect(planned[0].text).toBe("c'est fini!");
+    expect(planned[0].words.map((word) => word.text)).toEqual(["c'est", "fini!"]);
+  });
 });

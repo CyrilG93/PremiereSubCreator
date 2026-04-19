@@ -37,6 +37,21 @@ describe("textEditor helpers", () => {
     expect(moved[1].text).toBe("alle puis rentre");
   });
 
+  it("normalizes apostrophes and punctuation when building editor blocks", () => {
+    const blocks = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 1,
+        text: "Salut ! c 'est d 'accord ?"
+      }
+    ]);
+
+    expect(blocks[0].text).toBe("Salut! c'est d'accord?");
+    expect(blocks[0].words).toEqual(["Salut!", "c'est", "d'accord?"]);
+  });
+
   it("preserves timed words when moving one word across subtitle blocks", () => {
     const blocks = buildTextEditorBlocks([
       {

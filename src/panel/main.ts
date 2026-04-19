@@ -12,6 +12,7 @@ import {
   type TextEditorBlock,
   type TextEditorTimingRange
 } from "../core/textEditor";
+import { tokenizeSubtitleText } from "../core/textNormalization";
 import type {
   AnimationMode,
   CaptionBuildOptions,
@@ -213,6 +214,9 @@ const elements = {
   visualPropertyList: document.querySelector<HTMLElement>("#visualPropertyList"),
   textReadButton: document.querySelector<HTMLButtonElement>("#textReadButton"),
   textApplyButton: document.querySelector<HTMLButtonElement>("#textApplyButton"),
+  textApplyProgress: document.querySelector<HTMLElement>("#textApplyProgress"),
+  textApplyProgressBar: document.querySelector<HTMLProgressElement>("#textApplyProgressBar"),
+  textApplyProgressText: document.querySelector<HTMLElement>("#textApplyProgressText"),
   textSelectionSummary: document.querySelector<HTMLParagraphElement>("#textSelectionSummary"),
   textEditorList: document.querySelector<HTMLElement>("#textEditorList"),
   generateButton: document.querySelector<HTMLButtonElement>("#generateButton"),
@@ -290,6 +294,7 @@ let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
+const textEditorPendingCommitTimers = new Map<string, number>();
 
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
@@ -1109,6 +1114,16 @@ function getSelectedWhisperLanguageCode(): string {
   return String(elements.whisperLanguage?.value || pendingWhisperLanguageValue || "auto").trim() || "auto";
 }
 
+function resolveSpellcheckLanguageCode(): string {
+  // // Prefer the explicit subtitle language when available, otherwise fall back to the current UI locale.
+  const subtitleLanguageCode = getSelectedWhisperLanguageCode();
+  if (subtitleLanguageCode && subtitleLanguageCode !== "auto") {
+    return subtitleLanguageCode;
+  }
+
+  return String(elements.languageSelect?.value || document.documentElement.lang || "en").trim() || "en";
+}
+
 function refreshWhisperLanguageUi(preferredValue = pendingWhisperLanguageValue): void {
   // // Rebuild the Whisper language select from the official Whisper language-code list plus one auto-detect option.
   if (!elements.whisperLanguage) {
@@ -1669,6 +1684,7 @@ async function loadLocale(languageCode: string): Promise<void> {
   }
 
   currentLocale = (await response.json()) as LocaleMap;
+  document.documentElement.lang = String(languageCode || "en").trim() || "en";
 
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((node) => {
     const key = node.dataset.i18n;
@@ -1692,6 +1708,9 @@ async function loadLocale(languageCode: string): Promise<void> {
 
   if (elements.visualApplyProgress && !elements.visualApplyProgress.hidden && elements.visualApplyProgressBar) {
     setVisualApplyProgressState(true, Number(elements.visualApplyProgressBar.value || 0), Number(elements.visualApplyProgressBar.max || 0));
+  }
+  if (elements.textApplyProgress && !elements.textApplyProgress.hidden && elements.textApplyProgressBar) {
+    setTextApplyProgressState(true, Number(elements.textApplyProgressBar.value || 0), Number(elements.textApplyProgressBar.max || 0));
   }
   if (textEditorBlocks.length > 0) {
     renderTextEditor();
@@ -1796,6 +1815,40 @@ function collectTextEditorBuildOptions(): CaptionBuildOptions {
     mogrtTemplateRelativePath: textEditorTemplate.relativePath,
     mogrtPath: buildAbsoluteMogrtPath(options.extensionRootPath, textEditorTemplate.relativePath)
   };
+}
+
+function planTextEditorBlocksForApply(blocks: TextEditorBlock[], options: CaptionBuildOptions): TextEditorBlock[] {
+  // // Re-apply Creation wrapping rules to edited text blocks before rebuilding MOGRT clips on the timeline.
+  const plannedBlocks: TextEditorBlock[] = [];
+
+  blocks.forEach((block, blockIndex) => {
+    const plannedCues = buildCaptionPlan(
+      [
+        {
+          id: `text-apply-${blockIndex}`,
+          startSeconds: block.startSeconds,
+          endSeconds: block.endSeconds,
+          text: block.text,
+          words: Array.isArray(block.timedWords) ? block.timedWords.map((word) => ({ ...word })) : []
+        }
+      ],
+      options
+    );
+
+    plannedCues.forEach((cue) => {
+      plannedBlocks.push({
+        sourceSelectionIndex: block.sourceSelectionIndex,
+        clipName: block.clipName,
+        startSeconds: cue.startSeconds,
+        endSeconds: cue.endSeconds,
+        text: cue.text,
+        words: cue.words.length > 0 ? cue.words.map((word) => String(word.text || "").trim()).filter(Boolean) : tokenizeSubtitleText(cue.text),
+        timedWords: cue.words.length > 0 ? cue.words.map((word) => ({ ...word })) : undefined
+      });
+    });
+  });
+
+  return plannedBlocks;
 }
 
 function toggleSourceFields(): void {
@@ -2152,17 +2205,27 @@ function setGenerateProgressState(visible: boolean, done = 0, total = GENERATE_P
   elements.generateProgressText.textContent = label || `${Math.round((clampedDone / clampedTotal) * 100)}%`;
 }
 
-function setVisualApplyProgressState(visible: boolean, done = 0, total = 0): void {
-  // // Render visual apply progress feedback for multi-MOGRT updates.
+function setVisualApplyProgressState(visible: boolean, done = 0, total = 0, label = ""): void {
+  // // Render visual apply progress feedback for both queued startup delay and multi-MOGRT updates.
   if (!elements.visualApplyProgress || !elements.visualApplyProgressBar || !elements.visualApplyProgressText) {
     return;
   }
 
-  if (!visible || total < 1) {
+  if (!visible) {
     elements.visualApplyProgress.hidden = true;
     elements.visualApplyProgressBar.max = 1;
     elements.visualApplyProgressBar.value = 0;
     elements.visualApplyProgressText.textContent = "0 / 0";
+    elements.visualApplyProgressBar.classList.remove("is-indeterminate");
+    return;
+  }
+
+  if (total < 1) {
+    elements.visualApplyProgress.hidden = false;
+    elements.visualApplyProgressBar.max = 1;
+    elements.visualApplyProgressBar.removeAttribute("value");
+    elements.visualApplyProgressBar.classList.add("is-indeterminate");
+    elements.visualApplyProgressText.textContent = label || translate("progress.visualApplyPending");
     return;
   }
 
@@ -2171,11 +2234,49 @@ function setVisualApplyProgressState(visible: boolean, done = 0, total = 0): voi
   elements.visualApplyProgress.hidden = false;
   elements.visualApplyProgressBar.max = total;
   elements.visualApplyProgressBar.value = clampedDone;
-  elements.visualApplyProgressText.textContent = translateTemplate("visual.applyProgress", {
+  elements.visualApplyProgressBar.classList.remove("is-indeterminate");
+  elements.visualApplyProgressText.textContent = label || translateTemplate("visual.applyProgress", {
     done: String(clampedDone),
     total: String(total),
     remaining: String(remaining)
   });
+}
+
+function setTextApplyProgressState(visible: boolean, done = 0, total = 0, label = ""): void {
+  // // Keep text-editor apply visibly busy even before the host rebuild starts returning progress-like milestones.
+  if (!elements.textApplyProgress || !elements.textApplyProgressBar || !elements.textApplyProgressText) {
+    return;
+  }
+
+  if (!visible) {
+    elements.textApplyProgress.hidden = true;
+    elements.textApplyProgressBar.max = 1;
+    elements.textApplyProgressBar.value = 0;
+    elements.textApplyProgressText.textContent = translate("progress.textApplyPending");
+    elements.textApplyProgressBar.classList.remove("is-indeterminate");
+    return;
+  }
+
+  if (total < 1) {
+    elements.textApplyProgress.hidden = false;
+    elements.textApplyProgressBar.max = 1;
+    elements.textApplyProgressBar.removeAttribute("value");
+    elements.textApplyProgressBar.classList.add("is-indeterminate");
+    elements.textApplyProgressText.textContent = label || translate("progress.textApplyPending");
+    return;
+  }
+
+  const clampedDone = Math.max(0, Math.min(total, done));
+  elements.textApplyProgress.hidden = false;
+  elements.textApplyProgressBar.max = Math.max(1, total);
+  elements.textApplyProgressBar.value = clampedDone;
+  elements.textApplyProgressBar.classList.remove("is-indeterminate");
+  elements.textApplyProgressText.textContent =
+    label ||
+    translateTemplate("text.applyProgress", {
+      done: String(clampedDone),
+      total: String(total)
+    });
 }
 
 function nextTextEditorBlockId(): string {
@@ -2256,6 +2357,36 @@ function setTextButtonsBusy(isBusy: boolean): void {
   }
 }
 
+function clearPendingTextEditorBlockCommit(editorId: string): void {
+  // // Cancel a queued textarea normalization commit when a later input or action supersedes it.
+  const pendingTimer = textEditorPendingCommitTimers.get(editorId);
+  if (typeof pendingTimer === "number") {
+    window.clearTimeout(pendingTimer);
+    textEditorPendingCommitTimers.delete(editorId);
+  }
+}
+
+function clearAllPendingTextEditorBlockCommits(): void {
+  // // Drop stale deferred commits before merge/split/apply actions mutate the block list.
+  Array.from(textEditorPendingCommitTimers.keys()).forEach((editorId) => {
+    clearPendingTextEditorBlockCommit(editorId);
+  });
+}
+
+function scheduleTextEditorBlockCommit(editorId: string, nextText: string): void {
+  // // Defer blur/change normalization one tick so action-button clicks are not swallowed by an eager rerender on Windows.
+  clearPendingTextEditorBlockCommit(editorId);
+  const timer = window.setTimeout(() => {
+    textEditorPendingCommitTimers.delete(editorId);
+    const blockIndex = textEditorBlocks.findIndex((block) => block.editorId === editorId);
+    if (blockIndex < 0) {
+      return;
+    }
+    commitTextEditorBlockInput(blockIndex, nextText);
+  }, 0);
+  textEditorPendingCommitTimers.set(editorId, timer);
+}
+
 function selectTextEditorWord(blockIndex: number, wordIndex: number): void {
   // // Track which word the user picked so split actions can cut before that exact chip.
   textEditorBlocks = textEditorBlocks.map((block, index) => ({
@@ -2267,6 +2398,7 @@ function selectTextEditorWord(blockIndex: number, wordIndex: number): void {
 
 function applyTextEditorBlocks(blocks: TextEditorBlock[]): void {
   // // Commit one pure text-edit result back into UI state and re-render the Text tab.
+  clearAllPendingTextEditorBlockCommits();
   textEditorBlocks = mapTextEditorBlocksToState(retimeTextEditorBlocks(blocks, getTextEditorSelectionTimingRange()));
   renderTextEditor();
 }
@@ -2277,10 +2409,7 @@ function updateTextEditorBlockInput(blockIndex: number, nextText: string): void 
     if (index !== blockIndex) {
       return block;
     }
-    const words = String(nextText || "")
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const words = tokenizeSubtitleText(nextText);
     const preserveTimedWords =
       Array.isArray(block.timedWords) &&
       block.timedWords.length === words.length &&
@@ -2298,6 +2427,7 @@ function updateTextEditorBlockInput(blockIndex: number, nextText: string): void 
 
 function commitTextEditorBlockInput(blockIndex: number, nextText: string): void {
   // // Normalize one edited subtitle row after blur/change and refresh its chip list/timing display.
+  clearPendingTextEditorBlockCommit(textEditorBlocks[blockIndex]?.editorId || "");
   const updatedBlocks = updateTextEditorBlockText(buildTextEditorBlocksFromState(textEditorBlocks), blockIndex, nextText);
   textEditorBlocks = mapTextEditorBlocksToState(updatedBlocks);
   renderTextEditor();
@@ -2414,14 +2544,18 @@ function renderTextEditor(): void {
     textarea.className = "text-block__textarea";
     textarea.value = block.text;
     textarea.placeholder = translate("text.textPlaceholder");
+    textarea.spellcheck = true;
+    textarea.lang = resolveSpellcheckLanguageCode();
+    textarea.disabled = textApplyInProgress;
     textarea.addEventListener("input", () => {
+      clearPendingTextEditorBlockCommit(block.editorId);
       updateTextEditorBlockInput(blockIndex, textarea.value);
     });
     textarea.addEventListener("change", () => {
-      commitTextEditorBlockInput(blockIndex, textarea.value);
+      scheduleTextEditorBlockCommit(block.editorId, textarea.value);
     });
     textarea.addEventListener("blur", () => {
-      commitTextEditorBlockInput(blockIndex, textarea.value);
+      scheduleTextEditorBlockCommit(block.editorId, textarea.value);
     });
 
     const chips = document.createElement("div");
@@ -2437,7 +2571,9 @@ function renderTextEditor(): void {
       }
       chip.textContent = word;
       chip.draggable = true;
+      chip.disabled = textApplyInProgress;
       chip.addEventListener("click", () => {
+        clearAllPendingTextEditorBlockCommits();
         selectTextEditorWord(blockIndex, wordIndex);
       });
       chip.addEventListener("dragstart", (event) => {
@@ -2467,7 +2603,7 @@ function renderTextEditor(): void {
     mergePreviousButton.type = "button";
     mergePreviousButton.className = "button button--secondary";
     mergePreviousButton.textContent = translate("action.mergePrevious");
-    mergePreviousButton.disabled = blockIndex < 1;
+    mergePreviousButton.disabled = textApplyInProgress || blockIndex < 1;
     if (blockIndex < 1) {
       // // Keep the three-button layout aligned while hiding impossible edge merges.
       mergePreviousButton.classList.add("is-placeholder");
@@ -2476,6 +2612,7 @@ function renderTextEditor(): void {
     }
     bindTextEditorActionPreview(mergePreviousButton, [blockIndex - 1, blockIndex]);
     mergePreviousButton.addEventListener("click", () => {
+      clearAllPendingTextEditorBlockCommits();
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
           buildTextEditorBlocksFromState(textEditorBlocks),
@@ -2489,9 +2626,10 @@ function renderTextEditor(): void {
     splitButton.type = "button";
     splitButton.className = "button button--secondary";
     splitButton.textContent = translate("action.splitSelectedWord");
-    splitButton.disabled = block.selectedWordIndex <= 0 || block.selectedWordIndex >= block.words.length;
+    splitButton.disabled = textApplyInProgress || block.selectedWordIndex <= 0 || block.selectedWordIndex >= block.words.length;
     bindTextEditorActionPreview(splitButton, [blockIndex]);
     splitButton.addEventListener("click", () => {
+      clearAllPendingTextEditorBlockCommits();
       if (block.selectedWordIndex <= 0) {
         return;
       }
@@ -2508,7 +2646,7 @@ function renderTextEditor(): void {
     mergeNextButton.type = "button";
     mergeNextButton.className = "button button--secondary";
     mergeNextButton.textContent = translate("action.mergeNext");
-    mergeNextButton.disabled = blockIndex >= textEditorBlocks.length - 1;
+    mergeNextButton.disabled = textApplyInProgress || blockIndex >= textEditorBlocks.length - 1;
     if (blockIndex >= textEditorBlocks.length - 1) {
       // // Keep the three-button layout aligned while hiding impossible edge merges.
       mergeNextButton.classList.add("is-placeholder");
@@ -2517,6 +2655,7 @@ function renderTextEditor(): void {
     }
     bindTextEditorActionPreview(mergeNextButton, [blockIndex, blockIndex + 1]);
     mergeNextButton.addEventListener("click", () => {
+      clearAllPendingTextEditorBlockCommits();
       applyTextEditorBlocks(
         mergeTextEditorBlocks(
           buildTextEditorBlocksFromState(textEditorBlocks),
@@ -2555,10 +2694,12 @@ function buildTextEditorTextFromTimedWords(words: CaptionWord[] | null | undefin
     return "";
   }
 
-  return words
-    .map((word) => String(word?.text || "").trim())
-    .filter(Boolean)
-    .join(" ");
+  return tokenizeSubtitleText(
+    words
+      .map((word) => String(word?.text || "").trim())
+      .filter(Boolean)
+      .join(" ")
+  ).join(" ");
 }
 
 function cleanupTemporaryMogrtPaths(paths: string[]): void {
@@ -2579,6 +2720,7 @@ function cleanupTemporaryMogrtPaths(paths: string[]): void {
 
 async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
+  clearAllPendingTextEditorBlockCommits();
   const result = await readSelectedMogrtTextItems();
   const filteredSelectionItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
   textEditorSelectionMetadataIdentity = resolveCaptionMetadataIdentityFromHostPayload(result);
@@ -2596,10 +2738,7 @@ async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
       startSeconds: Number(item.startSeconds || 0),
       endSeconds: Number(item.endSeconds || 0),
       text: resolvedText,
-      words: String(resolvedText || "")
-        .split(/\s+/)
-        .map((value) => value.trim())
-        .filter(Boolean),
+      words: tokenizeSubtitleText(resolvedText),
       timedWords: resolvedTimedWords
     };
   });
@@ -2658,6 +2797,7 @@ async function applyTextEditorChanges(): Promise<void> {
     throw new Error(translate("error.textMixedTracks"));
   }
 
+  clearAllPendingTextEditorBlockCommits();
   const editableBlocks = buildTextEditorBlocksFromState(textEditorBlocks);
   // // Use one safe combined span for disjoint edits so the host does not partially rebuild the selection.
   const applyPlans = buildTextEditorSafeApplyPlans(textEditorOriginalBlocks, editableBlocks);
@@ -2671,6 +2811,7 @@ async function applyTextEditorChanges(): Promise<void> {
 
   textApplyInProgress = true;
   setTextButtonsBusy(true);
+  setTextApplyProgressState(true, 0, 0, translate("progress.textApplyPending"));
   try {
     const orderedPlans = applyPlans.slice().sort((left, right) => right.selectionStartIndex - left.selectionStartIndex);
     let currentSelectionSignature = textEditorSelectionSignature;
@@ -2682,17 +2823,29 @@ async function applyTextEditorChanges(): Promise<void> {
     for (const applyPlan of orderedPlans) {
       let cleanupMogrtPaths: string[] = [];
       try {
-        let applyItems = applyPlan.blocks.map((block) => ({
+        const plannedBlocks = planTextEditorBlocksForApply(applyPlan.blocks, options);
+        if (plannedBlocks.length < 1) {
+          throw new Error(translate("error.textEmptyBlocks"));
+        }
+
+        let applyItems = plannedBlocks.map((block) => ({
           sourceSelectionIndex: block.sourceSelectionIndex,
           startSeconds: block.startSeconds,
           endSeconds: block.endSeconds,
           text: block.text
         }));
+        setTextApplyProgressState(
+          true,
+          orderedPlans.length - rangeResults.length - 1,
+          orderedPlans.length,
+          translate("progress.textApplyPending")
+        );
+        await waitForNextPaint();
 
         if (premiereTemplateTextPayloads.length > 0) {
           const preparedTemplateBuild = await buildPremiereTemplateCueMogrts(
             options.mogrtPath,
-            applyPlan.blocks.map((block, blockIndex) => ({
+            plannedBlocks.map((block, blockIndex) => ({
               id: `text-apply-${blockIndex}`,
               startSeconds: block.startSeconds,
               endSeconds: block.endSeconds,
@@ -2722,9 +2875,10 @@ async function applyTextEditorChanges(): Promise<void> {
 
         const result: ApplySelectedMogrtTextResult = await applySelectedMogrtTextItems(payload);
         rangeResults.unshift(result);
-        if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== applyPlan.blocks.length) {
+        if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== plannedBlocks.length) {
           throw new Error(translate("error.textApplyPartialFailure"));
         }
+        setTextApplyProgressState(true, orderedPlans.length - rangeResults.length, orderedPlans.length);
 
         currentSelectionSignature = String(result.selectionSignature || currentSelectionSignature || "").trim();
         lastIdentity = resolveCaptionMetadataIdentityFromHostPayload(result) || lastIdentity;
@@ -2739,7 +2893,7 @@ async function applyTextEditorChanges(): Promise<void> {
           lastSourceTrackIndex,
           lastRebuildTrackIndex,
           applyPlan.timingRange,
-          applyPlan.blocks
+          plannedBlocks
         );
 
         const refreshedSelection = await readSelectedMogrtTextItems();
@@ -2764,6 +2918,7 @@ async function applyTextEditorChanges(): Promise<void> {
   } finally {
     textApplyInProgress = false;
     setTextButtonsBusy(false);
+    setTextApplyProgressState(false);
   }
 }
 
@@ -3769,6 +3924,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
   visualApplyInProgress = true;
   if (!useLiveUpdate) {
     setVisualApplyButtonsBusy(true);
+    setVisualApplyProgressState(true, 0, 0, translate("progress.visualApplyPending"));
   }
 
   try {
@@ -3794,6 +3950,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
       let failedCount = 0;
       const debugLines: string[] = [];
       setVisualApplyProgressState(true, 0, selectedCount);
+      await waitForNextPaint();
 
       for (let clipIndex = 0; clipIndex < selectedCount; clipIndex += 1) {
         const step = await applyVisualPropertiesToSelectedMogrts(changes, {
@@ -3820,11 +3977,16 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
       return;
     }
 
+    if (!useLiveUpdate) {
+      setVisualApplyProgressState(true, 0, Math.max(1, selectedCount), translate("progress.visualApplyPending"));
+      await waitForNextPaint();
+    }
     const response = await applyVisualPropertiesToSelectedMogrts(changes);
     if (useLiveUpdate && Number(response.failedCount || 0) === 0) {
       commitAppliedVisualChanges(changes);
     }
     if (!useLiveUpdate) {
+      setVisualApplyProgressState(true, Math.max(1, selectedCount), Math.max(1, selectedCount));
       setStructuredLog(translate("log.visualApplyDone"), response);
       await loadVisualPropertiesFromSelection();
     }
@@ -4764,6 +4926,9 @@ async function initialize(): Promise<void> {
     pendingWhisperLanguageValue = getSelectedWhisperLanguageCode();
     if (elements.generateButton && !generateInProgress) {
       elements.generateButton.disabled = !isCurrentSourceReady();
+    }
+    if (textEditorBlocks.length > 0) {
+      renderTextEditor();
     }
     persistPanelState();
   });

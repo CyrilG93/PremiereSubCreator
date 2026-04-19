@@ -1,5 +1,6 @@
 // // Provide pure text-editing helpers for the Text tab subtitle workflow.
 import type { CaptionWord } from "./types";
+import { tokenizeSubtitleText } from "./textNormalization";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
 // // Describe one editable subtitle block shown in the Text tab.
@@ -69,12 +70,7 @@ function resolveSourceSelectionRange(
 
 function normalizeTextEditorWords(text: string): string[] {
   // // Split one subtitle text into compact word tokens while preserving punctuation on each token.
-  return String(text || "")
-    .replace(/\r/g, "\n")
-    .replace(/\n+/g, " ")
-    .split(/\s+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  return tokenizeSubtitleText(text);
 }
 
 function syncTextEditorBlock(block: TextEditorBlock): TextEditorBlock {

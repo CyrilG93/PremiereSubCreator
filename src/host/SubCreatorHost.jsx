@@ -5859,7 +5859,12 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
 
     for (var editedIndex = 0; editedIndex < editedItems.length; editedIndex += 1) {
       var editedItem = editedItems[editedIndex] || {};
-      var textValue = subcreator_trim_string(String(editedItem.text || "").replace(/\s+/g, " "));
+      var textValue = subcreator_trim_string(
+        String(editedItem.text || "")
+          .replace(/\r\n?/g, "\n")
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n{3,}/g, "\n\n")
+      );
       var startSeconds = Number(editedItem.startSeconds);
       var endSeconds = Number(editedItem.endSeconds);
       var sourceSelectionIndex = Number(editedItem.sourceSelectionIndex);

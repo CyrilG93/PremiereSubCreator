@@ -270,6 +270,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.11.0 - 2026-04-19
+
+- Apostrophes and punctuation are normalized more cleanly, so tokens like `c'est`, `d'accord`, `Salut!`, and `quoi?` stay attached as expected.
+- The Text Editor merge/apply flow is more reliable on Windows, with creation limits kept in sync when editor changes are applied back to the timeline.
+- Visual and Text Editor actions now show clearer busy states while reading or applying changes, which makes background work visible on slower machines.
+- The Windows installer flow is more robust, and release archives now keep installer files at the root of the extracted folder.
+
 ### 0.10.5 - 2026-04-17
 
 - The Visual Editor is more reliable with cleaner AE control detection, including proper dropdowns for subtitle animation options like `Highlight Mode`.

@@ -276,7 +276,9 @@ let passiveMogrtRefreshTimer: number | null = null;
 let lastPassiveMogrtCatalogRefreshAt = 0;
 let generateInProgress = false;
 let generateCancelRequested = false;
+let visualReadInProgress = false;
 let textApplyInProgress = false;
+let textReadInProgress = false;
 let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
 let whisperModelCachePaths: string[] = [];
@@ -2109,8 +2111,9 @@ function updateVisualSelectionSummary(message: string): void {
   elements.visualSelectionSummary.textContent = message;
 }
 
-function setVisualApplyButtonsBusy(isBusy: boolean): void {
-  // // Prevent concurrent apply/read actions while host changes are being processed.
+function refreshVisualButtonsBusyState(): void {
+  // // Prevent concurrent read/apply actions while either selection loading or host writes are in progress.
+  const isBusy = visualReadInProgress || visualApplyInProgress;
   if (elements.visualApplyButton) {
     elements.visualApplyButton.disabled = isBusy;
   }
@@ -2347,8 +2350,9 @@ function setTextSelectionSummary(message: string): void {
   elements.textSelectionSummary.textContent = message;
 }
 
-function setTextButtonsBusy(isBusy: boolean): void {
-  // // Prevent concurrent read/apply actions while the Text tab is rebuilding subtitle clips in Premiere.
+function refreshTextButtonsBusyState(): void {
+  // // Prevent concurrent read/apply actions while the Text tab is loading or rebuilding subtitle clips.
+  const isBusy = textReadInProgress || textApplyInProgress;
   if (elements.textReadButton) {
     elements.textReadButton.disabled = isBusy;
   }
@@ -2718,76 +2722,94 @@ function cleanupTemporaryMogrtPaths(paths: string[]): void {
   }
 }
 
-async function loadTextItemsFromSelection(emitHostLog = false): Promise<void> {
+async function loadTextItemsFromSelection(emitHostLog = false, showLoadingState = false): Promise<void> {
   // // Read selected subtitle MOGRTs into the Text tab so users can edit text blocks safely.
-  clearAllPendingTextEditorBlockCommits();
-  const result = await readSelectedMogrtTextItems();
-  const filteredSelectionItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
-  textEditorSelectionMetadataIdentity = resolveCaptionMetadataIdentityFromHostPayload(result);
-  textEditorSelectionSignature = result.signature;
-  textEditorSameTrack = result.sameTrack !== false;
-  textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
-  const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, filteredSelectionItems);
-  textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => {
-    const resolvedTimedWords = Array.isArray(metadataWordsByItem[itemIndex]) ? metadataWordsByItem[itemIndex] || undefined : undefined;
-    const resolvedText = buildTextEditorTextFromTimedWords(resolvedTimedWords) || String(item.text || "").trim();
-
-    return {
-      sourceSelectionIndex: Number(item.selectionIndex || 0),
-      clipName: String(item.clipName || "").trim(),
-      startSeconds: Number(item.startSeconds || 0),
-      endSeconds: Number(item.endSeconds || 0),
-      text: resolvedText,
-      words: tokenizeSubtitleText(resolvedText),
-      timedWords: resolvedTimedWords
-    };
-  });
-  textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
-  textEditorSelectionStartSeconds =
-    filteredSelectionItems.length > 0
-      ? filteredSelectionItems.reduce(
-          (lowestValue, item) => Math.min(lowestValue, Number(item.startSeconds || 0)),
-          Number.POSITIVE_INFINITY
-        )
-      : 0;
-  textEditorSelectionEndSeconds =
-    filteredSelectionItems.length > 0
-      ? filteredSelectionItems.reduce(
-          (highestValue, item) => Math.max(highestValue, Number(item.endSeconds || 0)),
-          Number.NEGATIVE_INFINITY
-        )
-      : 0;
-  renderTextEditor();
-
-  if (emitHostLog) {
-    setStructuredLog(translate("log.hostResult"), result);
+  if (showLoadingState) {
+    if (textReadInProgress || textApplyInProgress) {
+      return;
+    }
+    textReadInProgress = true;
+    refreshTextButtonsBusyState();
+    setTextApplyProgressState(true, 0, 0, translate("progress.textReadPending"));
+    await waitForNextPaint();
   }
 
-  if (filteredSelectionItems.length < 1) {
-    setTextSelectionSummary(translate("text.selectionDefault"));
-    return;
-  }
+  try {
+    clearAllPendingTextEditorBlockCommits();
+    const result = await readSelectedMogrtTextItems();
+    const filteredSelectionItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
+    textEditorSelectionMetadataIdentity = resolveCaptionMetadataIdentityFromHostPayload(result);
+    textEditorSelectionSignature = result.signature;
+    textEditorSameTrack = result.sameTrack !== false;
+    textEditorVideoTrackIndex = Number.isFinite(Number(result.videoTrackIndex)) ? Number(result.videoTrackIndex) : -1;
+    const metadataWordsByItem = resolveCaptionMetadataForSelection(textEditorSelectionMetadataIdentity, filteredSelectionItems);
+    textEditorOriginalBlocks = filteredSelectionItems.map((item, itemIndex) => {
+      const resolvedTimedWords = Array.isArray(metadataWordsByItem[itemIndex]) ? metadataWordsByItem[itemIndex] || undefined : undefined;
+      const resolvedText = buildTextEditorTextFromTimedWords(resolvedTimedWords) || String(item.text || "").trim();
 
-  if (!textEditorSameTrack) {
+      return {
+        sourceSelectionIndex: Number(item.selectionIndex || 0),
+        clipName: String(item.clipName || "").trim(),
+        startSeconds: Number(item.startSeconds || 0),
+        endSeconds: Number(item.endSeconds || 0),
+        text: resolvedText,
+        words: tokenizeSubtitleText(resolvedText),
+        timedWords: resolvedTimedWords
+      };
+    });
+    textEditorBlocks = mapTextEditorBlocksToState(textEditorOriginalBlocks);
+    textEditorSelectionStartSeconds =
+      filteredSelectionItems.length > 0
+        ? filteredSelectionItems.reduce(
+            (lowestValue, item) => Math.min(lowestValue, Number(item.startSeconds || 0)),
+            Number.POSITIVE_INFINITY
+          )
+        : 0;
+    textEditorSelectionEndSeconds =
+      filteredSelectionItems.length > 0
+        ? filteredSelectionItems.reduce(
+            (highestValue, item) => Math.max(highestValue, Number(item.endSeconds || 0)),
+            Number.NEGATIVE_INFINITY
+          )
+        : 0;
+    renderTextEditor();
+
+    if (emitHostLog) {
+      setStructuredLog(translate("log.hostResult"), result);
+    }
+
+    if (filteredSelectionItems.length < 1) {
+      setTextSelectionSummary(translate("text.selectionDefault"));
+      return;
+    }
+
+    if (!textEditorSameTrack) {
+      setTextSelectionSummary(
+        translateTemplate("text.selectionMixedTracks", {
+          clips: String(filteredSelectionItems.length)
+        })
+      );
+      return;
+    }
+
     setTextSelectionSummary(
-      translateTemplate("text.selectionMixedTracks", {
-        clips: String(filteredSelectionItems.length)
+      translateTemplate("text.selectionSummary", {
+        clips: String(filteredSelectionItems.length),
+        track: String(Math.max(0, textEditorVideoTrackIndex) + 1)
       })
     );
-    return;
+  } finally {
+    if (showLoadingState) {
+      textReadInProgress = false;
+      refreshTextButtonsBusyState();
+      setTextApplyProgressState(false);
+    }
   }
-
-  setTextSelectionSummary(
-    translateTemplate("text.selectionSummary", {
-      clips: String(filteredSelectionItems.length),
-      track: String(Math.max(0, textEditorVideoTrackIndex) + 1)
-    })
-  );
 }
 
 async function applyTextEditorChanges(): Promise<void> {
   // // Rebuild selected subtitle MOGRTs from edited Text tab blocks while preserving precise timing metadata when available.
-  if (textApplyInProgress) {
+  if (textReadInProgress || textApplyInProgress) {
     return;
   }
   if (!textEditorSelectionSignature) {
@@ -2810,7 +2832,7 @@ async function applyTextEditorChanges(): Promise<void> {
   const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
 
   textApplyInProgress = true;
-  setTextButtonsBusy(true);
+  refreshTextButtonsBusyState();
   setTextApplyProgressState(true, 0, 0, translate("progress.textApplyPending"));
   try {
     const orderedPlans = applyPlans.slice().sort((left, right) => right.selectionStartIndex - left.selectionStartIndex);
@@ -2917,7 +2939,7 @@ async function applyTextEditorChanges(): Promise<void> {
     await loadTextItemsFromSelection();
   } finally {
     textApplyInProgress = false;
-    setTextButtonsBusy(false);
+    refreshTextButtonsBusyState();
     setTextApplyProgressState(false);
   }
 }
@@ -3881,26 +3903,44 @@ function commitAppliedVisualChanges(changes: VisualPropertyChange[]): void {
   }
 }
 
-async function loadVisualPropertiesFromSelection(emitHostLog = false): Promise<void> {
+async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadingState = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
-  const result = await readSelectedMogrtVisualProperties();
-  loadedVisualSelectionCount = Number(result.selectedCount || 0);
-  loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
-  renderVisualPropertyEditor(result.properties);
-  if (emitHostLog) {
-    setStructuredLog(translate("log.hostResult"), result);
+  if (showLoadingState) {
+    if (visualReadInProgress || visualApplyInProgress) {
+      return;
+    }
+    visualReadInProgress = true;
+    refreshVisualButtonsBusyState();
+    setVisualApplyProgressState(true, 0, 0, translate("progress.visualReadPending"));
+    await waitForNextPaint();
   }
-  if (result.properties.length > 0) {
-    updateVisualSelectionSummary(
-      translateTemplate("visual.selectionSummary", {
-        clips: String(result.selectedCount),
-        props: String(result.editableCount)
-      })
-    );
-  } else if (result.selectedCount > 0) {
-    updateVisualSelectionSummary(translate("visual.noProperties"));
-  } else {
-    updateVisualSelectionSummary(translate("visual.selectionDefault"));
+
+  try {
+    const result = await readSelectedMogrtVisualProperties();
+    loadedVisualSelectionCount = Number(result.selectedCount || 0);
+    loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
+    renderVisualPropertyEditor(result.properties);
+    if (emitHostLog) {
+      setStructuredLog(translate("log.hostResult"), result);
+    }
+    if (result.properties.length > 0) {
+      updateVisualSelectionSummary(
+        translateTemplate("visual.selectionSummary", {
+          clips: String(result.selectedCount),
+          props: String(result.editableCount)
+        })
+      );
+    } else if (result.selectedCount > 0) {
+      updateVisualSelectionSummary(translate("visual.noProperties"));
+    } else {
+      updateVisualSelectionSummary(translate("visual.selectionDefault"));
+    }
+  } finally {
+    if (showLoadingState) {
+      visualReadInProgress = false;
+      refreshVisualButtonsBusyState();
+      setVisualApplyProgressState(false);
+    }
   }
 }
 
@@ -3913,6 +3953,10 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
   // // Apply edited visual values; use progressive per-clip mode for multi-selection manual apply.
   const useLiveUpdate = options?.liveUpdate === true;
 
+  if (visualReadInProgress) {
+    return;
+  }
+
   if (visualApplyInProgress) {
     if (useLiveUpdate) {
       visualLiveUpdateQueued = true;
@@ -3923,7 +3967,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
 
   visualApplyInProgress = true;
   if (!useLiveUpdate) {
-    setVisualApplyButtonsBusy(true);
+    refreshVisualButtonsBusyState();
     setVisualApplyProgressState(true, 0, 0, translate("progress.visualApplyPending"));
   }
 
@@ -3993,7 +4037,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
   } finally {
     visualApplyInProgress = false;
     if (!useLiveUpdate) {
-      setVisualApplyButtonsBusy(false);
+      refreshVisualButtonsBusyState();
       setVisualApplyProgressState(false);
     }
   }
@@ -4978,10 +5022,10 @@ async function initialize(): Promise<void> {
 
   elements.visualReadButton?.addEventListener("click", async () => {
     try {
-      if (visualApplyInProgress) {
+      if (visualReadInProgress || visualApplyInProgress) {
         return;
       }
-      await loadVisualPropertiesFromSelection(true);
+      await loadVisualPropertiesFromSelection(true, true);
     } catch (error) {
       setLog(String(error), true);
     }
@@ -4989,7 +5033,7 @@ async function initialize(): Promise<void> {
 
   elements.visualApplyButton?.addEventListener("click", async () => {
     try {
-      if (visualApplyInProgress) {
+      if (visualReadInProgress || visualApplyInProgress) {
         return;
       }
       await applyVisualChangesToSelection();
@@ -5001,10 +5045,10 @@ async function initialize(): Promise<void> {
 
   elements.textReadButton?.addEventListener("click", async () => {
     try {
-      if (textApplyInProgress) {
+      if (textReadInProgress || textApplyInProgress) {
         return;
       }
-      await loadTextItemsFromSelection(true);
+      await loadTextItemsFromSelection(true, true);
     } catch (error) {
       setLog(String(error), true);
     }
@@ -5012,7 +5056,7 @@ async function initialize(): Promise<void> {
 
   elements.textApplyButton?.addEventListener("click", async () => {
     try {
-      if (textApplyInProgress) {
+      if (textReadInProgress || textApplyInProgress) {
         return;
       }
       await applyTextEditorChanges();

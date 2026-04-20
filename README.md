@@ -89,17 +89,17 @@ The GitHub repository can also contain an `AE` folder with After Effects source 
 Use the included installer script:
 
 ```bash
-./installers/subcreator_install_mac.sh
+./subcreator_install_mac.sh
 ```
 
-You can also drag and drop the installer.sh in a terminal window and press enter.
+You can also drag and drop `subcreator_install_mac.sh` into a Terminal window and press Enter.
 
 ### Windows
 
 Run the included batch installer:
 
 ```bat
-installers\subcreator_install_windows.bat
+subcreator_install_windows.bat
 ```
 
 On Windows, the installer now opens in a dedicated console so the final setup summary stays visible instead of disappearing immediately.

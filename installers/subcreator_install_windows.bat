@@ -15,7 +15,12 @@ setlocal enabledelayedexpansion
 REM // Resolve current directory and expected build output.
 for %%I in ("%~dp0.") do set "SUBCREATOR_SCRIPT_DIR=%%~fI"
 if not "!SUBCREATOR_SCRIPT_DIR:~-1!"=="\" set "SUBCREATOR_SCRIPT_DIR=!SUBCREATOR_SCRIPT_DIR!\"
-for %%I in ("!SUBCREATOR_SCRIPT_DIR!..") do set "SUBCREATOR_PROJECT_DIR=%%~fI"
+REM // Resolve the project root whether the installer is launched from the release root or from an `installers` subfolder.
+if exist "!SUBCREATOR_SCRIPT_DIR!dist\com.cyrilg93.subcreator" (
+  for %%I in ("!SUBCREATOR_SCRIPT_DIR!.") do set "SUBCREATOR_PROJECT_DIR=%%~fI"
+) else (
+  for %%I in ("!SUBCREATOR_SCRIPT_DIR!..") do set "SUBCREATOR_PROJECT_DIR=%%~fI"
+)
 set "SUBCREATOR_SOURCE_DIR=%SUBCREATOR_PROJECT_DIR%\dist\com.cyrilg93.subcreator"
 set "SUBCREATOR_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subcreator"
 set "SUBCREATOR_RUNTIME_DIR=%APPDATA%\SubCreator"

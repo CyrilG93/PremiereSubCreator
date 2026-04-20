@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# // Resolve script and project directories reliably for macOS installation.
+# // Resolve script and project directories reliably whether the installer is launched from the release root or `installers/`.
 SUBCREATOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUBCREATOR_PROJECT_DIR="$(cd "${SUBCREATOR_SCRIPT_DIR}/.." && pwd)"
+if [ -d "${SUBCREATOR_SCRIPT_DIR}/dist/com.cyrilg93.subcreator" ]; then
+  SUBCREATOR_PROJECT_DIR="${SUBCREATOR_SCRIPT_DIR}"
+else
+  SUBCREATOR_PROJECT_DIR="$(cd "${SUBCREATOR_SCRIPT_DIR}/.." && pwd)"
+fi
 SUBCREATOR_SOURCE_DIR="${SUBCREATOR_PROJECT_DIR}/dist/com.cyrilg93.subcreator"
 SUBCREATOR_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilg93.subcreator"
 SUBCREATOR_RUNTIME_DIR="${HOME}/Library/Application Support/SubCreator"

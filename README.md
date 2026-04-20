@@ -216,6 +216,42 @@ Sub Creator will fill it automatically with each generated subtitle clip duratio
 
 If you want more models than the ones bundled with the installer, download them manually and place them in the Whisper cache.
 
+## Which Whisper model should you choose?
+
+If you are not sure, start with `base` or `small`.
+
+- `tiny`: fastest option, but lowest accuracy
+- `base`: best simple starting point for most users
+- `small`: better quality than `base`, still reasonable on a good computer
+- `medium`: better for harder audio, accents, noise, or more demanding projects
+- `large-v3`: best accuracy, but much slower and heavier
+- `turbo`: optimized for speed, useful when you want faster results and can accept that maximum accuracy is not the priority
+
+Simple recommendations:
+
+- quick tests or weak computer: `tiny` or `base`
+- everyday subtitle work: `base` or `small`
+- difficult audio or better quality needed: `medium`
+- best possible transcription quality: `large-v3`
+- speed first: `turbo`
+
+Language tips:
+
+- For English-only audio, English-only Whisper models can be more efficient.
+- For multilingual audio, use the normal multilingual models.
+- If results are inconsistent, set the `Whisper language` manually instead of leaving `Auto detect`.
+
+Important:
+
+- Bigger models are usually more accurate, but they need more time and more memory.
+- Whisper can still hallucinate or make mistakes, especially on low-resource languages, noisy audio, or unclear speech.
+- The best model depends on your audio quality, your language, and your computer speed.
+
+This guidance is based on:
+
+- OpenAI Whisper model card: [https://github.com/openai/whisper/blob/main/model-card.md](https://github.com/openai/whisper/blob/main/model-card.md)
+- Whisper model overview: [https://whisper-api.com/blog/models/](https://whisper-api.com/blog/models/)
+
 Model links:
 - `tiny.pt`: [https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt](https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt)
 - `base.pt`: [https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt](https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt)

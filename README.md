@@ -12,10 +12,11 @@ It is built for a simple workflow inside Premiere:
 ## Included features
 
 - `SRT`, `Whisper`, and `Whisper + SRT` creation modes
-- generation on `Entire sequence` or `In/Out points`
+- generation on `Entire sequence` or `In/Out points`, with automatic fallback to the full sequence when no valid In/Out range exists
 - bundled base MOGRT templates with gallery support for your own templates
 - searchable MOGRT gallery with remembered folder/view state between sessions
 - generation controls for max letters, max words, and max lines per subtitle
+- better word grouping for apostrophes and hyphenated words such as `peut-etre`
 - support for custom `.mogrt` files from after effect and premiere
 - `Visual editor` for exposed controls
 - `Text editor` for subtitle text redistribution and timing rebuild

@@ -4545,6 +4545,7 @@ async function resolveRequestedSequenceRange(
   options: CaptionBuildOptions
 ): Promise<{ rangeStartSeconds?: number; rangeEndSeconds?: number }> {
   // // Read the active sequence In/Out only when the user explicitly selected range-limited generation.
+  // // Fall back to the full sequence when Premiere has no valid In/Out range set yet.
   if (options.whisperSequenceRange !== "in_out") {
     return {};
   }
@@ -4553,7 +4554,7 @@ async function resolveRequestedSequenceRange(
   const rangeStartSeconds = Number(range.rangeStartSeconds);
   const rangeEndSeconds = Number(range.rangeEndSeconds);
   if (!Number.isFinite(rangeStartSeconds) || !Number.isFinite(rangeEndSeconds) || rangeEndSeconds <= rangeStartSeconds) {
-    throw new Error(translate("error.invalidSequenceRange"));
+    return {};
   }
 
   return {

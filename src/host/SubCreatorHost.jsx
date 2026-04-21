@@ -450,8 +450,21 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       return subcreator_error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
     }
 
-    var workAreaType = String(payload.rangeMode || "") === "in_out" ? 1 : 0;
-    var activeRange = workAreaType === 1 ? subcreator_read_sequence_in_out_range(sequence) : { rangeStartSeconds: null, rangeEndSeconds: null };
+    var requestedInOut = String(payload.rangeMode || "") === "in_out";
+    var activeRange = requestedInOut ? subcreator_read_sequence_in_out_range(sequence) : { rangeStartSeconds: null, rangeEndSeconds: null };
+    var hasValidRange =
+      requestedInOut &&
+      activeRange &&
+      activeRange.rangeStartSeconds !== null &&
+      activeRange.rangeEndSeconds !== null &&
+      isFinite(activeRange.rangeStartSeconds) &&
+      isFinite(activeRange.rangeEndSeconds) &&
+      activeRange.rangeEndSeconds > activeRange.rangeStartSeconds;
+    // // Fall back to the full sequence when the panel requested In/Out but the active sequence has no valid range.
+    var workAreaType = hasValidRange ? 1 : 0;
+    if (!hasValidRange) {
+      activeRange = { rangeStartSeconds: null, rangeEndSeconds: null };
+    }
 
     var outputFile = new File(outputPath);
     var outputFolder = outputFile.parent;

@@ -30,6 +30,13 @@ describe("parseSrt", () => {
     expect(longWordDuration).toBeGreaterThan(shortWordDuration);
   });
 
+  it("keeps hyphenated words together for synthetic timing", () => {
+    const cues = parseSrt(`1\n00:00:00,000 --> 00:00:02,000\npeut -etre`);
+
+    expect(cues).toHaveLength(1);
+    expect(cues[0].words).toEqual([{ text: "peut-etre", startSeconds: 0, endSeconds: 2 }]);
+  });
+
   it("trims SRT cues to a requested range", () => {
     const cues = parseSrt(
       `1\n00:00:01,000 --> 00:00:03,000\nAlpha\n\n2\n00:00:04,000 --> 00:00:06,000\nBeta\n\n3\n00:00:07,000 --> 00:00:09,000\nGamma`

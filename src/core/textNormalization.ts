@@ -3,6 +3,7 @@ import type { CaptionWord } from "./types";
 
 const SUBCREATOR_WORD_CHAR_PATTERN = "[\\p{L}\\p{N}]";
 const SUBCREATOR_APOSTROPHE_PATTERN = "['’]";
+const SUBCREATOR_HYPHEN_PATTERN = "[-‑‒–—]";
 
 export function normalizeInlineSubtitleText(text: string): string {
   // // Collapse whitespace and re-attach apostrophes / terminal punctuation so word counts stay stable.
@@ -24,6 +25,8 @@ export function normalizeInlineSubtitleText(text: string): string {
     `(${SUBCREATOR_APOSTROPHE_PATTERN})\\s+(${SUBCREATOR_WORD_CHAR_PATTERN}+)`,
     "gu"
   );
+  const beforeHyphenPattern = new RegExp(`(${SUBCREATOR_WORD_CHAR_PATTERN}+)\\s+(${SUBCREATOR_HYPHEN_PATTERN})`, "gu");
+  const afterHyphenPattern = new RegExp(`(${SUBCREATOR_HYPHEN_PATTERN})\\s+(${SUBCREATOR_WORD_CHAR_PATTERN}+)`, "gu");
 
   let previous = "";
   while (normalized !== previous) {
@@ -31,6 +34,8 @@ export function normalizeInlineSubtitleText(text: string): string {
     normalized = normalized
       .replace(beforeApostrophePattern, "$1$2")
       .replace(afterApostrophePattern, "$1$2")
+      .replace(beforeHyphenPattern, "$1$2")
+      .replace(afterHyphenPattern, "$1$2")
       .replace(/\s+([!?]+)/g, "$1")
       .replace(/\s+/g, " ")
       .trim();
@@ -46,7 +51,7 @@ export function tokenizeSubtitleText(text: string): string[] {
 }
 
 export function normalizeCaptionWords(words: CaptionWord[]): CaptionWord[] {
-  // // Merge split apostrophe / punctuation tokens while preserving the original timing span.
+  // // Merge split apostrophe / hyphen / punctuation tokens while preserving the original timing span.
   const normalized: CaptionWord[] = [];
 
   const appendToPrevious = (suffix: string, endSeconds: number): void => {
@@ -75,12 +80,27 @@ export function normalizeCaptionWords(words: CaptionWord[]): CaptionWord[] {
       continue;
     }
 
+    if (normalized.length > 0 && /^[-‑‒–—][\p{L}\p{N}]+$/u.test(currentText)) {
+      appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
+      continue;
+    }
+
     if (/^['’]$/u.test(currentText) && normalized.length > 0) {
       appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
       continue;
     }
 
+    if (/^[-‑‒–—]$/u.test(currentText) && normalized.length > 0) {
+      appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
+      continue;
+    }
+
     if (normalized.length > 0 && /['’]$/u.test(normalized[normalized.length - 1]?.text || "") && /^[\p{L}\p{N}]+$/u.test(currentText)) {
+      appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
+      continue;
+    }
+
+    if (normalized.length > 0 && /[-‑‒–—]$/u.test(normalized[normalized.length - 1]?.text || "") && /^[\p{L}\p{N}]+$/u.test(currentText)) {
       appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
       continue;
     }

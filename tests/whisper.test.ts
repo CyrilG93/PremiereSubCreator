@@ -44,4 +44,28 @@ describe("parseWhisperJson", () => {
     const longWordDuration = cues[0].words[1].endSeconds - cues[0].words[1].startSeconds;
     expect(longWordDuration).toBeGreaterThan(shortWordDuration);
   });
+
+  it("keeps split hyphen Whisper tokens available for later normalization", () => {
+    const cues = parseWhisperJson(
+      JSON.stringify({
+        segments: [
+          {
+            id: 0,
+            start: 0,
+            end: 1.2,
+            text: "peut -etre",
+            words: [
+              { word: "peut", start: 0, end: 0.3 },
+              { word: "-", start: 0.3, end: 0.35 },
+              { word: "etre", start: 0.35, end: 1.2 }
+            ]
+          }
+        ]
+      })
+    );
+
+    expect(cues).toHaveLength(1);
+    expect(cues[0].text).toBe("peut -etre");
+    expect(cues[0].words.map((word) => word.text)).toEqual(["peut", "-", "etre"]);
+  });
 });

@@ -1,5 +1,6 @@
 // // Build synthetic per-word timings that favor longer words and punctuation pauses over uniform timing.
 import type { CaptionWord } from "./types";
+import { tokenizeSubtitleText } from "./textNormalization";
 
 function normalizeWeightedTimingWord(word: string): string {
   // // Strip punctuation around a word so length-based weighting follows spoken content instead of commas or quotes.
@@ -56,9 +57,6 @@ export function buildWeightedCaptionWords(words: string[], startSeconds: number,
 
 export function buildWeightedCaptionWordsFromText(text: string, startSeconds: number, endSeconds: number): CaptionWord[] {
   // // Split a cue text into words, then assign weighted synthetic timings across the cue duration.
-  const words = String(text || "")
-    .split(/\s+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const words = tokenizeSubtitleText(text);
   return buildWeightedCaptionWords(words, startSeconds, endSeconds);
 }

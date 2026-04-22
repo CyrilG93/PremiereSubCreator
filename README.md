@@ -167,6 +167,8 @@ If you start the wrong analysis, use `Stop current job`.
 
 Use the `Visual editor` to read exposed MOGRT properties from the selected clips and apply the same changes to the rest of the selection.
 
+If you want a safer one-to-many transfer, read a source clip, click `Copy properties`, select the destination clip(s), then click `Apply changes`. This is especially useful for fonts changed directly in Premiere's `Properties` panel.
+
 Typical examples:
 - sizes
 - positions

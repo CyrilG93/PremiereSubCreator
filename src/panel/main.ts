@@ -205,6 +205,7 @@ const elements = {
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
+  visualCopyButton: document.querySelector<HTMLButtonElement>("#visualCopyButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
   visualLiveUpdateButton: document.querySelector<HTMLButtonElement>("#visualLiveUpdateButton"),
   visualApplyProgress: document.querySelector<HTMLElement>("#visualApplyProgress"),
@@ -260,6 +261,12 @@ let activeMode: PanelMode = "generate";
 let loadedVisualProperties: HostVisualProperty[] = [];
 let loadedVisualComponents: SelectedMogrtVisualComponentDebug[] = [];
 let loadedVisualSelectionCount = 0;
+let visualSelectionSummaryBase = "";
+let visualLoadedRevision = 0;
+let copiedVisualChanges: VisualPropertyChange[] = [];
+let copiedVisualSourceRevision = 0;
+let copiedVisualSourceClipCount = 0;
+let copiedVisualSourcePropertyCount = 0;
 const visualOriginalValuesByPath = new Map<string, string>();
 const visualOpenGroups = new Set<string>();
 const visualTextStyleTokenMapByBasePath = new Map<string, Record<string, string>>();
@@ -2103,22 +2110,80 @@ function captureOpenVisualGroupsFromDom(): void {
 }
 
 function updateVisualSelectionSummary(message: string): void {
-  // // Keep selection summary centralized for clearer visual-editor feedback.
+  // // Store the current selection summary and re-render with any active copied snapshot context.
+  visualSelectionSummaryBase = String(message || "").trim();
+  renderVisualSelectionSummary();
+}
+
+function renderVisualSelectionSummary(): void {
+  // // Combine the live selection summary with copied-snapshot status so cross-selection clone state stays visible.
   if (!elements.visualSelectionSummary) {
     return;
   }
 
-  elements.visualSelectionSummary.textContent = message;
+  const parts: string[] = [];
+  if (visualSelectionSummaryBase) {
+    parts.push(visualSelectionSummaryBase);
+  }
+  if (copiedVisualChanges.length > 0) {
+    parts.push(
+      translateTemplate("visual.copySummary", {
+        clips: String(Math.max(1, copiedVisualSourceClipCount || 1)),
+        props: String(Math.max(1, copiedVisualSourcePropertyCount || copiedVisualChanges.length))
+      })
+    );
+  }
+
+  elements.visualSelectionSummary.textContent = parts.join(" ").trim() || translate("visual.selectionDefault");
+}
+
+function cloneVisualPropertyChange(change: VisualPropertyChange): VisualPropertyChange {
+  // // Deep-clone one change entry so copied snapshots remain immutable across future UI edits.
+  return {
+    ...change,
+    vectorScale: Array.isArray(change.vectorScale) ? change.vectorScale.slice() : undefined
+  };
+}
+
+function cloneVisualPropertyChanges(changes: VisualPropertyChange[]): VisualPropertyChange[] {
+  // // Clone change arrays before storing or merging them to avoid accidental shared references.
+  return changes.map((change) => cloneVisualPropertyChange(change));
+}
+
+function mergeVisualPropertyChanges(baseChanges: VisualPropertyChange[], overrideChanges: VisualPropertyChange[]): VisualPropertyChange[] {
+  // // Overlay explicit UI edits on top of a copied snapshot while keeping one entry per property path.
+  const mergedByPath = new Map<string, VisualPropertyChange>();
+  baseChanges.forEach((change) => {
+    mergedByPath.set(change.path, cloneVisualPropertyChange(change));
+  });
+  overrideChanges.forEach((change) => {
+    mergedByPath.set(change.path, cloneVisualPropertyChange(change));
+  });
+  return Array.from(mergedByPath.values());
+}
+
+function updateCopiedVisualSnapshot(changes: VisualPropertyChange[]): void {
+  // // Persist the last copied visual snapshot so Apply can target a new clip selection later on.
+  copiedVisualChanges = cloneVisualPropertyChanges(changes);
+  copiedVisualSourceRevision = visualLoadedRevision;
+  copiedVisualSourceClipCount = loadedVisualSelectionCount;
+  copiedVisualSourcePropertyCount = copiedVisualChanges.length;
+  refreshVisualButtonsBusyState();
+  renderVisualSelectionSummary();
 }
 
 function refreshVisualButtonsBusyState(): void {
-  // // Prevent concurrent read/apply actions while either selection loading or host writes are in progress.
+  // // Prevent concurrent read/copy/apply actions while either selection loading or host writes are in progress.
   const isBusy = visualReadInProgress || visualApplyInProgress;
   if (elements.visualApplyButton) {
     elements.visualApplyButton.disabled = isBusy;
   }
   if (elements.visualReadButton) {
     elements.visualReadButton.disabled = isBusy;
+  }
+  if (elements.visualCopyButton) {
+    elements.visualCopyButton.disabled = isBusy || loadedVisualProperties.length < 1;
+    elements.visualCopyButton.setAttribute("aria-pressed", copiedVisualChanges.length > 0 ? "true" : "false");
   }
 }
 
@@ -2950,13 +3015,17 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return;
   }
 
+  visualLoadedRevision += 1;
   captureOpenVisualGroupsFromDom();
   elements.visualPropertyList.innerHTML = "";
+  loadedVisualProperties = [];
   visualOriginalValuesByPath.clear();
   visualTextStyleTokenMapByBasePath.clear();
   visualDirtyPaths.clear();
 
   if (!properties.length) {
+    refreshVisualButtonsBusyState();
+    renderVisualSelectionSummary();
     return;
   }
 
@@ -3756,6 +3825,8 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     const renderedNode = normalizeVisualNodeForRender(node);
     elements.visualPropertyList.appendChild(renderVisualNode(renderedNode, 0));
   }
+  refreshVisualButtonsBusyState();
+  renderVisualSelectionSummary();
 }
 
 type VisualPropertyChange = {
@@ -3903,6 +3974,25 @@ function commitAppliedVisualChanges(changes: VisualPropertyChange[]): void {
   }
 }
 
+function copyLoadedVisualProperties(): void {
+  // // Snapshot the currently loaded visual controls so Apply can clone them onto a later selection, including font tokens.
+  if (!loadedVisualProperties.length) {
+    throw new Error(translate("visual.noProperties"));
+  }
+
+  const copiedChanges = collectVisualPropertyChanges({ includeUnchanged: true });
+  if (!copiedChanges.length) {
+    throw new Error(translate("visual.noProperties"));
+  }
+
+  updateCopiedVisualSnapshot(copiedChanges);
+  setStructuredLog(translate("log.visualCopyDone"), {
+    selectedCount: loadedVisualSelectionCount,
+    copiedCount: copiedChanges.length,
+    sourceRevision: copiedVisualSourceRevision
+  });
+}
+
 async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadingState = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
   if (showLoadingState) {
@@ -3935,6 +4025,7 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadin
     } else {
       updateVisualSelectionSummary(translate("visual.selectionDefault"));
     }
+    refreshVisualButtonsBusyState();
   } finally {
     if (showLoadingState) {
       visualReadInProgress = false;
@@ -3973,7 +4064,18 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
 
   try {
     const selectedCount = await getSelectedMogrtCount();
-    let changes = collectVisualPropertyChanges();
+    const dirtyChanges = collectVisualPropertyChanges();
+    let changes = dirtyChanges;
+    const canMergeDirtyIntoCopiedSnapshot =
+      copiedVisualChanges.length > 0 && copiedVisualSourceRevision === visualLoadedRevision;
+
+    if (!useLiveUpdate && copiedVisualChanges.length > 0) {
+      // // Let an explicit Copy properties snapshot drive Apply, even when the target selection changed or only one clip is selected.
+      changes = canMergeDirtyIntoCopiedSnapshot
+        ? mergeVisualPropertyChanges(copiedVisualChanges, dirtyChanges)
+        : cloneVisualPropertyChanges(copiedVisualChanges);
+    }
+
     if (!changes.length) {
       if (useLiveUpdate) {
         return;
@@ -5032,6 +5134,17 @@ async function initialize(): Promise<void> {
     }
   });
 
+  elements.visualCopyButton?.addEventListener("click", () => {
+    try {
+      if (visualReadInProgress || visualApplyInProgress) {
+        return;
+      }
+      copyLoadedVisualProperties();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+
   elements.visualApplyButton?.addEventListener("click", async () => {
     try {
       if (visualReadInProgress || visualApplyInProgress) {
@@ -5066,6 +5179,7 @@ async function initialize(): Promise<void> {
     }
   });
 
+  refreshVisualButtonsBusyState();
   setLog(translate("log.ready"));
 
   void enforceWhisperSourceAvailability()

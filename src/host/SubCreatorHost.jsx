@@ -6208,6 +6208,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
                     String(textStyleReadback.fontFamily || "<none>") +
                     " style=" +
                     String(textStyleReadback.fontStyle || "<none>") +
+                    " token=" +
+                    String(textStyleReadback.fontToken || "<none>") +
                     " size=" +
                     String(textStyleReadback.fontSize || "<none>")
                 );

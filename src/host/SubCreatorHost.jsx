@@ -3017,6 +3017,7 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
   var result = {
     fontFamily: "",
     fontStyle: "",
+    fontToken: "",
     fontSize: NaN,
     fontFamilyOptions: [],
     fontStyleOptions: [],
@@ -3050,6 +3051,9 @@ function subcreator_visual_extract_text_style_from_value(rawValue) {
       if (!result.fontFamily && subcreator_visual_is_generic_font_family_key(normalizedKey)) {
         var fontToken = subcreator_visual_extract_first_string(value);
         if (fontToken) {
+          if (!result.fontToken) {
+            result.fontToken = fontToken;
+          }
           var tokenParts = subcreator_visual_split_font_token(fontToken);
           if (tokenParts.family) {
             result.fontFamily = tokenParts.family;
@@ -3262,6 +3266,7 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       groupPath: targetGroup,
       valueType: "string",
       controlKind: "select",
+      fontToken: styleValues.fontToken || "",
       options: buildStringSelectOptions(styleValues.fontFamilyOptions, cachedFamilies, []),
       styleOptionsByFamily: styleValues.fontStylesByFamily,
       value: familyValue
@@ -3287,6 +3292,7 @@ function subcreator_visual_build_text_style_entries(rawValue, currentPath, group
       groupPath: targetGroup,
       valueType: "string",
       controlKind: "select",
+      fontToken: styleValues.fontToken || "",
       options: buildStringSelectOptions(styleValues.fontStyleOptions, cachedStyles, commonStyleFallback),
       styleOptionsByFamily: styleValues.fontStylesByFamily,
       value: styleValue
@@ -4587,6 +4593,25 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
 
     if (suppliedTokenParts && suppliedTokenParts.style) {
       pushStyleOverride(suppliedTokenParts.style);
+    }
+
+    if (
+      suppliedFontToken &&
+      suppliedTokenParts &&
+      suppliedTokenParts.family &&
+      subcreator_visual_normalize_font_compare_key(suppliedTokenParts.family) === requestedFamilyKey
+    ) {
+      // // Try the exact source token first so copy/apply keeps fonts like `Impact` instead of inventing `Impact Regular`.
+      if (
+        applyOnce({
+          fontTokenOverride: suppliedFontToken
+        })
+      ) {
+        var directTokenReadbackMatch = readbackMatchesExpectedFamily(requestedFamily);
+        if (directTokenReadbackMatch !== false) {
+          return true;
+        }
+      }
     }
 
     // // Prefer neutral defaults for a newly selected family before reusing the previous preset style.

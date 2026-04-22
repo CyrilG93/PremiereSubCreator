@@ -92,6 +92,7 @@ interface HostVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   cloneOnlyWhenDirty?: boolean;
+  fontToken?: string;
   options?: Array<{ value: number | string; label: string }>;
   styleOptionsByFamily?: Record<string, string[]>;
   vectorScale?: number[];
@@ -3542,6 +3543,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
         }
+        if (property.fontToken) {
+          // // Preserve the exact host font token so copied font writes do not degrade to fallback style guesses.
+          hiddenInput.dataset.visualFontToken = property.fontToken;
+        }
 
         let syncing = false;
 
@@ -3677,6 +3682,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
         }
+        if (property.fontToken) {
+          // // Preserve the exact host font token so copied font writes do not degrade to fallback style guesses.
+          hiddenInput.dataset.visualFontToken = property.fontToken;
+        }
         if (Array.isArray(property.vectorScale) && property.vectorScale.length > 0) {
           hiddenInput.dataset.visualVectorScale = JSON.stringify(property.vectorScale);
         }
@@ -3732,6 +3741,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           hiddenInput.dataset.visualCloneOnlyWhenDirty = "1";
         }
+        if (property.fontToken) {
+          // // Keep the raw font token attached to readonly font rows because those values are cloned, not manually edited.
+          hiddenInput.dataset.visualFontToken = property.fontToken;
+        }
 
         controlWrap.append(readonlyValue, hiddenInput);
         if (textStylePath?.styleKey === "fontFamily") {
@@ -3761,6 +3774,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.cloneOnlyWhenDirty) {
           select.dataset.visualCloneOnlyWhenDirty = "1";
         }
+        if (property.fontToken) {
+          // // Pass through exact host tokens for any future editable text-style selects.
+          select.dataset.visualFontToken = property.fontToken;
+        }
         bindFloatingPanelSelect(select);
         bindLiveUpdateEvent(select, "change");
 
@@ -3778,6 +3795,10 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         input.dataset.visualRole = "value";
         if (property.cloneOnlyWhenDirty) {
           input.dataset.visualCloneOnlyWhenDirty = "1";
+        }
+        if (property.fontToken) {
+          // // Keep exact host tokens on plain inputs when text-style fields are rendered this way.
+          input.dataset.visualFontToken = property.fontToken;
         }
         bindLiveUpdateEvent(input, "input");
         controlWrap.appendChild(input);
@@ -3907,6 +3928,7 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
     const controlKind =
       (String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"]) || "string";
     const cloneOnlyWhenDirty = String(control.dataset.visualCloneOnlyWhenDirty || "") === "1";
+    const explicitFontToken = String(control.dataset.visualFontToken || "").trim();
     const vectorScaleRaw = String(control.dataset.visualVectorScale || "");
     const vectorScale = vectorScaleRaw
       ? (() => {
@@ -3946,9 +3968,10 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
 
     const textStylePath = parseTextStyleVirtualPath(path);
     const fontToken =
-      textStylePath && (textStylePath.styleKey === "fontFamily" || textStylePath.styleKey === "fontStyle")
+      explicitFontToken ||
+      (textStylePath && (textStylePath.styleKey === "fontFamily" || textStylePath.styleKey === "fontStyle")
         ? resolveVisualTextStyleToken(textStylePath.basePath)
-        : "";
+        : "");
 
     changes.push({
       path,

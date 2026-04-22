@@ -309,6 +309,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.12.0 - 2026-04-22
+
+- The Visual Editor can now copy properties more safely between clips, with a faster `Copy properties` workflow and more reliable font transfer from Premiere's `Properties` panel.
+- Font copying is more accurate for templates that expose exact font tokens, which helps avoid unwanted fallback fonts when reusing subtitle styles.
+- Subtitle timing is safer when `In/Out points` are not usable, and hyphenated words stay cleaner when subtitles are generated or rebuilt.
+- The bundled Base template set has been refreshed with updated `Mr Beast Style` and `TikTok Style` templates.
+
 ### 0.11.0 - 2026-04-19
 
 - Apostrophes and punctuation are normalized more cleanly, so tokens like `c'est`, `d'accord`, `Salut!`, and `quoi?` stay attached as expected.

@@ -2183,7 +2183,8 @@ function refreshVisualButtonsBusyState(): void {
     elements.visualReadButton.disabled = isBusy;
   }
   if (elements.visualCopyButton) {
-    elements.visualCopyButton.disabled = isBusy || loadedVisualProperties.length < 1;
+    // // Keep `Copy properties` available even before a manual read because it now refreshes the current selection on click.
+    elements.visualCopyButton.disabled = isBusy;
     elements.visualCopyButton.setAttribute("aria-pressed", copiedVisualChanges.length > 0 ? "true" : "false");
   }
 }
@@ -5157,11 +5158,13 @@ async function initialize(): Promise<void> {
     }
   });
 
-  elements.visualCopyButton?.addEventListener("click", () => {
+  elements.visualCopyButton?.addEventListener("click", async () => {
     try {
       if (visualReadInProgress || visualApplyInProgress) {
         return;
       }
+      // // Refresh from the current Premiere selection first so copy never uses stale panel data.
+      await loadVisualPropertiesFromSelection(false, true);
       copyLoadedVisualProperties();
     } catch (error) {
       setLog(String(error), true);

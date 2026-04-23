@@ -309,6 +309,11 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.12.1 - 2026-04-23
+
+- The Windows installer is more robust when detecting Python, which avoids false `Unable to parse Python version` errors on some PCs where `Python 3.11.8` was already installed correctly.
+- Whisper setup no longer depends on the fragile batch-label flow that could skip installation even when a supported Python version was available.
+
 ### 0.12.0 - 2026-04-22
 
 - The Visual Editor can now copy properties more safely between clips, with a faster `Copy properties` workflow and more reliable font transfer from Premiere's `Properties` panel.

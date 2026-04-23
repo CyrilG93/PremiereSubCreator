@@ -4,13 +4,13 @@ REM // Relaunch from Explorer-style `/c` sessions inside a dedicated `cmd /k` wi
 if /I not "%~1"=="--subcreator-run" if /I not "%SUBCREATOR_NO_PAUSE%"=="1" (
   echo(%CMDCMDLINE%| findstr /I /C:" /c " >nul
   if not errorlevel 1 (
-    start "Sub Creator Installer" cmd /v:on /k ""%~f0" --subcreator-run"
+    start "Sub Creator Installer" cmd /e:on /v:on /k ""%~f0" --subcreator-run"
     exit /b 0
   )
 )
 
 if /I "%~1"=="--subcreator-run" shift /1
-setlocal enabledelayedexpansion
+setlocal enableextensions enabledelayedexpansion
 
 REM // Resolve current directory and expected build output.
 for %%I in ("%~dp0.") do set "SUBCREATOR_SCRIPT_DIR=%%~fI"
@@ -40,6 +40,7 @@ set "SUBCREATOR_FFMPEG_PATH="
 set "SUBCREATOR_PATH_HINTS="
 set "SUBCREATOR_TEMPLATE_BACKUP_ROOT="
 set "SUBCREATOR_TEMPLATE_BACKUP_DIR="
+set "SUBCREATOR_SKIP_WHISPER_SETUP="
 
 REM // Validate build output is present before installing.
 if not exist "%SUBCREATOR_SOURCE_DIR%" (
@@ -79,59 +80,75 @@ if not defined SUBCREATOR_PYTHON_CMD (
     echo Whisper setup skipped: Python not found on this machine.
   )
   echo Whisper and corrected align modes will remain unavailable in the panel until Python is installed.
-  goto :subcreator_after_whisper_setup
+  set "SUBCREATOR_SKIP_WHISPER_SETUP=1"
 )
 
 REM // Parse Python version to avoid unsupported 3.14+ auto-install.
-call :subcreator_parse_python_version "%SUBCREATOR_PYTHON_VERSION_LINE%"
-if not defined SUBCREATOR_PYTHON_MAJOR (
-  echo Whisper setup skipped: unable to parse Python version from "%SUBCREATOR_PYTHON_VERSION_LINE%".
-  goto :subcreator_after_whisper_setup
-)
-
-if !SUBCREATOR_PYTHON_MAJOR! GTR 3 goto :subcreator_python_unsupported
-if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 14 goto :subcreator_python_unsupported
-goto :subcreator_python_supported
-
-:subcreator_python_unsupported
-echo Whisper setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(openai-whisper currently targets Python ^<= 3.13^).
-echo Whisper and corrected align modes will remain unavailable in the panel until a supported Python version is installed.
-goto :subcreator_after_whisper_setup
-
-:subcreator_python_supported
-call :subcreator_detect_python_executable_path
-echo Installing Whisper with !SUBCREATOR_PYTHON_LABEL!...
-
-REM // Ensure pip exists, then install openai-whisper in user site-packages.
-call !SUBCREATOR_PYTHON_CMD! -m pip --version >nul 2>nul
-if errorlevel 1 (
-  call !SUBCREATOR_PYTHON_CMD! -m ensurepip --upgrade >nul 2>nul
-)
-
-call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade openai-whisper
-if errorlevel 1 (
-  echo Whisper package install failed. You can run manually:
-  echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade openai-whisper
-) else (
-  echo Whisper Python package installed successfully.
-)
-call :subcreator_validate_whisper_install
-
-REM // Install WhisperX when Python is compatible so corrected transcript align can run without extra setup.
-if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
-  call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade whisperx requests nltk
-  if errorlevel 1 (
-    echo WhisperX package install failed. You can run manually:
-    echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade whisperx requests nltk
-  ) else (
-    echo WhisperX Python package installed successfully.
+if not defined SUBCREATOR_SKIP_WHISPER_SETUP (
+  set "SUBCREATOR_PYTHON_MAJOR="
+  set "SUBCREATOR_PYTHON_MINOR="
+  set "SUBCREATOR_VERSION_VALUE="
+  for /f "tokens=2 delims= " %%v in ("%SUBCREATOR_PYTHON_VERSION_LINE%") do set "SUBCREATOR_VERSION_VALUE=%%v"
+  for /f "tokens=1,2 delims=." %%a in ("!SUBCREATOR_VERSION_VALUE!") do (
+    set "SUBCREATOR_PYTHON_MAJOR=%%a"
+    set "SUBCREATOR_PYTHON_MINOR=%%b"
   )
-  call :subcreator_validate_whisperx_install
-) else (
-  echo WhisperX setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(need 3.10 to 3.13 for corrected transcript align^).
+  if not defined SUBCREATOR_PYTHON_MAJOR (
+    echo Whisper setup skipped: unable to parse Python version from "%SUBCREATOR_PYTHON_VERSION_LINE%".
+    set "SUBCREATOR_SKIP_WHISPER_SETUP=1"
+  )
 )
 
-:subcreator_after_whisper_setup
+if not defined SUBCREATOR_SKIP_WHISPER_SETUP (
+  if !SUBCREATOR_PYTHON_MAJOR! GTR 3 (
+    echo Whisper setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(openai-whisper currently targets Python ^<= 3.13^).
+    echo Whisper and corrected align modes will remain unavailable in the panel until a supported Python version is installed.
+    set "SUBCREATOR_SKIP_WHISPER_SETUP=1"
+  )
+)
+
+if not defined SUBCREATOR_SKIP_WHISPER_SETUP (
+  if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 14 (
+    echo Whisper setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(openai-whisper currently targets Python ^<= 3.13^).
+    echo Whisper and corrected align modes will remain unavailable in the panel until a supported Python version is installed.
+    set "SUBCREATOR_SKIP_WHISPER_SETUP=1"
+  )
+)
+
+if not defined SUBCREATOR_SKIP_WHISPER_SETUP (
+  call :subcreator_detect_python_executable_path
+  echo Installing Whisper with !SUBCREATOR_PYTHON_LABEL!...
+
+  REM // Ensure pip exists, then install openai-whisper in user site-packages.
+  call !SUBCREATOR_PYTHON_CMD! -m pip --version >nul 2>nul
+  if errorlevel 1 (
+    call !SUBCREATOR_PYTHON_CMD! -m ensurepip --upgrade >nul 2>nul
+  )
+
+  call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade openai-whisper
+  if errorlevel 1 (
+    echo Whisper package install failed. You can run manually:
+    echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade openai-whisper
+  ) else (
+    echo Whisper Python package installed successfully.
+  )
+  call :subcreator_validate_whisper_install
+
+  REM // Install WhisperX when Python is compatible so corrected transcript align can run without extra setup.
+  if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
+    call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade whisperx requests nltk
+    if errorlevel 1 (
+      echo WhisperX package install failed. You can run manually:
+      echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade whisperx requests nltk
+    ) else (
+      echo WhisperX Python package installed successfully.
+    )
+    call :subcreator_validate_whisperx_install
+  ) else (
+    echo WhisperX setup skipped: Python !SUBCREATOR_PYTHON_MAJOR!.!SUBCREATOR_PYTHON_MINOR! detected ^(need 3.10 to 3.13 for corrected transcript align^).
+  )
+)
+
 REM // Install ffmpeg via winget when available; otherwise keep setup non-blocking without jumping from inside IF blocks.
 set "SUBCREATOR_SKIP_FFMPEG_INSTALL="
 where ffmpeg >nul 2>nul
@@ -242,7 +259,14 @@ for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
 REM // Fallback to generic python executable if it points to a supported version.
 for /f "tokens=* delims=" %%v in ('python --version 2^>nul') do (
   set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
-  call :subcreator_parse_python_version "%%v"
+  set "SUBCREATOR_PYTHON_MAJOR="
+  set "SUBCREATOR_PYTHON_MINOR="
+  set "SUBCREATOR_VERSION_VALUE="
+  for /f "tokens=2 delims= " %%x in ("%%v") do set "SUBCREATOR_VERSION_VALUE=%%x"
+  for /f "tokens=1,2 delims=." %%a in ("!SUBCREATOR_VERSION_VALUE!") do (
+    set "SUBCREATOR_PYTHON_MAJOR=%%a"
+    set "SUBCREATOR_PYTHON_MINOR=%%b"
+  )
   if defined SUBCREATOR_PYTHON_MAJOR (
     if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 8 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
       set "SUBCREATOR_PYTHON_CMD=python"
@@ -259,7 +283,14 @@ for /f "tokens=* delims=" %%v in ('python --version 2^>nul') do (
 REM // Last fallback to py -3 only when it resolves to a supported version.
 for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
   set "SUBCREATOR_PYTHON_VERSION_LINE=%%v"
-  call :subcreator_parse_python_version "%%v"
+  set "SUBCREATOR_PYTHON_MAJOR="
+  set "SUBCREATOR_PYTHON_MINOR="
+  set "SUBCREATOR_VERSION_VALUE="
+  for /f "tokens=2 delims= " %%x in ("%%v") do set "SUBCREATOR_VERSION_VALUE=%%x"
+  for /f "tokens=1,2 delims=." %%a in ("!SUBCREATOR_VERSION_VALUE!") do (
+    set "SUBCREATOR_PYTHON_MAJOR=%%a"
+    set "SUBCREATOR_PYTHON_MINOR=%%b"
+  )
   if defined SUBCREATOR_PYTHON_MAJOR (
     if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 8 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
       set "SUBCREATOR_PYTHON_CMD=py -3"
@@ -267,18 +298,6 @@ for /f "tokens=* delims=" %%v in ('py -3 --version 2^>nul') do (
       goto :eof
     )
   )
-)
-goto :eof
-
-:subcreator_parse_python_version
-REM // Parse "Python X.Y.Z" into major/minor numeric values.
-set "SUBCREATOR_PYTHON_MAJOR="
-set "SUBCREATOR_PYTHON_MINOR="
-set "SUBCREATOR_VERSION_VALUE="
-for /f "tokens=2 delims= " %%v in ("%~1") do set "SUBCREATOR_VERSION_VALUE=%%v"
-for /f "tokens=1,2 delims=." %%a in ("!SUBCREATOR_VERSION_VALUE!") do (
-  set "SUBCREATOR_PYTHON_MAJOR=%%a"
-  set "SUBCREATOR_PYTHON_MINOR=%%b"
 )
 goto :eof
 

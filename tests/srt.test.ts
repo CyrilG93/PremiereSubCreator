@@ -19,6 +19,11 @@ describe("parseSrt", () => {
     expect(cues[0].text).toBe("Hello there");
   });
 
+  it("skips cues whose end time is not after the start time", () => {
+    const cues = parseSrt(`1\n00:00:05,000 --> 00:00:04,000\nInvalid cue`);
+    expect(cues).toEqual([]);
+  });
+
   it("assigns more synthetic duration to longer words", () => {
     const cues = parseSrt(`1\n00:00:00,000 --> 00:00:04,000\ngo international`);
 

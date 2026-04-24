@@ -110,7 +110,8 @@ interface VisualEditorSectionNode {
   children: VisualEditorSectionNode[];
 }
 
-interface VisualEditorMutableSectionNode extends VisualEditorSectionNode {
+interface VisualEditorMutableSectionNode extends Omit<VisualEditorSectionNode, "children"> {
+  children: VisualEditorMutableSectionNode[];
   encounterOrder: number;
 }
 

@@ -1,5 +1,5 @@
 // // Install the local build into CEP extension folders for quick testing.
-import { cp, mkdir, stat } from "node:fs/promises";
+import { cp, mkdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,8 @@ async function subcreatorInstallDev() {
   const destination = path.join(destinationRoot, "com.cyrilg93.subcreator");
 
   await mkdir(destinationRoot, { recursive: true });
+  // // Remove the previous dev install first so deleted build files cannot linger in CEP.
+  await rm(destination, { recursive: true, force: true });
   await cp(extensionSource, destination, { recursive: true, force: true });
 
   process.stdout.write(`Installed extension to ${destination}\n`);

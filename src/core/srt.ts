@@ -76,7 +76,7 @@ export function parseSrt(input: string): CaptionCue[] {
     const endSeconds = parseTimestamp(endRaw);
     const text = textLines.join(" ").replace(/\s+/g, " ").trim();
 
-    if (!text) {
+    if (!text || endSeconds <= startSeconds) {
       continue;
     }
 

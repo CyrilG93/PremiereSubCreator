@@ -1125,7 +1125,9 @@ function extractPremiereTemplateTextPayloads(
 ): PremiereTemplateTextPayload[] {
   // // Read Premiere-authored `.mogrt` packages directly so the host can reuse the original text-document payload instead of flattening style to plain text.
   try {
-    const outerArchive = unzipSync(new Uint8Array(modules.fs.readFileSync(mogrtPath)));
+    const archiveSource = modules.fs.readFileSync(mogrtPath);
+    const archiveBytes = typeof archiveSource === "string" ? strToU8(archiveSource) : new Uint8Array(archiveSource);
+    const outerArchive = unzipSync(archiveBytes);
     const definitionEntry = outerArchive["definition.json"];
     const projectEntry = outerArchive["project.prgraphic"];
     if (!definitionEntry || !projectEntry) {
@@ -3340,7 +3342,8 @@ export async function readSystemFontCatalog(): Promise<SystemFontCatalog> {
       source: "unavailable",
       details: "CEP Node runtime unavailable",
       families: [],
-      stylesByFamily: {}
+      stylesByFamily: {},
+      fontTokensByFamilyStyle: {}
     };
   }
 

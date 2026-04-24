@@ -460,12 +460,12 @@ subcreator_validate_whisperx_install() {
 }
 
 subcreator_select_python_cmd() {
-  # // Prefer explicit minor-version executables before generic python3/python aliases.
+  # // Prefer the same reliable Whisper/WhisperX Python versions as the Windows installer.
   local candidates=(
-    "python3.13"
-    "python3.12"
     "python3.11"
+    "python3.12"
     "python3.10"
+    "python3.13"
     "python3.9"
     "python3.8"
     "python3"

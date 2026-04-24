@@ -421,7 +421,7 @@ export function retimeTextEditorBlocks(blocks: TextEditorBlock[], timingRange?: 
     });
   }
 
-  const retimedBlocks = normalizedBlocks.map((block) => ({
+  const retimedBlocks: TextEditorBlock[] = normalizedBlocks.map((block): TextEditorBlock => ({
     ...block,
     text: block.words.join(" "),
     words: block.words.slice(),

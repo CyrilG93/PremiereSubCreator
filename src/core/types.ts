@@ -25,6 +25,8 @@ export interface CaptionCue {
 
 // // Describe the style and animation configuration selected in the UI.
 export interface CaptionStyleConfig {
+  // // Keep backwards-compatible style preset metadata accepted by older tests or saved panel states.
+  presetId?: string;
   maxCharsPerLine: number;
   maxWordsPerLine: number;
   animationMode: AnimationMode;

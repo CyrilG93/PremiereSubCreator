@@ -1422,7 +1422,7 @@ export async function buildPremiereTemplateCueMogrts(
     patchedCues.push({
       ...cue,
       mogrtPathOverride: tempPath,
-      skipTextApply: false
+      skipTextApply: true
     });
   }
 

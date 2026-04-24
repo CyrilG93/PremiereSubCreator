@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.cyrilplugin.subcreator" ExtensionBundleVersion="0.12.8" ExtensionBundleName="Sub Creator" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.cyrilplugin.subcreator" ExtensionBundleVersion="0.12.9" ExtensionBundleName="Sub Creator" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.cyrilplugin.subcreator.panel" Version="0.12.8"/>
+    <Extension Id="com.cyrilplugin.subcreator.panel" Version="0.12.9"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

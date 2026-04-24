@@ -7618,8 +7618,9 @@ function subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawV
           debugAttempt("binary_payload", true);
           return true;
         }
-        debugAttempt("binary_payload_no_readback", true);
-        return true;
+        // // Premiere can accept this binary write but collapse Source Text to an unreadable token; do not count that as a text update.
+        debugAttempt("binary_payload_no_readback", false);
+        return false;
       }
     } catch (binaryPayloadError) {}
   }

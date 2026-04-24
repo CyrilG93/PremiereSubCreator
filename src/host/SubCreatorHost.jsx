@@ -7758,6 +7758,59 @@ function subcreator_collect_unique_mogrt_components_with_retry(trackItem, debugL
   return components;
 }
 
+function subcreator_mogrt_has_nonempty_text_property(trackItem, debugLines, debugPrefix) {
+  // // Validate pre-baked Premiere MOGRT imports by requiring a real non-empty text control after import.
+  var components = subcreator_collect_unique_mogrt_components_with_retry(trackItem, debugLines, debugPrefix);
+
+  function walk(collection) {
+    if (!collection || typeof collection.numItems !== "number") {
+      return false;
+    }
+
+    for (var propertyIndex = 0; propertyIndex < collection.numItems; propertyIndex += 1) {
+      var property = collection[propertyIndex];
+      if (!property) {
+        continue;
+      }
+
+      var rawValue = "";
+      var hasRawValue = false;
+      if (typeof property.getValue === "function") {
+        try {
+          rawValue = property.getValue();
+          hasRawValue = true;
+        } catch (readError) {
+          hasRawValue = false;
+        }
+      }
+
+      if (
+        hasRawValue &&
+        subcreator_should_try_text_property(property.displayName || "", rawValue) &&
+        subcreator_trim_string(String(rawValue || "")).length > 0
+      ) {
+        return true;
+      }
+
+      if (property.properties && typeof property.properties.numItems === "number" && property.properties.numItems > 0 && walk(property.properties)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  for (var componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+    var component = components[componentIndex];
+    if (component && component.properties && walk(component.properties)) {
+      return true;
+    }
+  }
+
+  subcreator_debug_push_limited(debugLines, String(debugPrefix || "") + " baked_text_validation_failed", 120);
+  return false;
+}
+
 function subcreator_collect_mogrt_text_payload_snapshots_recursive(propertyCollection, pathPrefix, outList) {
   // // Capture text-bearing raw payloads so rebuilt MOGRT clips can reuse the original text style document state.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
@@ -9226,6 +9279,9 @@ function subcreator_apply_captions(payloadEncoded) {
     var mogrtAttempted = 0;
     var lastImportMode = "";
     var lastImportPath = "";
+    var bakedTextValidated = 0;
+    var bakedTextRetries = 0;
+    var bakedTextFailed = 0;
     var debugLines = [];
 
     for (var i = 0; i < cues.length; i += 1) {
@@ -9260,10 +9316,58 @@ function subcreator_apply_captions(payloadEncoded) {
         );
         mogrtAttempted += importAttempt.attempted;
         if (importAttempt.trackItem) {
+          var durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
+          if (Boolean(cue.skipTextApply)) {
+            var bakedValidationDebug = cueDebugEnabled ? debugLines : debugLines.length < 120 ? debugLines : null;
+            var bakedValidationPrefix = cueDebugPrefix || "cue=" + String(i);
+            var bakedTextValid = subcreator_mogrt_has_nonempty_text_property(
+              importAttempt.trackItem,
+              bakedValidationDebug,
+              bakedValidationPrefix
+            );
+            var bakedRetryIndex = 0;
+            while (!bakedTextValid && bakedRetryIndex < 2) {
+              bakedTextRetries += 1;
+              subcreator_remove_track_item_without_ripple(importAttempt.trackItem);
+              subcreator_sleep_ms(180 + bakedRetryIndex * 120);
+              importAttempt = subcreator_try_import_mogrt(
+                sequence,
+                cuePathCandidates,
+                startSeconds,
+                videoTrackIndex,
+                audioTrackIndex,
+                bakedValidationDebug,
+                bakedValidationPrefix + " retry=" + String(bakedRetryIndex + 1)
+              );
+              mogrtAttempted += importAttempt.attempted;
+              if (!importAttempt.trackItem) {
+                break;
+              }
+              durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
+              bakedTextValid = subcreator_mogrt_has_nonempty_text_property(
+                importAttempt.trackItem,
+                bakedValidationDebug,
+                bakedValidationPrefix + " retry=" + String(bakedRetryIndex + 1)
+              );
+              bakedRetryIndex += 1;
+            }
+
+            if (!bakedTextValid) {
+              bakedTextFailed += 1;
+              if (importAttempt.trackItem) {
+                subcreator_remove_track_item_without_ripple(importAttempt.trackItem);
+              }
+              importAttempt.trackItem = null;
+            } else {
+              bakedTextValidated += 1;
+            }
+          }
+        }
+
+        if (importAttempt.trackItem) {
           insertedMogrt += 1;
           lastImportMode = importAttempt.usedTimeMode;
           lastImportPath = importAttempt.usedPath;
-          var durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
           if (durationApplied) {
             durationAdjusted += 1;
           }
@@ -9300,6 +9404,7 @@ function subcreator_apply_captions(payloadEncoded) {
               String(subcreator_to_seconds(importAttempt.trackItem.end || importAttempt.trackItem.outPoint || importAttempt.trackItem.endTime)),
             120
           );
+          subcreator_sleep_ms(Boolean(cue.skipTextApply) ? 45 : 20);
           continue;
         }
       }
@@ -9330,6 +9435,9 @@ function subcreator_apply_captions(payloadEncoded) {
       mogrtImportAttempts: mogrtAttempted,
       mogrtLastImportMode: lastImportMode,
       mogrtLastImportPath: lastImportPath,
+      mogrtBakedTextValidated: bakedTextValidated,
+      mogrtBakedTextRetries: bakedTextRetries,
+      mogrtBakedTextFailed: bakedTextFailed,
       videoTrackCreated: videoTrackInfo.created,
       videoTracksBefore: videoTrackInfo.beforeTracks,
       videoTracksAfter: videoTrackInfo.afterTracks,

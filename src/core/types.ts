@@ -39,6 +39,7 @@ export interface PremiereTemplateTextPayload {
   displayName: string;
   initialText: string;
   sourcePayloadBase64: string;
+  sourcePayloadXml?: string;
 }
 
 // // Describe full generation options for a build request.

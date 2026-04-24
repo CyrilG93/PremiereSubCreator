@@ -1157,7 +1157,8 @@ function extractPremiereTemplateTextPayloads(
 
     for (const match of projectXml.matchAll(pattern)) {
       const displayName = String(match[1] || "").trim();
-      const sourcePayloadBase64 = String(match[2] || "").replace(/\s+/g, "");
+      const sourcePayloadXml = String(match[2] || "");
+      const sourcePayloadBase64 = sourcePayloadXml.replace(/\s+/g, "");
       if (!displayName || !sourcePayloadBase64) {
         continue;
       }
@@ -1175,7 +1176,8 @@ function extractPremiereTemplateTextPayloads(
       payloads.push({
         displayName,
         initialText,
-        sourcePayloadBase64
+        sourcePayloadBase64,
+        sourcePayloadXml
       });
     }
 
@@ -1357,7 +1359,12 @@ function patchPremiereProjectGraphicText(
       continue;
     }
     const patchedPayloadBase64 = patchPremiereTemplatePayloadBase64(sourcePayloadBase64, nextText);
-    projectXml = projectXml.replace(sourcePayloadBase64, patchedPayloadBase64);
+    const sourcePayloadXml = String(payload.sourcePayloadXml || "");
+    if (sourcePayloadXml && projectXml.indexOf(sourcePayloadXml) !== -1) {
+      projectXml = projectXml.replace(sourcePayloadXml, patchedPayloadBase64);
+    } else {
+      projectXml = projectXml.replace(sourcePayloadBase64, patchedPayloadBase64);
+    }
   }
 
   innerArchive[prprojKey] = gzipSync(strToU8(projectXml));
@@ -1369,7 +1376,7 @@ export async function buildPremiereTemplateCueMogrts(
   cues: CaptionCue[],
   payloads: PremiereTemplateTextPayload[]
 ): Promise<{ cues: CaptionCue[]; cleanupPaths: string[] }> {
-  // // Generate one temporary `.mogrt` per cue for Premiere-authored templates so visible Source Text is correct before import and no destructive text rewrite is needed in host.
+  // // Generate one temporary `.mogrt` per cue for Premiere-authored templates, then still let the host rewrite text as a safety pass after import.
   const modules = resolveCepNodeModules();
   if (!modules || !payloads.length || !cues.length) {
     return {
@@ -1415,7 +1422,7 @@ export async function buildPremiereTemplateCueMogrts(
     patchedCues.push({
       ...cue,
       mogrtPathOverride: tempPath,
-      skipTextApply: true
+      skipTextApply: false
     });
   }
 

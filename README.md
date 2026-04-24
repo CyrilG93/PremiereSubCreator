@@ -104,6 +104,7 @@ subcreator_install_windows.bat
 ```
 
 On Windows, the installer now opens in a dedicated console so the final setup summary stays visible instead of disappearing immediately.
+It also enables `PlayerDebugMode` for a wide `CSXS` range and checks that the registry keys were written, which helps when Premiere would otherwise keep `Window > Extensions` unavailable.
 
 ### Simple recommended order for beginners
 
@@ -297,6 +298,11 @@ Check that Python, `ffmpeg`, and the required package are installed:
 - `whisperx` for `Whisper + SRT`
 
 If Whisper transcription quality is poor, check the `Whisper language` selector in the panel. It is separate from the UI language.
+
+### `Window > Extensions` is greyed out on Windows
+
+Close Premiere Pro completely, rerun `subcreator_install_windows.bat`, let it finish, then reopen Premiere.
+The Windows installer enables CEP debug mode automatically for recent `CSXS` versions, which is required for unsigned CEP panels to appear.
 
 ### A control is missing or behaves differently from Premiere
 

@@ -189,11 +189,18 @@ endlocal
 exit /b 0
 
 :subcreator_enable_cep_debug_mode
-REM // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
-for %%v in (7 8 9 10 11 12) do (
+REM // Enable CEP debug mode for a broad CSXS range so recent Premiere/Adobe hosts do not keep the Extensions menu disabled.
+set "SUBCREATOR_DEBUG_MODE_WRITES=0"
+for /L %%v in (7,1,20) do (
   reg add "HKCU\Software\Adobe\CSXS.%%v" /v PlayerDebugMode /t REG_SZ /d 1 /f >nul 2>nul
+  reg query "HKCU\Software\Adobe\CSXS.%%v" /v PlayerDebugMode >nul 2>nul
+  if not errorlevel 1 set /a SUBCREATOR_DEBUG_MODE_WRITES+=1
 )
-echo CEP debug mode enabled for CSXS.7 to CSXS.12
+if !SUBCREATOR_DEBUG_MODE_WRITES! GTR 0 (
+  echo CEP debug mode enabled for CSXS.7 to CSXS.20
+) else (
+  echo WARNING: unable to verify CEP debug mode under HKCU\Software\Adobe\CSXS.*
+)
 goto :eof
 
 :subcreator_copy_bundled_models

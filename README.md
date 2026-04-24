@@ -358,3 +358,60 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 - Custom After Effects templates are easier to support with the `Clip Duration` workflow for timeline-aware animation.
 - Whisper stop handling, installer behavior, and Windows runtime detection are more reliable.
 - Visual Editor and Text Editor are more stable with exposed MOGRT controls, duplicated AE parameters, and preserved layout values.
+
+### 0.8.0 - 2026-03-24
+
+- Premiere-created MOGRT templates became much more usable in generation, text editing, and the Visual Editor.
+- Visual Editor controls are grouped more clearly, with unreliable or misleading Premiere controls hidden instead of exposed.
+- Dropdowns and long control lists are easier to use in the CEP panel.
+- Visual Editor loading is faster because system font scanning was removed while keeping useful font information readable.
+
+### 0.7.0 - 2026-03-20
+
+- Added support for generating subtitles with MOGRT templates created directly in Premiere Pro.
+- The Text Editor can now work with Premiere-created MOGRT text more reliably.
+- Premiere text is baked into temporary MOGRTs during generation to better preserve visible text and styling.
+- Placeholder text readback is handled more safely when editing Premiere-created templates.
+
+### 0.6.0 - 2026-03-19
+
+- Added `Whisper + SRT` corrected alignment with WhisperX support.
+- Improved the Text Editor workflows used for moving, splitting, merging, and retiming subtitle text.
+- Whisper generation better respects selected sequence ranges.
+- General timing, editing, and installer stability were improved.
+
+### 0.5.0 - 2026-03-18
+
+- Text Editor rebuilds are safer and avoid affecting unrelated subtitles later in the track.
+- Word-level retiming is more reliable, with better reuse of stored subtitle timing metadata.
+- Whisper model packaging and model-folder handling were improved for easier setup.
+- Multi-range Text Editor apply operations are more stable.
+
+### 0.4.0 - 2026-03-17
+
+- Added the first Text Editor tab for moving words between subtitle MOGRTs, splitting, merging, and rebuilding timeline subtitles.
+- Subtitle timing metadata is stored locally so later edits can reuse more precise word timing when available.
+- Whisper generation, progress feedback, gallery behavior, and panel responsiveness were improved.
+- Release packages now include the README and macOS/Windows installers.
+
+### 0.3.0 - 2026-03-16
+
+- Added the Whisper active-sequence workflow with temporary WAV export and transcription progress.
+- Subtitle generation can use the active sequence range, including In/Out points.
+- The panel theme now follows Premiere's appearance more closely.
+- Subtitle source choices were simplified around SRT and Whisper workflows.
+
+### 0.2.0 - 2026-03-16
+
+- Added the dynamic MOGRT gallery, including installed-folder scanning and manually added templates.
+- The gallery can refresh, open the installed MOGRT folder, and reuse embedded or sidecar previews.
+- Custom MOGRT templates are preserved across extension updates.
+- Visual Editor font and style handling became more reliable on macOS.
+- Startup is faster because heavier background checks are deferred.
+
+### 0.1.0 - 2026-03-13
+
+- Initial public release for Premiere Pro 2025+.
+- Included the CEP extension bundle, macOS installer, Windows installer, and README.
+- Provided the first SRT-to-MOGRT subtitle creation workflow.
+- Font mapping on some MOGRT text styles was still a known limitation.

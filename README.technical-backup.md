@@ -164,7 +164,7 @@ The filename must match the selected model (for example `base` -> `base.pt`).
 
 ## Commands
 
-- `npm run subcreator:build` Build extension to `dist/com.cyrilg93.subcreator`.
+- `npm run subcreator:build` Build extension to `dist/com.cyrilplugin.subcreator`.
 - `npm run subcreator:lint` Run ESLint.
 - `npm run subcreator:test` Run unit tests.
 - `npm run subcreator:verify` Run lint + tests + build.
@@ -213,7 +213,7 @@ The release command creates a zip in `Releases/` and includes only mandatory fil
 - `README.md`
 - `installers/subcreator_install_mac.sh`
 - `installers/subcreator_install_windows.bat`
-- `dist/com.cyrilg93.subcreator/*`
+- `dist/com.cyrilplugin.subcreator/*`
 - macOS metadata files (`.DS_Store`, `__MACOSX`, AppleDouble `._*`) are stripped from the archive.
 
 ```bash
@@ -222,7 +222,7 @@ npm run subcreator:package
 
 ## CEP notes
 
-- Extension id: `com.cyrilg93.subcreator`
+- Extension id: `com.cyrilplugin.subcreator`
 - Host: Premiere Pro `PPRO [25.0,99.9]`
 - Runtime: CSXS 11
 

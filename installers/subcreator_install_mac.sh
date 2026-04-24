@@ -3,13 +3,14 @@ set -euo pipefail
 
 # // Resolve script and project directories reliably whether the installer is launched from the release root or `installers/`.
 SUBCREATOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "${SUBCREATOR_SCRIPT_DIR}/dist/com.cyrilg93.subcreator" ]; then
+if [ -d "${SUBCREATOR_SCRIPT_DIR}/dist/com.cyrilplugin.subcreator" ]; then
   SUBCREATOR_PROJECT_DIR="${SUBCREATOR_SCRIPT_DIR}"
 else
   SUBCREATOR_PROJECT_DIR="$(cd "${SUBCREATOR_SCRIPT_DIR}/.." && pwd)"
 fi
-SUBCREATOR_SOURCE_DIR="${SUBCREATOR_PROJECT_DIR}/dist/com.cyrilg93.subcreator"
-SUBCREATOR_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilg93.subcreator"
+SUBCREATOR_SOURCE_DIR="${SUBCREATOR_PROJECT_DIR}/dist/com.cyrilplugin.subcreator"
+SUBCREATOR_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilplugin.subcreator"
+SUBCREATOR_LEGACY_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extensions/com.cyrilg93.subcreator"
 SUBCREATOR_RUNTIME_DIR="${HOME}/Library/Application Support/SubCreator"
 SUBCREATOR_RUNTIME_FILE="${SUBCREATOR_RUNTIME_DIR}/subcreator-runtime.json"
 SUBCREATOR_BUNDLED_MODELS_DIR="${SUBCREATOR_PROJECT_DIR}/Models"
@@ -23,7 +24,6 @@ SUBCREATOR_FFMPEG_PATH=""
 SUBCREATOR_PATH_HINTS=""
 SUBCREATOR_TEMPLATES_BACKUP_ROOT=""
 SUBCREATOR_TEMPLATES_BACKUP_DIR=""
-SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE=""
 
 subcreator_enable_cep_debug_mode() {
   # // Enable CEP debug mode for multiple CSXS versions to maximize Adobe host compatibility.
@@ -74,28 +74,29 @@ subcreator_extract_bundled_template_paths() {
     done
 }
 
-subcreator_backup_existing_templates() {
-  # // Preserve only user-added MOGRT files before replacing the installed CEP extension payload.
-  if [ ! -d "${SUBCREATOR_DEST_DIR}/templates/mogrt" ]; then
+subcreator_backup_templates_from_extension() {
+  # // Preserve only user-added MOGRT files from one installed extension payload.
+  local extension_dir="$1"
+  if [ ! -d "${extension_dir}/templates/mogrt" ]; then
     return 0
   fi
 
-  local backup_root=""
-  local source_root="${SUBCREATOR_DEST_DIR}/templates/mogrt"
-  local old_catalog_path="${SUBCREATOR_DEST_DIR}/assets/mogrt-catalog.json"
-  backup_root="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-mogrt.XXXXXX")"
-  SUBCREATOR_TEMPLATES_BACKUP_ROOT="${backup_root}"
-  SUBCREATOR_TEMPLATES_BACKUP_DIR="${backup_root}/mogrt"
-  SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE="${backup_root}/bundled-relative-paths.txt"
-  mkdir -p "${SUBCREATOR_TEMPLATES_BACKUP_DIR}"
-  subcreator_extract_bundled_template_paths "${old_catalog_path}" "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}"
+  local source_root="${extension_dir}/templates/mogrt"
+  local old_catalog_path="${extension_dir}/assets/mogrt-catalog.json"
+  if [ -z "${SUBCREATOR_TEMPLATES_BACKUP_ROOT}" ]; then
+    SUBCREATOR_TEMPLATES_BACKUP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-mogrt.XXXXXX")"
+    SUBCREATOR_TEMPLATES_BACKUP_DIR="${SUBCREATOR_TEMPLATES_BACKUP_ROOT}/mogrt"
+    mkdir -p "${SUBCREATOR_TEMPLATES_BACKUP_DIR}"
+  fi
+  local bundled_paths_file="${SUBCREATOR_TEMPLATES_BACKUP_ROOT}/bundled-relative-paths-$(basename "${extension_dir}").txt"
+  subcreator_extract_bundled_template_paths "${old_catalog_path}" "${bundled_paths_file}"
 
   while IFS= read -r -d '' source_path; do
     local relative_path=""
     local target_path=""
     relative_path="${source_path#${source_root}/}"
 
-    if [ -s "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}" ] && grep -Fqx "${relative_path}" "${SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE}" >/dev/null 2>&1; then
+    if [ -s "${bundled_paths_file}" ] && grep -Fqx "${relative_path}" "${bundled_paths_file}" >/dev/null 2>&1; then
       continue
     fi
 
@@ -103,6 +104,12 @@ subcreator_backup_existing_templates() {
     mkdir -p "$(dirname "${target_path}")"
     cp "${source_path}" "${target_path}"
   done < <(find "${source_root}" -type f -print0)
+}
+
+subcreator_backup_existing_templates() {
+  # // Preserve custom templates from both the current and legacy CEP folder names before replacement.
+  subcreator_backup_templates_from_extension "${SUBCREATOR_DEST_DIR}"
+  subcreator_backup_templates_from_extension "${SUBCREATOR_LEGACY_DEST_DIR}"
 }
 
 subcreator_restore_existing_templates() {
@@ -123,7 +130,6 @@ subcreator_restore_existing_templates() {
   fi
   SUBCREATOR_TEMPLATES_BACKUP_ROOT=""
   SUBCREATOR_TEMPLATES_BACKUP_DIR=""
-  SUBCREATOR_TEMPLATES_BUNDLED_PATHS_FILE=""
 }
 
 subcreator_copy_bundled_whisper_models() {
@@ -510,6 +516,7 @@ fi
 mkdir -p "$(dirname "${SUBCREATOR_DEST_DIR}")"
 subcreator_backup_existing_templates
 rm -rf "${SUBCREATOR_DEST_DIR}"
+rm -rf "${SUBCREATOR_LEGACY_DEST_DIR}"
 cp -R "${SUBCREATOR_SOURCE_DIR}" "${SUBCREATOR_DEST_DIR}"
 subcreator_restore_existing_templates
 

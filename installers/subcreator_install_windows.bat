@@ -16,13 +16,14 @@ REM // Resolve current directory and expected build output.
 for %%I in ("%~dp0.") do set "SUBCREATOR_SCRIPT_DIR=%%~fI"
 if not "!SUBCREATOR_SCRIPT_DIR:~-1!"=="\" set "SUBCREATOR_SCRIPT_DIR=!SUBCREATOR_SCRIPT_DIR!\"
 REM // Resolve the project root whether the installer is launched from the release root or from an `installers` subfolder.
-if exist "!SUBCREATOR_SCRIPT_DIR!dist\com.cyrilg93.subcreator" (
+if exist "!SUBCREATOR_SCRIPT_DIR!dist\com.cyrilplugin.subcreator" (
   for %%I in ("!SUBCREATOR_SCRIPT_DIR!.") do set "SUBCREATOR_PROJECT_DIR=%%~fI"
 ) else (
   for %%I in ("!SUBCREATOR_SCRIPT_DIR!..") do set "SUBCREATOR_PROJECT_DIR=%%~fI"
 )
-set "SUBCREATOR_SOURCE_DIR=%SUBCREATOR_PROJECT_DIR%\dist\com.cyrilg93.subcreator"
-set "SUBCREATOR_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subcreator"
+set "SUBCREATOR_SOURCE_DIR=%SUBCREATOR_PROJECT_DIR%\dist\com.cyrilplugin.subcreator"
+set "SUBCREATOR_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilplugin.subcreator"
+set "SUBCREATOR_LEGACY_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subcreator"
 set "SUBCREATOR_RUNTIME_DIR=%APPDATA%\SubCreator"
 set "SUBCREATOR_RUNTIME_FILE=%SUBCREATOR_RUNTIME_DIR%\subcreator-runtime.json"
 set "SUBCREATOR_BUNDLED_MODELS_DIR=%SUBCREATOR_PROJECT_DIR%\Models"
@@ -40,6 +41,7 @@ set "SUBCREATOR_FFMPEG_PATH="
 set "SUBCREATOR_PATH_HINTS="
 set "SUBCREATOR_TEMPLATE_BACKUP_ROOT="
 set "SUBCREATOR_TEMPLATE_BACKUP_DIR="
+set "SUBCREATOR_TEMPLATE_SOURCE_DIR="
 set "SUBCREATOR_SKIP_WHISPER_SETUP="
 
 REM // Validate build output is present before installing.
@@ -51,14 +53,11 @@ if not exist "%SUBCREATOR_SOURCE_DIR%" (
 
 REM // Ensure destination parent exists and refresh extension files.
 if not exist "%APPDATA%\Adobe\CEP\extensions" mkdir "%APPDATA%\Adobe\CEP\extensions"
-REM // Preserve previously added gallery templates before refreshing the CEP extension folder.
-if exist "%SUBCREATOR_DEST_DIR%\templates\mogrt" (
-  set "SUBCREATOR_TEMPLATE_BACKUP_ROOT=%TEMP%\subcreator-mogrt-backup-%RANDOM%%RANDOM%"
-  set "SUBCREATOR_TEMPLATE_BACKUP_DIR=!SUBCREATOR_TEMPLATE_BACKUP_ROOT!\mogrt"
-  mkdir "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" >nul 2>nul
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$templates = [IO.Path]::GetFullPath($env:SUBCREATOR_DEST_DIR + '\templates\mogrt'); $backup = [IO.Path]::GetFullPath($env:SUBCREATOR_TEMPLATE_BACKUP_DIR); $catalogPath = Join-Path ([IO.Path]::GetFullPath($env:SUBCREATOR_DEST_DIR)) 'assets\mogrt-catalog.json'; $bundled = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase); if (Test-Path -LiteralPath $catalogPath) { try { $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json; foreach ($template in @($catalog.templates)) { $relative = [string]$template.relativePath; if ($relative) { $null = $bundled.Add(($relative -replace '\\','/').TrimStart('/')) } } } catch {} }; if (Test-Path -LiteralPath $templates) { Get-ChildItem -LiteralPath $templates -Recurse -File | ForEach-Object { $relative = ($_.FullName.Substring($templates.Length).TrimStart('\') -replace '\\','/'); if (-not $bundled.Contains($relative)) { $target = Join-Path $backup $relative; $parent = Split-Path -Parent $target; if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $target -Force } } }" >nul
-)
+REM // Preserve user-added gallery templates from both the new and legacy CEP folder names.
+call :subcreator_backup_templates_from_dir "%SUBCREATOR_DEST_DIR%"
+call :subcreator_backup_templates_from_dir "%SUBCREATOR_LEGACY_DEST_DIR%"
 if exist "%SUBCREATOR_DEST_DIR%" rmdir /s /q "%SUBCREATOR_DEST_DIR%"
+if exist "%SUBCREATOR_LEGACY_DEST_DIR%" rmdir /s /q "%SUBCREATOR_LEGACY_DEST_DIR%"
 xcopy "%SUBCREATOR_SOURCE_DIR%" "%SUBCREATOR_DEST_DIR%" /e /i /h /y >nul
 REM // Merge preserved user-added templates back without overwriting the freshly installed bundle files.
 if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" (
@@ -187,6 +186,18 @@ if /I not "%SUBCREATOR_NO_PAUSE%"=="1" (
 )
 endlocal
 exit /b 0
+
+:subcreator_backup_templates_from_dir
+REM // Preserve only user-added MOGRT files from one installed extension payload.
+set "SUBCREATOR_TEMPLATE_SOURCE_DIR=%~1"
+if not exist "%SUBCREATOR_TEMPLATE_SOURCE_DIR%\templates\mogrt" goto :eof
+if not defined SUBCREATOR_TEMPLATE_BACKUP_ROOT (
+  set "SUBCREATOR_TEMPLATE_BACKUP_ROOT=%TEMP%\subcreator-mogrt-backup-%RANDOM%%RANDOM%"
+  set "SUBCREATOR_TEMPLATE_BACKUP_DIR=!SUBCREATOR_TEMPLATE_BACKUP_ROOT!\mogrt"
+  mkdir "!SUBCREATOR_TEMPLATE_BACKUP_DIR!" >nul 2>nul
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$source = [IO.Path]::GetFullPath($env:SUBCREATOR_TEMPLATE_SOURCE_DIR); $templates = Join-Path $source 'templates\mogrt'; $backup = [IO.Path]::GetFullPath($env:SUBCREATOR_TEMPLATE_BACKUP_DIR); $catalogPath = Join-Path $source 'assets\mogrt-catalog.json'; $bundled = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase); if (Test-Path -LiteralPath $catalogPath) { try { $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json; foreach ($template in @($catalog.templates)) { $relative = [string]$template.relativePath; if ($relative) { $null = $bundled.Add(($relative -replace '\\','/').TrimStart('/')) } } } catch {} }; if (Test-Path -LiteralPath $templates) { Get-ChildItem -LiteralPath $templates -Recurse -File | ForEach-Object { $relative = ($_.FullName.Substring($templates.Length).TrimStart('\') -replace '\\','/'); if (-not $bundled.Contains($relative)) { $target = Join-Path $backup $relative; $parent = Split-Path -Parent $target; if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $target -Force } } }" >nul
+goto :eof
 
 :subcreator_enable_cep_debug_mode
 REM // Enable CEP debug mode for a broad CSXS range so recent Premiere/Adobe hosts do not keep the Extensions menu disabled.

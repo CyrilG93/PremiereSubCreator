@@ -1,4 +1,4 @@
-// // Build the CEP extension payload into dist/com.cyrilg93.subcreator.
+// // Build the CEP extension payload into dist/com.cyrilplugin.subcreator.
 import { mkdir, rm, cp, readdir, writeFile, stat, copyFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const sourceRoot = path.join(projectRoot, "src");
-const distRoot = path.join(projectRoot, "dist", "com.cyrilg93.subcreator");
+const distRoot = path.join(projectRoot, "dist", "com.cyrilplugin.subcreator");
 const templatesRoot = path.join(projectRoot, "templates", "mogrt");
 const packageJsonPath = path.join(projectRoot, "package.json");
 const releaseRepoSlug = "CyrilG93/PremiereSubCreator";

@@ -7,9 +7,10 @@ import { spawn } from "node:child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
-const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilg93.subcreator");
+const distExtensionDir = path.join(projectRoot, "dist", "com.cyrilplugin.subcreator");
 const distMetaPath = path.join(distExtensionDir, "assets", "subcreator-meta.json");
 const distManifestPath = path.join(distExtensionDir, "CSXS", "manifest.xml");
+const distExtensionName = path.basename(distExtensionDir);
 const bundledModelsDir = path.join(projectRoot, "Models");
 const bundledFontsDir = path.join(projectRoot, "Fonts");
 const releasesDir = path.join(projectRoot, "Releases");
@@ -170,17 +171,18 @@ async function subcreatorPackageRelease() {
 
   const bundleName = `SubCreator-v${version}`;
   const stagingBundleDir = path.join(stagingRoot, bundleName);
+  const stagingDistDir = path.join(stagingBundleDir, "dist");
   const zipPath = path.join(releasesDir, `${bundleName}.zip`);
 
   await rm(stagingRoot, { recursive: true, force: true });
-  await mkdir(stagingBundleDir, { recursive: true });
+  await mkdir(stagingDistDir, { recursive: true });
   await mkdir(releasesDir, { recursive: true });
 
   // // Copy only mandatory installation payload: extension, root-level installers, README, and bundled Whisper models when available.
   const copyTasks = [
     cp(path.join(projectRoot, "README.md"), path.join(stagingBundleDir, "README.md")),
     copyInstallerPayloadToReleaseRoot(path.join(projectRoot, "installers"), stagingBundleDir),
-    cp(path.join(projectRoot, "dist"), path.join(stagingBundleDir, "dist"), { recursive: true })
+    cp(distExtensionDir, path.join(stagingDistDir, distExtensionName), { recursive: true })
   ];
   try {
     const bundledModelsStat = await stat(bundledModelsDir);

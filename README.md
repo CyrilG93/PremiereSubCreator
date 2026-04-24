@@ -316,10 +316,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
-### 0.12.1 - 2026-04-23
+### 0.13.0 - 2026-04-24
 
-- The Windows installer is more robust when detecting Python, which avoids false `Unable to parse Python version` errors on some PCs where `Python 3.11.8` was already installed correctly.
-- Whisper setup no longer depends on the fragile batch-label flow that could skip installation even when a supported Python version was available.
+- Premiere-created MOGRT subtitle generation is more reliable on longer sequences, with fewer missing text layers during batch creation.
+- Whisper analysis now shows clearer progress with an estimated remaining time while the longest step is running.
+- The extension folder now uses the new `com.cyrilplugin.subcreator` identifier, with installer migration from the old folder name.
+- The bundled Base template set now includes the new `Normal Subs Style` model.
+- The Windows installer is more robust when detecting Python and setting up Whisper.
 
 ### 0.12.0 - 2026-04-22
 

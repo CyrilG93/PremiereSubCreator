@@ -5972,6 +5972,11 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         continue;
       }
 
+      var textApplyDurationApplied = subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds);
+      if (textApplyDurationApplied) {
+        durationAdjusted += 1;
+      }
+
       if (sourceSnapshot.visualChanges && sourceSnapshot.visualChanges.length > 0) {
         var cloneStats = subcreator_apply_visual_changes_to_track_item(insertedTrackItem, sourceSnapshot.visualChanges, debugLines);
         clonedStyleUpdates += cloneStats.updatedCount;
@@ -6017,10 +6022,12 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         debugLines.push("text_apply text_update_missing index=" + String(editedIndex));
       }
 
-      if (subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds)) {
-        durationAdjusted += 1;
-      } else {
-        debugLines.push("text_apply duration_failed index=" + String(editedIndex));
+      if (!textApplyDurationApplied) {
+        if (subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds)) {
+          durationAdjusted += 1;
+        } else {
+          debugLines.push("text_apply duration_failed index=" + String(editedIndex));
+        }
       }
 
       selectedTrackItems.push(insertedTrackItem);
@@ -7720,6 +7727,36 @@ function subcreator_try_set_mogrt_text_property(property, textValue, templatePay
   return subcreator_try_apply_mogrt_text_property_raw_value(property, sourceRawValue, textValue, debugLines, debugPrefix);
 }
 
+function subcreator_sleep_ms(milliseconds) {
+  // // Give Premiere time to finish initializing newly imported MOGRT controls before writing text into them.
+  try {
+    if (typeof $ !== "undefined" && $ && typeof $.sleep === "function") {
+      $.sleep(Math.max(0, Number(milliseconds) || 0));
+    }
+  } catch (sleepError) {}
+}
+
+function subcreator_collect_unique_mogrt_components_with_retry(trackItem, debugLines, debugPrefix) {
+  // // Premiere-authored MOGRTs can expose their component tree a few frames after importMGT returns.
+  var components = [];
+  for (var attemptIndex = 0; attemptIndex < 6; attemptIndex += 1) {
+    components = subcreator_collect_unique_mogrt_components(trackItem);
+    if (components.length > 0) {
+      if (attemptIndex > 0) {
+        subcreator_debug_push_limited(
+          debugLines,
+          String(debugPrefix || "") + " components_ready_after_retry=" + String(attemptIndex),
+          120
+        );
+      }
+      return components;
+    }
+    subcreator_sleep_ms(80);
+  }
+
+  return components;
+}
+
 function subcreator_collect_mogrt_text_payload_snapshots_recursive(propertyCollection, pathPrefix, outList) {
   // // Capture text-bearing raw payloads so rebuilt MOGRT clips can reuse the original text style document state.
   if (!propertyCollection || typeof propertyCollection.numItems !== "number") {
@@ -8053,7 +8090,7 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
     };
   }
 
-  var components = subcreator_collect_unique_mogrt_components(trackItem);
+  var components = subcreator_collect_unique_mogrt_components_with_retry(trackItem, debugLines, debugPrefix);
   if (components.length < 1) {
     return {
       textUpdates: 0,
@@ -8116,6 +8153,41 @@ function subcreator_try_set_mogrt_controls(trackItem, textValue, animationMode, 
       debugPrefix ? debugPrefix + " component=" + String(textComponentIndex) : "component=" + String(textComponentIndex),
       "text"
     );
+  }
+
+  if (!skipTextUpdates && stats.textUpdates < 1) {
+    for (var retryIndex = 0; retryIndex < 3; retryIndex += 1) {
+      subcreator_sleep_ms(120);
+      components = subcreator_collect_unique_mogrt_components(trackItem);
+      for (var retryComponentIndex = 0; retryComponentIndex < components.length; retryComponentIndex += 1) {
+        var retryComponent = components[retryComponentIndex];
+        if (!retryComponent || !retryComponent.properties || retryComponent.properties.numItems < 1) {
+          continue;
+        }
+
+        subcreator_try_set_controls_recursively(
+          retryComponent.properties,
+          textValue,
+          animationMode,
+          styleConfig,
+          templatePayloadState,
+          false,
+          stats,
+          debugLines,
+          debugPrefix ? debugPrefix + " text_retry=" + String(retryIndex + 1) : "text_retry=" + String(retryIndex + 1),
+          "text"
+        );
+      }
+
+      if (stats.textUpdates > 0) {
+        subcreator_debug_push_limited(
+          debugLines,
+          String(debugPrefix || "") + " text_ready_after_retry=" + String(retryIndex + 1),
+          120
+        );
+        break;
+      }
+    }
   }
 
   subcreator_debug_push_limited(
@@ -9190,6 +9262,10 @@ function subcreator_apply_captions(payloadEncoded) {
           insertedMogrt += 1;
           lastImportMode = importAttempt.usedTimeMode;
           lastImportPath = importAttempt.usedPath;
+          var durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
+          if (durationApplied) {
+            durationAdjusted += 1;
+          }
           var controlStats = subcreator_try_set_mogrt_controls(
             importAttempt.trackItem,
             text,
@@ -9211,7 +9287,7 @@ function subcreator_apply_captions(payloadEncoded) {
           if (controlStats.layoutUpdates > 0) {
             updatedLayout += controlStats.layoutUpdates;
           }
-          if (subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
+          if (!durationApplied && subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
             durationAdjusted += 1;
           }
           subcreator_debug_push_limited(

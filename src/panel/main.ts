@@ -4659,6 +4659,66 @@ function buildWhisperProgressLabel(progress: WhisperProgressUpdate): string {
   });
 }
 
+function formatProgressDuration(totalSeconds: number): string {
+  // // Format generated progress durations like Whisper/tqdm so elapsed/remaining text stays compact.
+  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function estimateWhisperRuntimeSeconds(audioDurationSeconds: number, modelName: string): number {
+  // // Estimate runtime only as a fallback when Whisper does not stream tqdm progress from CEP.
+  const duration = Math.max(1, Number(audioDurationSeconds) || 0);
+  const normalizedModel = String(modelName || "").toLowerCase();
+  let multiplier = 0.75;
+  if (normalizedModel.includes("tiny")) {
+    multiplier = 0.35;
+  } else if (normalizedModel.includes("base")) {
+    multiplier = 0.6;
+  } else if (normalizedModel.includes("small")) {
+    multiplier = 1.0;
+  } else if (normalizedModel.includes("medium")) {
+    multiplier = 1.8;
+  } else if (normalizedModel.includes("large")) {
+    multiplier = 3.0;
+  } else if (normalizedModel.includes("turbo")) {
+    multiplier = 0.55;
+  }
+
+  return Math.max(20, duration * multiplier);
+}
+
+function buildEstimatedWhisperProgress(
+  elapsedSeconds: number,
+  audioDurationSeconds: number,
+  modelName: string
+): { percent: number; remainingSeconds: number } {
+  // // Keep fallback progress moving conservatively and leave the final stretch for real process completion.
+  const expectedSeconds = estimateWhisperRuntimeSeconds(audioDurationSeconds, modelName);
+  const percent = Math.max(1, Math.min(95, Math.round((Math.max(0, elapsedSeconds) / expectedSeconds) * 100)));
+  const remainingSeconds = Math.max(0, Math.round(expectedSeconds - Math.max(0, elapsedSeconds)));
+  return { percent, remainingSeconds };
+}
+
+function buildEstimatedWhisperProgressLabel(percent: number, remainingSeconds: number, elapsedSeconds: number): string {
+  // // Tell the user when progress is estimated so it is not confused with Whisper's real tqdm percentage.
+  if (remainingSeconds > 0) {
+    return translateTemplate("progress.whisperAnalysisEstimatedRemaining", {
+      percent: String(percent),
+      remaining: formatProgressDuration(remainingSeconds)
+    });
+  }
+
+  return translateTemplate("progress.whisperAnalysisElapsed", {
+    elapsed: formatProgressDuration(elapsedSeconds)
+  });
+}
+
 function mapCorrectedAlignPercentToGenerateProgress(progress: WhisperProgressUpdate): number {
   // // Reserve the middle of the generate bar for corrected transcript alignment while keeping room for export and apply.
   const clampedPercent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
@@ -4824,13 +4884,53 @@ async function loadCuesFromSelectedSource(
       await onProgress(22, translate("progress.whisperAnalyzing"), true);
     }
     assertNotCancelled();
-    const whisperResult = await transcribeWithWhisper({
-      audioPath: whisperAudioPath,
-      languageCode: options.languageCode,
-      model: options.whisperModel
-    }, (progress) => {
-      void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
-    });
+    let latestRealWhisperProgressAt = 0;
+    let latestFallbackPercent = 0;
+    const whisperStartedAt = Date.now();
+    const audioDurationSeconds = Number(exportResult.audioDurationSeconds || 0);
+    const fallbackProgressTimer =
+      Number.isFinite(audioDurationSeconds) && audioDurationSeconds > 0
+        ? window.setInterval(() => {
+            if (Date.now() - latestRealWhisperProgressAt < 2500) {
+              return;
+            }
+            const elapsedSeconds = Math.floor((Date.now() - whisperStartedAt) / 1000);
+            const estimatedProgress = buildEstimatedWhisperProgress(elapsedSeconds, audioDurationSeconds, options.whisperModel);
+            if (estimatedProgress.percent < latestFallbackPercent) {
+              return;
+            }
+            latestFallbackPercent = estimatedProgress.percent;
+            void updateGenerateProgress(
+              mapWhisperPercentToGenerateProgress({ percent: estimatedProgress.percent, detail: "estimated" }),
+              buildEstimatedWhisperProgressLabel(
+                estimatedProgress.percent,
+                estimatedProgress.remainingSeconds,
+                elapsedSeconds
+              )
+            );
+          }, 1000)
+        : window.setInterval(() => {
+            if (Date.now() - latestRealWhisperProgressAt < 2500) {
+              return;
+            }
+            const elapsedSeconds = Math.floor((Date.now() - whisperStartedAt) / 1000);
+            void updateGenerateProgress(22, translateTemplate("progress.whisperAnalysisElapsed", {
+              elapsed: formatProgressDuration(elapsedSeconds)
+            }));
+          }, 1000);
+    let whisperResult;
+    try {
+      whisperResult = await transcribeWithWhisper({
+        audioPath: whisperAudioPath,
+        languageCode: options.languageCode,
+        model: options.whisperModel
+      }, (progress) => {
+        latestRealWhisperProgressAt = Date.now();
+        void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
+      });
+    } finally {
+      window.clearInterval(fallbackProgressTimer);
+    }
     assertNotCancelled();
 
     let cues: CaptionCue[] = [];

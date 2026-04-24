@@ -86,6 +86,7 @@ interface WhisperSequenceExportResult {
   sequenceName?: string;
   rangeStartSeconds?: number;
   rangeEndSeconds?: number;
+  audioDurationSeconds?: number;
 }
 
 interface ActiveSequenceRangeResult {
@@ -255,6 +256,9 @@ interface CepNodeModules {
     mkdirSync: (path: string, options: { recursive: boolean }) => void;
     readdirSync: (path: string) => string[];
     readFileSync: (path: string, encoding?: string) => string | Uint8Array;
+    openSync?: (path: string, flags: string) => number;
+    readSync?: (fd: number, buffer: Uint8Array, offset: number, length: number, position: number) => number;
+    closeSync?: (fd: number) => void;
     statSync: (path: string) => {
       size?: number;
       mtimeMs?: number;
@@ -2520,6 +2524,67 @@ function resolveWhisperSrtPath(modules: CepNodeModules, outputDir: string, audio
   return buildWhisperOutputPath(modules, outputDir, audioPath, "srt");
 }
 
+function readWavDurationSeconds(modules: CepNodeModules, wavPath: string): number | undefined {
+  // // Estimate exported WAV duration from the RIFF byte rate so Whisper progress can move even when stderr is quiet.
+  const normalizedPath = String(wavPath || "").trim();
+  if (!normalizedPath || !modules.fs.existsSync(normalizedPath)) {
+    return undefined;
+  }
+
+  try {
+    let header = new Uint8Array();
+    if (modules.fs.openSync && modules.fs.readSync && modules.fs.closeSync) {
+      const fd = modules.fs.openSync(normalizedPath, "r");
+      try {
+        const buffer = new Uint8Array(65536);
+        const bytesRead = modules.fs.readSync(fd, buffer, 0, buffer.length, 0);
+        header = buffer.slice(0, bytesRead);
+      } finally {
+        modules.fs.closeSync(fd);
+      }
+    } else {
+      const rawHeader = modules.fs.readFileSync(normalizedPath) as unknown as Uint8Array;
+      header = rawHeader.slice(0, 65536);
+    }
+
+    const readAscii = (offset: number, length: number): string =>
+      Array.from(header.slice(offset, offset + length))
+        .map((byte) => String.fromCharCode(byte))
+        .join("");
+    const readUInt32Le = (offset: number): number =>
+      ((header[offset] || 0) |
+        ((header[offset + 1] || 0) << 8) |
+        ((header[offset + 2] || 0) << 16) |
+        ((header[offset + 3] || 0) << 24)) >>>
+      0;
+
+    if (!header || header.length < 44 || readAscii(0, 4) !== "RIFF" || readAscii(8, 4) !== "WAVE") {
+      return undefined;
+    }
+
+    let byteRate = 0;
+    let dataSize = 0;
+    let offset = 12;
+    while (offset + 8 <= header.length) {
+      const chunkId = readAscii(offset, 4);
+      const chunkSize = readUInt32Le(offset + 4);
+      const chunkStart = offset + 8;
+      if (chunkId === "fmt " && chunkStart + 12 <= header.length) {
+        byteRate = readUInt32Le(chunkStart + 8);
+      } else if (chunkId === "data") {
+        dataSize = chunkSize;
+        break;
+      }
+      offset = chunkStart + chunkSize + (chunkSize % 2);
+    }
+
+    const duration = byteRate > 0 && dataSize > 0 ? dataSize / byteRate : 0;
+    return Number.isFinite(duration) && duration > 0 ? duration : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveWhisperJsonPath(modules: CepNodeModules, outputDir: string, audioPath: string): string {
   // // Resolve Whisper JSON output so the planner can reuse precise word timestamps when available.
   return buildWhisperOutputPath(modules, outputDir, audioPath, "json");
@@ -3119,7 +3184,11 @@ export async function exportActiveSequenceAudioForWhisper(
     rangeStartSeconds: Number.isFinite(Number(response.data?.rangeStartSeconds))
       ? Number(response.data?.rangeStartSeconds)
       : undefined,
-    rangeEndSeconds: Number.isFinite(Number(response.data?.rangeEndSeconds)) ? Number(response.data?.rangeEndSeconds) : undefined
+    rangeEndSeconds: Number.isFinite(Number(response.data?.rangeEndSeconds)) ? Number(response.data?.rangeEndSeconds) : undefined,
+    audioDurationSeconds:
+      Number.isFinite(Number(response.data?.audioDurationSeconds)) && Number(response.data?.audioDurationSeconds) > 0
+        ? Number(response.data?.audioDurationSeconds)
+        : readWavDurationSeconds(modules, String(response.data?.audioPath ?? outputPath))
   };
 }
 

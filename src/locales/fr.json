@@ -63,6 +63,8 @@
   "progress.whisperAnalyzing": "Analyse audio avec Whisper...",
   "progress.whisperAnalysis": "Analyse Whisper: {percent}%",
   "progress.whisperAnalysisRemaining": "Analyse Whisper: {percent}% - {remaining} restant",
+  "progress.whisperAnalysisEstimatedRemaining": "Analyse Whisper: {percent}% estime - {remaining} restant",
+  "progress.whisperAnalysisElapsed": "Analyse Whisper: {elapsed} ecoule",
   "progress.correctedAligning": "Alignement du SRT/texte corrige...",
   "progress.correctedAlignAnalysis": "Alignement Whisper + SRT: {percent}%",
   "progress.parseWhisper": "Lecture des timings Whisper...",

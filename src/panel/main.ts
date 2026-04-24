@@ -195,7 +195,6 @@ const elements = {
   whisperLanguageField: document.querySelector<HTMLElement>("#whisperLanguageField"),
   whisperLanguage: document.querySelector<HTMLSelectElement>("#whisperLanguage"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
-  whisperSequenceHint: document.querySelector<HTMLElement>("#whisperSequenceHint"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
   maxWords: document.querySelector<HTMLInputElement>("#maxWords"),
@@ -1888,10 +1887,6 @@ function toggleSourceFields(): void {
 
   if (elements.whisperLanguageField) {
     elements.whisperLanguageField.style.display = whisperModeActive || correctedAlignModeActive ? "grid" : "none";
-  }
-
-  if (elements.whisperSequenceHint) {
-    elements.whisperSequenceHint.style.display = whisperModeActive || correctedAlignModeActive ? "block" : "none";
   }
 
   if (elements.whisperSequenceRange) {

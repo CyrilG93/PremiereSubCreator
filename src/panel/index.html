@@ -100,9 +100,6 @@
               />
               <button id="correctedTranscriptBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Parcourir</button>
             </div>
-            <p class="hint" data-i18n="help.correctedAlign">
-              Use a corrected .srt or .txt, export the active sequence audio, then align the corrected text with WhisperX.
-            </p>
             <p id="correctedAlignHint" class="hint" hidden>
               Whisper + SRT requires Python whisperx. Read the README to install it.
             </p>
@@ -121,9 +118,6 @@
             <p id="whisperModelHint" class="hint" hidden>
               Aucun modele Whisper installe. Lire le README pour les telecharger.
             </p>
-            <p class="hint" data-i18n="help.whisper">
-              Whisper doit etre installe localement et accessible via la commande `whisper`.
-            </p>
           </section>
 
           <section class="field field--full" id="sequenceAudioField">
@@ -140,12 +134,6 @@
                 <select id="whisperLanguage" aria-label="Whisper language"></select>
               </label>
             </div>
-            <p id="whisperSequenceHint" class="hint" data-i18n="help.whisperSequence" style="display: none">
-              La sequence active est exportee temporairement en WAV puis analysee par Whisper.
-            </p>
-            <p id="whisperLanguageHint" class="hint" data-i18n="help.whisperLanguage">
-              La langue Whisper est separee de la langue de l'interface.
-            </p>
           </section>
 
           <label class="field">
@@ -213,7 +201,6 @@
       <section id="modeVisual" class="mode-panel" data-mode="visual" hidden>
         <section class="panel__grid">
           <section class="field field--full">
-            <span data-i18n="visual.title">Edition visuelle des MOGRT selectionnes</span>
             <p class="hint" data-i18n="visual.description">
               Selectionne un ou plusieurs MOGRT Sub Creator sur la timeline, lis les parametres disponibles, puis applique les changements.
             </p>
@@ -255,9 +242,8 @@
       <section id="modeText" class="mode-panel" data-mode="text" hidden>
         <section class="panel__grid">
           <section class="field field--full">
-            <span data-i18n="text.title">Text editor for selected MOGRT clips</span>
-            <p class="hint" data-i18n="text.description">
-              Read the selected subtitle MOGRT clips, move words between neighboring subtitles, split or merge blocks, then apply the rebuilt timing.
+            <p class="hint" data-i18n="text.creationTemplateReminder">
+              Regenerated text uses the MOGRT selected in Creation.
             </p>
             <div class="inline-row inline-row--double">
               <button id="textReadButton" type="button" class="button button--secondary" data-i18n="action.readTextItems">

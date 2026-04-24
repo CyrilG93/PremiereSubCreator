@@ -4645,8 +4645,17 @@ function mapWhisperPercentToGenerateProgress(progress: WhisperProgressUpdate): n
 
 function buildWhisperProgressLabel(progress: WhisperProgressUpdate): string {
   // // Keep transcription feedback explicit so a long Whisper run looks active instead of blocked.
+  const percent = String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))));
+  const remaining = String(progress.remaining || "").trim();
+  if (remaining) {
+    return translateTemplate("progress.whisperAnalysisRemaining", {
+      percent,
+      remaining
+    });
+  }
+
   return translateTemplate("progress.whisperAnalysis", {
-    percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
+    percent
   });
 }
 

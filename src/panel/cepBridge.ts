@@ -77,6 +77,7 @@ interface CepSpawnedChild {
 export interface WhisperProgressUpdate {
   percent: number;
   detail: string;
+  remaining?: string;
 }
 
 interface WhisperSequenceExportResult {
@@ -2600,6 +2601,32 @@ function resolveBundledPythonScriptPath(
   return modules.fs.existsSync(candidatePath) ? candidatePath : "";
 }
 
+function normalizeWhisperEta(rawValue: string): string {
+  // // Normalize tqdm ETA strings so the panel can show stable `MM:SS` or `HH:MM:SS` remaining values.
+  const parts = String(rawValue || "")
+    .trim()
+    .split(":")
+    .map((part) => Number(part));
+
+  if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part) || part < 0)) {
+    return "";
+  }
+
+  const paddedParts = parts.map((part) => String(Math.floor(part)).padStart(2, "0"));
+  return paddedParts.join(":");
+}
+
+function extractWhisperRemainingTime(output: string, progressMatchIndex: number): string {
+  // // Read the latest tqdm ETA segment, for example `[00:42<01:18, ...]`.
+  const tail = String(output || "").slice(Math.max(0, progressMatchIndex));
+  const matches = Array.from(tail.matchAll(/\[[^\]\r\n<]*<\s*([0-9]+(?::[0-9]{1,2}){1,2})\s*(?:,|\])/g));
+  if (!matches.length) {
+    return "";
+  }
+
+  return normalizeWhisperEta(String(matches[matches.length - 1][1] || ""));
+}
+
 function extractWhisperProgressUpdate(output: string): WhisperProgressUpdate | null {
   // // Parse Whisper/tqdm stderr progress like ` 42%|...` into a panel-friendly percentage update.
   const normalized = String(output || "");
@@ -2614,9 +2641,11 @@ function extractWhisperProgressUpdate(output: string): WhisperProgressUpdate | n
 
   const lastMatch = matches[matches.length - 1];
   const percent = Math.max(0, Math.min(100, Number(lastMatch[1] || 0)));
+  const remaining = extractWhisperRemainingTime(normalized, Number(lastMatch.index || 0));
   return {
     percent,
-    detail: `Whisper ${percent}%`
+    detail: `Whisper ${percent}%`,
+    ...(remaining ? { remaining } : {})
   };
 }
 

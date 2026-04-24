@@ -62,6 +62,7 @@
   "progress.exportSequence": "Export du mix audio de la sequence...",
   "progress.whisperAnalyzing": "Analyse audio avec Whisper...",
   "progress.whisperAnalysis": "Analyse Whisper: {percent}%",
+  "progress.whisperAnalysisRemaining": "Analyse Whisper: {percent}% - {remaining} restant",
   "progress.correctedAligning": "Alignement du SRT/texte corrige...",
   "progress.correctedAlignAnalysis": "Alignement Whisper + SRT: {percent}%",
   "progress.parseWhisper": "Lecture des timings Whisper...",

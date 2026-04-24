@@ -9325,11 +9325,13 @@ function subcreator_apply_captions(payloadEncoded) {
               bakedValidationDebug,
               bakedValidationPrefix
             );
+            // // Premiere can briefly import a pre-baked MOGRT without its text layer during long batches, so retry with progressive backoff before falling back to a marker.
+            var bakedRetryDelaysMs = [220, 460, 860, 1400, 2200];
             var bakedRetryIndex = 0;
-            while (!bakedTextValid && bakedRetryIndex < 2) {
+            while (!bakedTextValid && bakedRetryIndex < bakedRetryDelaysMs.length) {
               bakedTextRetries += 1;
               subcreator_remove_track_item_without_ripple(importAttempt.trackItem);
-              subcreator_sleep_ms(180 + bakedRetryIndex * 120);
+              subcreator_sleep_ms(bakedRetryDelaysMs[bakedRetryIndex]);
               importAttempt = subcreator_try_import_mogrt(
                 sequence,
                 cuePathCandidates,
@@ -9404,7 +9406,8 @@ function subcreator_apply_captions(payloadEncoded) {
               String(subcreator_to_seconds(importAttempt.trackItem.end || importAttempt.trackItem.outPoint || importAttempt.trackItem.endTime)),
             120
           );
-          subcreator_sleep_ms(Boolean(cue.skipTextApply) ? 45 : 20);
+          // // Give Premiere a small breather between pre-baked imports so Essential Graphics has time to materialize each text layer.
+          subcreator_sleep_ms(Boolean(cue.skipTextApply) ? 90 : 20);
           continue;
         }
       }

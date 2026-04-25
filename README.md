@@ -279,7 +279,6 @@ If you want to author an After Effects template specifically for Sub Creator, re
 
 ## Known limitations
 
-- `Whisper` and `Whisper + SRT` require local Python tools.
 - Some MOGRT controls are not exposed by Premiere's API.
 - Some controls may read correctly but still be more practical to change in Premiere's `Properties` panel.
 - Premiere-authored MOGRTs can expose fewer reliable style controls than After Effects-authored MOGRTs.

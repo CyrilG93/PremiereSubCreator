@@ -329,6 +329,13 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.14.0 - 2026-04-27
+
+- Added a new `WhisperX` subtitle source for more precise word timing from active sequence audio.
+- WhisperX generation now uses the selected local Whisper model first, then applies WhisperX alignment to avoid unnecessary transcription model downloads.
+- WhisperX subtitle clips are merged and padded for better readability, avoiding extremely short timeline clips.
+- Subtitle generation keeps the existing `Whisper` mode available as the simpler, faster option.
+
 ### 0.13.0 - 2026-04-24
 
 - Premiere-created MOGRT subtitle generation is more reliable on longer sequences, with fewer missing text layers during batch creation.

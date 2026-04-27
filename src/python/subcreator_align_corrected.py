@@ -305,52 +305,32 @@ def subcreator_detect_device() -> str:
     return "cpu"
 
 
-def subcreator_detect_compute_type(device: str) -> str:
-    # // Use a CPU-safe compute type while keeping faster half precision on CUDA.
-    if str(device or "").lower() == "cuda":
-        return "float16"
-    return "int8"
-
-
-def subcreator_load_whisperx_model(whisperx_module: Any, model_name: str, device: str, language_code: str) -> Any:
-    # // Load WhisperX transcription model while tolerating minor API differences across whisperx versions.
-    compute_type = subcreator_detect_compute_type(device)
-    normalized_language = subcreator_normalize_text(language_code).lower()
-    language_arg = None if not normalized_language or normalized_language == "auto" else normalized_language
-    kwargs: Dict[str, Any] = {"compute_type": compute_type}
-    if language_arg:
-        kwargs["language"] = language_arg
-
-    try:
-        return whisperx_module.load_model(model_name, device, **kwargs)
-    except TypeError:
-        kwargs.pop("language", None)
-        return whisperx_module.load_model(model_name, device, **kwargs)
-
-
-def subcreator_transcribe_audio_with_whisperx(
-    whisperx_module: Any,
-    audio: Any,
+def subcreator_transcribe_audio_with_local_whisper(
+    audio_path: str,
     model_name: str,
     device: str,
     language_code: str,
 ) -> Dict[str, Any]:
-    # // Transcribe audio with WhisperX, then normalize the result shape before the alignment step.
-    model = subcreator_load_whisperx_model(whisperx_module, model_name, device, language_code)
+    # // Use the locally cached openai-whisper model as the transcript seed so WhisperX mode does not download faster-whisper models.
+    try:
+        import whisper  # type: ignore
+    except Exception as error:
+        raise ValueError(f"Unable to import openai-whisper for WhisperX transcription seed. Detail: {error}") from error
+
     normalized_language = subcreator_normalize_text(language_code).lower()
     language_arg = None if not normalized_language or normalized_language == "auto" else normalized_language
-    transcribe_kwargs: Dict[str, Any] = {"batch_size": 16}
+    transcribe_kwargs: Dict[str, Any] = {
+        "fp16": str(device or "").lower() == "cuda",
+        "word_timestamps": False,
+        "verbose": False,
+    }
     if language_arg:
         transcribe_kwargs["language"] = language_arg
 
-    try:
-        result = model.transcribe(audio, **transcribe_kwargs)
-    except TypeError:
-        transcribe_kwargs.pop("language", None)
-        result = model.transcribe(audio, **transcribe_kwargs)
-
+    model = whisper.load_model(model_name, device=device)
+    result = model.transcribe(audio_path, **transcribe_kwargs)
     if not isinstance(result, dict):
-        raise ValueError("WhisperX transcription returned an invalid payload.")
+        raise ValueError("openai-whisper returned an invalid payload.")
     return result
 
 
@@ -424,17 +404,16 @@ def main() -> int:
 
         device = subcreator_detect_device()
         if transcribe_model:
-            subcreator_log_progress(30, f"Loading WhisperX {transcribe_model} model on {device}")
-            transcribed_result = subcreator_transcribe_audio_with_whisperx(
-                whisperx,
-                audio,
+            subcreator_log_progress(30, f"Transcribing with local Whisper {transcribe_model} model on {device}")
+            transcribed_result = subcreator_transcribe_audio_with_local_whisper(
+                audio_path,
                 transcribe_model,
                 device,
                 language_code,
             )
             transcript_segments = transcribed_result.get("segments") if isinstance(transcribed_result, dict) else []
             if not isinstance(transcript_segments, list) or not transcript_segments:
-                return subcreator_fail("WhisperX transcription returned no usable segments.")
+                return subcreator_fail("Local Whisper transcription returned no usable segments.")
 
             language_code = subcreator_normalize_text(transcribed_result.get("language") or language_code).lower()
             if not language_code or language_code == "auto":

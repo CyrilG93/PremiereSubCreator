@@ -51,6 +51,10 @@ interface CorrectedAlignmentRequest {
   rangeEndSeconds?: number;
 }
 
+interface WhisperXTranscriptionRequest extends WhisperTranscriptionRequest {
+  extensionRootPath: string;
+}
+
 interface WhisperTranscriptionResult {
   srtText: string;
   jsonText?: string;
@@ -3685,6 +3689,213 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
   };
 }
 
+async function transcribeWithWhisperXViaCepNodeAsync(
+  request: WhisperXTranscriptionRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<WhisperTranscriptionResult> {
+  // // Run WhisperX as a transcription + forced-alignment pass and return Whisper-compatible JSON for the existing planner.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    throw new Error("CEP Node runtime unavailable. WhisperX transcription requires CEP Node and Python whisperx.");
+  }
+
+  if (typeof modules.childProcess.spawn !== "function") {
+    throw new Error("CEP Node child_process.spawn unavailable. WhisperX transcription cannot start.");
+  }
+
+  const scriptPath = resolveBundledPythonScriptPath(modules, request.extensionRootPath, "subcreator_align_corrected.py");
+  if (!scriptPath) {
+    throw new Error("Bundled WhisperX helper is missing from the installed extension.");
+  }
+
+  const outputDir = modules.path.join(
+    modules.os.tmpdir(),
+    "SubCreatorWhisperX",
+    `run-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+  );
+  modules.fs.mkdirSync(outputDir, { recursive: true });
+
+  const outputPath = modules.path.join(outputDir, "whisperx.json");
+  const runtimeConfig = getRuntimeConfig(modules);
+  const userExecutables = discoverUserWhisperExecutables(modules, runtimeConfig);
+  const spawnEnv = buildSpawnEnv(modules, userExecutables, runtimeConfig);
+  const pythonLaunchers = buildPythonLauncherCandidates(modules, userExecutables, runtimeConfig);
+  const attempts: string[] = [];
+  let collectedOutput = "";
+
+  for (const launcher of pythonLaunchers) {
+    let latestProgressPercent = -1;
+    const attemptChunks: string[] = [];
+    let attemptTailOutput = "";
+    if (modules.fs.existsSync(outputPath)) {
+      try {
+        modules.fs.unlinkSync(outputPath);
+      } catch {
+        // // Ignore stale-output cleanup failures and let the attempt report the real execution problem.
+      }
+    }
+
+    const args = [
+      ...launcher.argsPrefix,
+      scriptPath,
+      "--audio",
+      request.audioPath,
+      "--language",
+      request.languageCode,
+      "--output",
+      outputPath,
+      "--transcribe-model",
+      request.model
+    ];
+
+    const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
+      // // Stream helper progress markers and keep cancellation routed through the existing CEP job registry.
+      let settled = false;
+      const detached = !detectWindowsRuntime();
+      const child = modules.childProcess.spawn?.(launcher.command, args, {
+        shell: false,
+        detached,
+        env: spawnEnv
+      });
+      if (!child) {
+        resolve({
+          code: null,
+          error: {
+            message: "child_process.spawn unavailable"
+          }
+        });
+        return;
+      }
+      const activeJob = registerActiveCepJob(child, launcher.label, detached);
+
+      const handleChunk = (chunk: string | Uint8Array): void => {
+        // // Parse helper progress output without flooding the panel with duplicate percentages.
+        const normalizedChunk = normalizeWhisperOutputChunk(chunk);
+        if (!normalizedChunk) {
+          return;
+        }
+        attemptChunks.push(normalizedChunk);
+        attemptTailOutput = `${attemptTailOutput}${normalizedChunk}`.slice(-4096);
+        const progress = extractCorrectedAlignProgressUpdate(attemptTailOutput);
+        if (!progress || progress.percent <= latestProgressPercent) {
+          return;
+        }
+        latestProgressPercent = progress.percent;
+        onProgress?.(progress);
+      };
+
+      child.stdout?.on("data", handleChunk);
+      child.stderr?.on("data", handleChunk);
+      child.on("error", (error) => {
+        clearActiveCepJob(child);
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
+        resolve({
+          code: null,
+          error: error && typeof error === "object" ? (error as { message?: string; code?: string }) : { message: String(error) }
+        });
+      });
+      child.on("close", (value) => {
+        clearActiveCepJob(child);
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (activeJob.cancelRequested) {
+          resolve({
+            code: null,
+            error: {
+              message: SUBCREATOR_CANCELLED_JOB_CODE,
+              code: SUBCREATOR_CANCELLED_JOB_CODE
+            }
+          });
+          return;
+        }
+        resolve({
+          code: typeof value === "number" ? value : null
+        });
+      });
+    });
+
+    if (attemptResult.error) {
+      if (isCancelledJobError(attemptResult.error.message || attemptResult.error.code || "")) {
+        throw createCancelledJobError();
+      }
+      attempts.push(`${launcher.label}: ${String(attemptResult.error.message || attemptResult.error)}`);
+      continue;
+    }
+
+    const attemptOutput = attemptChunks.join("").trim();
+    if (attemptOutput && !collectedOutput) {
+      collectedOutput = attemptOutput;
+    }
+    const authoritativeAttempt =
+      attemptOutput.indexOf("SUBCREATOR_ALIGN_PROGRESS") !== -1 ||
+      (Boolean(runtimeConfig?.pythonPath) && launcher.command === runtimeConfig?.pythonPath && launcher.argsPrefix.length === 0);
+
+    if (attemptResult.code !== 0) {
+      const summary = summarizeWhisperErrorOutput(attemptOutput);
+      attempts.push(`${launcher.label}: exit ${attemptResult.code}${summary ? ` (${summary})` : ""}`);
+      if (authoritativeAttempt) {
+        break;
+      }
+      continue;
+    }
+
+    if (!modules.fs.existsSync(outputPath)) {
+      attempts.push(`${launcher.label}: no WhisperX json output`);
+      continue;
+    }
+
+    const jsonText = String(modules.fs.readFileSync(outputPath, "utf8") || "").trim();
+    if (!jsonText) {
+      attempts.push(`${launcher.label}: empty WhisperX json output`);
+      continue;
+    }
+
+    onProgress?.({
+      percent: 100,
+      detail: "WhisperX transcription complete"
+    });
+    return {
+      srtText: "",
+      jsonText,
+      model: request.model?.trim() || "base",
+      audioPath: request.audioPath,
+      commandOutput: attemptOutput
+    };
+  }
+
+  let installHint = "";
+  if (runtimeConfig?.pythonPath) {
+    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx`;
+  } else if (runtimeConfig?.pythonCommand) {
+    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx`;
+  } else if (detectWindowsRuntime()) {
+    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx";
+  } else {
+    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx";
+  }
+
+  throw new Error(
+    `Unable to execute WhisperX transcription. Attempts: ${attempts.join(" | ") || "none"}. ${installHint}. ${
+      runtimeConfig ? `Runtime config: ${runtimeConfig.sourcePath}. ` : ""
+    }${collectedOutput || ""}`
+  );
+}
+
 async function alignCorrectedTranscriptViaCepNodeAsync(
   request: CorrectedAlignmentRequest,
   onProgress?: (update: WhisperProgressUpdate) => void
@@ -3930,4 +4141,12 @@ export async function alignCorrectedTranscript(
 ): Promise<CorrectedAlignmentResult> {
   // // Corrected transcript alignment depends on the bundled WhisperX helper and has no ExtendScript fallback path.
   return alignCorrectedTranscriptViaCepNodeAsync(request, onProgress);
+}
+
+export async function transcribeWithWhisperX(
+  request: WhisperXTranscriptionRequest,
+  onProgress?: (update: WhisperProgressUpdate) => void
+): Promise<WhisperTranscriptionResult> {
+  // // WhisperX transcription depends on the bundled helper and reuses the existing Whisper JSON parser.
+  return transcribeWithWhisperXViaCepNodeAsync(request, onProgress);
 }

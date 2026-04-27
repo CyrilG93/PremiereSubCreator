@@ -45,6 +45,7 @@ import {
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
   transcribeWithWhisper,
+  transcribeWithWhisperX,
   applySelectedMogrtTextItems,
   isCancelledJobError
 } from "./cepBridge";
@@ -1107,13 +1108,18 @@ function refreshWhisperModelUi(preferredValue = pendingWhisperModelValue): void 
   }
 
   if (elements.whisperModelHint) {
-    const whisperModeActive = getSourceMode() === "whisper_sequence";
-    const shouldShowMissingModels = whisperModeActive && installedModels.length < 1;
+    const mode = getSourceMode();
+    const whisperModeActive = mode === "whisper_sequence";
+    const whisperxModeActive = mode === "whisperx_sequence";
+    const shouldShowMissingModels = (whisperModeActive || whisperxModeActive) && installedModels.length < 1;
     const shouldShowMissingRuntime = whisperModeActive && !whisperRuntimeAvailable;
-    elements.whisperModelHint.hidden = !shouldShowMissingModels && !shouldShowMissingRuntime;
+    const shouldShowMissingWhisperx = whisperxModeActive && !correctedAlignAvailable;
+    elements.whisperModelHint.hidden = !shouldShowMissingModels && !shouldShowMissingRuntime && !shouldShowMissingWhisperx;
     elements.whisperModelHint.textContent = shouldShowMissingRuntime
       ? translate("help.whisper")
-      : translate("help.whisperModelsMissing");
+      : shouldShowMissingWhisperx
+        ? translate("help.whisperxMissing")
+        : translate("help.whisperModelsMissing");
   }
 
   pendingWhisperModelValue = String(elements.whisperModel.value || "").trim() || pendingWhisperModelValue;
@@ -1175,6 +1181,9 @@ function isCurrentSourceReady(): boolean {
   const mode = getSourceMode();
   if (mode === "whisper_sequence") {
     return whisperRuntimeAvailable && availableWhisperModels.length > 0;
+  }
+  if (mode === "whisperx_sequence") {
+    return correctedAlignAvailable && availableWhisperModels.length > 0;
   }
   if (mode === "corrected_align") {
     return correctedAlignAvailable && getSelectedWhisperLanguageCode() !== "auto";
@@ -1866,8 +1875,9 @@ function toggleSourceFields(): void {
   const mode = getSourceMode();
   const srtModeActive = mode === "srt";
   const whisperModeActive = mode === "whisper_sequence";
+  const whisperxModeActive = mode === "whisperx_sequence";
   const correctedAlignModeActive = mode === "corrected_align";
-  const sequenceRangeModeActive = srtModeActive || whisperModeActive || correctedAlignModeActive;
+  const sequenceRangeModeActive = srtModeActive || whisperModeActive || whisperxModeActive || correctedAlignModeActive;
 
   if (elements.srtInputField) {
     elements.srtInputField.style.display = mode === "srt" ? "grid" : "none";
@@ -1878,7 +1888,7 @@ function toggleSourceFields(): void {
   }
 
   if (elements.whisperField) {
-    elements.whisperField.style.display = whisperModeActive ? "grid" : "none";
+    elements.whisperField.style.display = whisperModeActive || whisperxModeActive ? "grid" : "none";
   }
 
   if (elements.sequenceAudioField) {
@@ -1886,20 +1896,20 @@ function toggleSourceFields(): void {
   }
 
   if (elements.whisperLanguageField) {
-    elements.whisperLanguageField.style.display = whisperModeActive || correctedAlignModeActive ? "grid" : "none";
+    elements.whisperLanguageField.style.display = whisperModeActive || whisperxModeActive || correctedAlignModeActive ? "grid" : "none";
   }
 
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled = !sequenceRangeModeActive;
   }
   if (elements.whisperLanguage) {
-    elements.whisperLanguage.disabled = !(whisperModeActive || correctedAlignModeActive) || generateInProgress;
+    elements.whisperLanguage.disabled = !(whisperModeActive || whisperxModeActive || correctedAlignModeActive) || generateInProgress;
   }
   if (elements.whisperModelFolderButton) {
-    elements.whisperModelFolderButton.disabled = !whisperModeActive || generateInProgress;
+    elements.whisperModelFolderButton.disabled = !(whisperModeActive || whisperxModeActive) || generateInProgress;
   }
   if (elements.whisperModelRow) {
-    elements.whisperModelRow.classList.toggle("is-single", !whisperModeActive);
+    elements.whisperModelRow.classList.toggle("is-single", !(whisperModeActive || whisperxModeActive));
   }
   refreshWhisperModelUi();
   refreshCorrectedAlignUi();
@@ -2213,18 +2223,22 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
     elements.sourceMode.disabled = isBusy;
   }
   if (elements.whisperModel) {
-    elements.whisperModel.disabled = isBusy || getSourceMode() !== "whisper_sequence" || availableWhisperModels.length < 1;
+    elements.whisperModel.disabled =
+      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence") || availableWhisperModels.length < 1;
   }
   if (elements.whisperModelFolderButton) {
-    elements.whisperModelFolderButton.disabled = isBusy || getSourceMode() !== "whisper_sequence";
+    elements.whisperModelFolderButton.disabled =
+      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
   }
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled =
-      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "corrected_align");
+      isBusy ||
+      (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence" && getSourceMode() !== "corrected_align");
   }
   if (elements.whisperLanguage) {
     elements.whisperLanguage.disabled =
-      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "corrected_align");
+      isBusy ||
+      (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence" && getSourceMode() !== "corrected_align");
   }
   if (elements.animationMode) {
     elements.animationMode.disabled = isBusy;
@@ -4599,8 +4613,15 @@ function collectBuildOptions(): CaptionBuildOptions {
     selectedMogrt = availableMogrts[0];
   }
 
-  if (getSourceMode() === "whisper_sequence" && !String(elements.whisperModel.value || "").trim()) {
+  if (
+    (getSourceMode() === "whisper_sequence" || getSourceMode() === "whisperx_sequence") &&
+    !String(elements.whisperModel.value || "").trim()
+  ) {
     throw new Error(translate("error.whisperModelMissing"));
+  }
+  if (getSourceMode() === "whisperx_sequence" && !correctedAlignAvailable) {
+    const runtimeDetail = correctedAlignRuntimeDetails ? ` ${correctedAlignRuntimeDetails}` : "";
+    throw new Error(`${translate("error.whisperxUnavailable")}${runtimeDetail ? ` (${runtimeDetail})` : ""}`);
   }
   if (getSourceMode() === "corrected_align" && !String(elements.correctedTranscriptPath.value || "").trim()) {
     throw new Error(translate("error.missingCorrectedTranscriptPath"));
@@ -4728,6 +4749,13 @@ function mapCorrectedAlignPercentToGenerateProgress(progress: WhisperProgressUpd
 function buildCorrectedAlignProgressLabel(progress: WhisperProgressUpdate): string {
   // // Make corrected transcript alignment progress explicit so the user sees real activity during WhisperX processing.
   return translateTemplate("progress.correctedAlignAnalysis", {
+    percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
+  });
+}
+
+function buildWhisperXProgressLabel(progress: WhisperProgressUpdate): string {
+  // // Show WhisperX transcription and forced-alignment progress as one precision-timing analysis step.
+  return translateTemplate("progress.whisperxAnalysis", {
     percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
   });
 }
@@ -4866,7 +4894,8 @@ async function loadCuesFromSelectedSource(
     }
   }
 
-  setLog(translate("log.whisperSequenceExport"));
+  const whisperxModeActive = options.sourceMode === "whisperx_sequence";
+  setLog(translate(whisperxModeActive ? "log.whisperxSequenceExport" : "log.whisperSequenceExport"));
   if (onProgress) {
     await onProgress(10, translate("progress.exportSequence"), true);
   }
@@ -4881,7 +4910,7 @@ async function loadCuesFromSelectedSource(
 
   try {
     if (onProgress) {
-      await onProgress(22, translate("progress.whisperAnalyzing"), true);
+      await onProgress(22, translate(whisperxModeActive ? "progress.whisperxAnalyzing" : "progress.whisperAnalyzing"), true);
     }
     assertNotCancelled();
     let latestRealWhisperProgressAt = 0;
@@ -4920,14 +4949,21 @@ async function loadCuesFromSelectedSource(
           }, 1000);
     let whisperResult;
     try {
-      whisperResult = await transcribeWithWhisper({
+      const transcriptionRequest = {
         audioPath: whisperAudioPath,
         languageCode: options.languageCode,
-        model: options.whisperModel
-      }, (progress) => {
-        latestRealWhisperProgressAt = Date.now();
-        void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
-      });
+        model: options.whisperModel,
+        extensionRootPath: options.extensionRootPath
+      };
+      whisperResult = await (whisperxModeActive
+        ? transcribeWithWhisperX(transcriptionRequest, (progress) => {
+            latestRealWhisperProgressAt = Date.now();
+            void updateGenerateProgress(mapCorrectedAlignPercentToGenerateProgress(progress), buildWhisperXProgressLabel(progress));
+          })
+        : transcribeWithWhisper(transcriptionRequest, (progress) => {
+            latestRealWhisperProgressAt = Date.now();
+            void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
+          }));
     } finally {
       window.clearInterval(fallbackProgressTimer);
     }
@@ -4950,7 +4986,7 @@ async function loadCuesFromSelectedSource(
       throw new Error(translate("error.emptyWhisper"));
     }
 
-    setLog(`${translate("log.whisperDone")} ${whisperResult.model}`);
+    setLog(`${translate(whisperxModeActive ? "log.whisperxDone" : "log.whisperDone")} ${whisperResult.model}`);
     return shiftCaptionCues(fallbackCues, Number(requestedSequenceRange.rangeStartSeconds) || 0);
   } finally {
     if (cleanupAudioPath) {

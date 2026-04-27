@@ -305,27 +305,109 @@ def subcreator_detect_device() -> str:
     return "cpu"
 
 
+def subcreator_detect_compute_type(device: str) -> str:
+    # // Use a CPU-safe compute type while keeping faster half precision on CUDA.
+    if str(device or "").lower() == "cuda":
+        return "float16"
+    return "int8"
+
+
+def subcreator_load_whisperx_model(whisperx_module: Any, model_name: str, device: str, language_code: str) -> Any:
+    # // Load WhisperX transcription model while tolerating minor API differences across whisperx versions.
+    compute_type = subcreator_detect_compute_type(device)
+    normalized_language = subcreator_normalize_text(language_code).lower()
+    language_arg = None if not normalized_language or normalized_language == "auto" else normalized_language
+    kwargs: Dict[str, Any] = {"compute_type": compute_type}
+    if language_arg:
+        kwargs["language"] = language_arg
+
+    try:
+        return whisperx_module.load_model(model_name, device, **kwargs)
+    except TypeError:
+        kwargs.pop("language", None)
+        return whisperx_module.load_model(model_name, device, **kwargs)
+
+
+def subcreator_transcribe_audio_with_whisperx(
+    whisperx_module: Any,
+    audio: Any,
+    model_name: str,
+    device: str,
+    language_code: str,
+) -> Dict[str, Any]:
+    # // Transcribe audio with WhisperX, then normalize the result shape before the alignment step.
+    model = subcreator_load_whisperx_model(whisperx_module, model_name, device, language_code)
+    normalized_language = subcreator_normalize_text(language_code).lower()
+    language_arg = None if not normalized_language or normalized_language == "auto" else normalized_language
+    transcribe_kwargs: Dict[str, Any] = {"batch_size": 16}
+    if language_arg:
+        transcribe_kwargs["language"] = language_arg
+
+    try:
+        result = model.transcribe(audio, **transcribe_kwargs)
+    except TypeError:
+        transcribe_kwargs.pop("language", None)
+        result = model.transcribe(audio, **transcribe_kwargs)
+
+    if not isinstance(result, dict):
+        raise ValueError("WhisperX transcription returned an invalid payload.")
+    return result
+
+
+def subcreator_align_segments_with_whisperx(
+    whisperx_module: Any,
+    segments: List[Dict[str, Any]],
+    audio: Any,
+    language_code: str,
+    device: str,
+) -> List[Dict[str, Any]]:
+    # // Run forced alignment and return cleaned Whisper-compatible segments for the panel parser.
+    model_align, metadata = whisperx_module.load_align_model(language_code=language_code, device=device)
+    aligned_result = whisperx_module.align(
+        segments,
+        model_align,
+        metadata,
+        audio,
+        device,
+        return_char_alignments=False,
+    )
+
+    raw_segments = aligned_result.get("segments") if isinstance(aligned_result, dict) else []
+    cleaned_segments = []
+    for index, segment in enumerate(raw_segments or []):
+        if not isinstance(segment, dict):
+            continue
+        cleaned_segment = subcreator_clean_segment_payload(index, segment)
+        if cleaned_segment:
+            cleaned_segments.append(cleaned_segment)
+    return cleaned_segments
+
+
 def main() -> int:
     # // Run one corrected-alignment pass and emit Whisper-compatible JSON to the requested output file.
     parser = argparse.ArgumentParser(description="Align corrected transcript text with WhisperX.")
     parser.add_argument("--audio", required=True, help="Path to temporary WAV audio file")
-    parser.add_argument("--transcript", required=True, help="Path to corrected .srt or .txt transcript file")
+    parser.add_argument("--transcript", required=False, default="", help="Path to corrected .srt or .txt transcript file")
     parser.add_argument("--language", required=True, help="Language code used to load the alignment model")
     parser.add_argument("--output", required=True, help="Path to the output JSON file")
+    parser.add_argument("--transcribe-model", default="", help="Optional WhisperX model name used to transcribe before alignment")
     parser.add_argument("--range-start-seconds", type=float, default=None, help="Optional sequence in-point for corrected SRT rebasing")
     parser.add_argument("--range-end-seconds", type=float, default=None, help="Optional sequence out-point for corrected SRT rebasing")
     args = parser.parse_args()
 
     audio_path = os.path.abspath(args.audio)
-    transcript_path = os.path.abspath(args.transcript)
+    transcript_path = os.path.abspath(args.transcript) if args.transcript else ""
     output_path = os.path.abspath(args.output)
     language_code = subcreator_normalize_text(args.language or "").lower()
+    transcribe_model = subcreator_normalize_text(args.transcribe_model or "")
 
     if not os.path.isfile(audio_path):
         return subcreator_fail(f"Audio file not found: {audio_path}")
-    if not os.path.isfile(transcript_path):
+    if not transcribe_model and not transcript_path:
+        return subcreator_fail("WhisperX helper requires either --transcribe-model or --transcript.")
+    if transcript_path and not os.path.isfile(transcript_path):
         return subcreator_fail(f"Corrected transcript file not found: {transcript_path}")
-    if not language_code or language_code == "auto":
+    if not transcribe_model and (not language_code or language_code == "auto"):
         return subcreator_fail("Corrected transcript align requires an explicit language code.")
 
     try:
@@ -340,39 +422,53 @@ def main() -> int:
         audio = whisperx.load_audio(audio_path)
         total_duration = max(float(len(audio)) / SAMPLE_RATE, 0.0)
 
-        subcreator_log_progress(28, "Loading corrected transcript")
-        transcript_segments = subcreator_load_corrected_segments(
-            transcript_path,
-            total_duration,
-            args.range_start_seconds,
-            args.range_end_seconds
-        )
-
         device = subcreator_detect_device()
-        subcreator_log_progress(42, f"Loading {language_code} alignment model on {device}")
-        model_align, metadata = whisperx.load_align_model(language_code=language_code, device=device)
+        if transcribe_model:
+            subcreator_log_progress(30, f"Loading WhisperX {transcribe_model} model on {device}")
+            transcribed_result = subcreator_transcribe_audio_with_whisperx(
+                whisperx,
+                audio,
+                transcribe_model,
+                device,
+                language_code,
+            )
+            transcript_segments = transcribed_result.get("segments") if isinstance(transcribed_result, dict) else []
+            if not isinstance(transcript_segments, list) or not transcript_segments:
+                return subcreator_fail("WhisperX transcription returned no usable segments.")
 
-        subcreator_log_progress(62, "Aligning corrected transcript")
-        aligned_result = whisperx.align(
-            transcript_segments,
-            model_align,
-            metadata,
-            audio,
-            device,
-            return_char_alignments=False,
-        )
+            language_code = subcreator_normalize_text(transcribed_result.get("language") or language_code).lower()
+            if not language_code or language_code == "auto":
+                return subcreator_fail("WhisperX transcription did not detect a usable language for alignment.")
 
-        raw_segments = aligned_result.get("segments") if isinstance(aligned_result, dict) else []
-        cleaned_segments = []
-        for index, segment in enumerate(raw_segments or []):
-            if not isinstance(segment, dict):
-                continue
-            cleaned_segment = subcreator_clean_segment_payload(index, segment)
-            if cleaned_segment:
-                cleaned_segments.append(cleaned_segment)
+            subcreator_log_progress(72, f"Loading {language_code} alignment model on {device}")
+            cleaned_segments = subcreator_align_segments_with_whisperx(
+                whisperx,
+                [segment for segment in transcript_segments if isinstance(segment, dict)],
+                audio,
+                language_code,
+                device,
+            )
+        else:
+            subcreator_log_progress(28, "Loading corrected transcript")
+            transcript_segments = subcreator_load_corrected_segments(
+                transcript_path,
+                total_duration,
+                args.range_start_seconds,
+                args.range_end_seconds
+            )
+
+            subcreator_log_progress(42, f"Loading {language_code} alignment model on {device}")
+            subcreator_log_progress(62, "Aligning corrected transcript")
+            cleaned_segments = subcreator_align_segments_with_whisperx(
+                whisperx,
+                transcript_segments,
+                audio,
+                language_code,
+                device,
+            )
 
         if not cleaned_segments:
-            return subcreator_fail("WhisperX returned no usable aligned segments for the corrected transcript.")
+            return subcreator_fail("WhisperX returned no usable aligned segments.")
 
         output_dir = os.path.dirname(output_path)
         if output_dir:

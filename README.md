@@ -1,6 +1,6 @@
 # Sub Creator
 
-Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs from an `SRT` file, a `Whisper` transcription, or `Whisper + SRT` alignment.
+Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs from an `SRT` file, a `Whisper` transcription, a `WhisperX` precision transcription, or `Whisper + SRT` alignment.
 
 It is built for a simple workflow inside Premiere:
 - choose a subtitle source
@@ -11,7 +11,7 @@ It is built for a simple workflow inside Premiere:
 
 ## Included features
 
-- `SRT`, `Whisper`, and `Whisper + SRT` creation modes
+- `SRT`, `Whisper`, `WhisperX`, and `Whisper + SRT` creation modes
 - generation on `Entire sequence` or `In/Out points`, with automatic fallback to the full sequence when no valid In/Out range exists
 - bundled base MOGRT templates with gallery support for your own templates
 - searchable MOGRT gallery with remembered folder/view state between sessions
@@ -19,7 +19,7 @@ It is built for a simple workflow inside Premiere:
 - support for custom `.mogrt` files from after effect and premiere
 - `Visual editor` for exposed controls
 - `Text editor` for subtitle text redistribution and timing rebuild
-- `Stop current job` for active Whisper and Whisper + SRT processing
+- `Stop current job` for active Whisper, WhisperX, and Whisper + SRT processing
 
 ## Platforms
 
@@ -35,6 +35,7 @@ Sub Creator does not need the same dependencies for every mode.
 | --- | --- |
 | `SRT only` | none beyond Premiere |
 | `Whisper` | Python `3.8` to `3.13`, `ffmpeg`, `openai-whisper`, and at least one local Whisper model |
+| `WhisperX` | Python `3.10` to `3.13`, `ffmpeg`, `whisperx`, and at least one local Whisper model |
 | `Whisper + SRT` | Python `3.10` to `3.13`, `ffmpeg`, `whisperx`, and a corrected `.srt` or `.txt` transcript |
 
 The installers try to configure the Python tools automatically when possible.
@@ -48,7 +49,7 @@ If `Whisper + SRT` still looks unavailable on Windows after install, rerun the W
 If you only use `SRT` mode:
 - just install the extension and use it
 
-If you want `Whisper` or `Whisper + SRT`:
+If you want `Whisper`, `WhisperX`, or `Whisper + SRT`:
 - install Python `3.11` or `3.12`
 - install `ffmpeg`
 
@@ -108,7 +109,7 @@ It also enables `PlayerDebugMode` for a wide `CSXS` range and checks that the re
 
 ### Simple recommended order for beginners
 
-If you want `Whisper` or `Whisper + SRT`, this is the easiest order:
+If you want `Whisper`, `WhisperX`, or `Whisper + SRT`, this is the easiest order:
 
 1. Install Python from the official Python website.
 2. Install `ffmpeg`.
@@ -145,6 +146,20 @@ Use this when you want Sub Creator to transcribe the active sequence audio.
 Sub Creator exports a temporary WAV from the active sequence, runs Whisper, then creates subtitle MOGRTs on the timeline.
 
 If you start the wrong analysis, use `Stop current job`.
+
+### WhisperX
+
+Use this when you want a transcription like `Whisper`, but with more precise word timing from WhisperX forced alignment.
+
+1. Open `Creation`.
+2. Choose `WhisperX`.
+3. Select a local Whisper model.
+4. Choose a `Whisper language`, or leave `Auto detect`.
+5. Choose `Entire sequence` or `In/Out points`.
+6. Choose a MOGRT.
+7. Click `Generate subtitles`.
+
+Sub Creator exports a temporary WAV, runs WhisperX transcription, aligns the detected words to the audio, then creates subtitle MOGRTs on the timeline.
 
 ### Whisper + SRT
 
@@ -290,11 +305,11 @@ If you want to author an After Effects template specifically for Sub Creator, re
 
 Open `Open Whisper models folder` and check that at least one `.pt` model is present in the local Whisper cache.
 
-### Whisper or Whisper + SRT is unavailable
+### Whisper, WhisperX, or Whisper + SRT is unavailable
 
 Check that Python, `ffmpeg`, and the required package are installed:
 - `openai-whisper` for `Whisper`
-- `whisperx` for `Whisper + SRT`
+- `whisperx` for `WhisperX` and `Whisper + SRT`
 
 If Whisper transcription quality is poor, check the `Whisper language` selector in the panel. It is separate from the UI language.
 

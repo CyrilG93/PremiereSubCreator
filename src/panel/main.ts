@@ -1,6 +1,7 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
+import { normalizeWhisperXCuesForDisplay } from "../core/whisperxDisplay";
 import { parseSrt, shiftCaptionCues, trimSrtCuesToRange } from "../core/srt";
 import {
   buildTextEditorSafeApplyPlans,
@@ -4757,81 +4758,6 @@ function buildWhisperXProgressLabel(progress: WhisperProgressUpdate): string {
   // // Show WhisperX transcription and forced-alignment progress as one precision-timing analysis step.
   return translateTemplate("progress.whisperxAnalysis", {
     percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
-  });
-}
-
-function countCueWords(cue: CaptionCue): number {
-  // // Estimate how much text is visible so WhisperX micro-segments can be merged before timeline creation.
-  if (Array.isArray(cue.words) && cue.words.length > 0) {
-    return cue.words.length;
-  }
-  return tokenizeSubtitleText(cue.text).length;
-}
-
-function mergeCaptionCuesForDisplay(left: CaptionCue, right: CaptionCue): CaptionCue {
-  // // Combine adjacent aligned cues while preserving per-word timing for downstream chunking.
-  const leftText = String(left.text || "").trim();
-  const rightText = String(right.text || "").trim();
-  return {
-    ...left,
-    id: `${left.id}+${right.id}`,
-    endSeconds: Math.max(Number(left.endSeconds || 0), Number(right.endSeconds || 0)),
-    text: [leftText, rightText].filter(Boolean).join(" "),
-    words: [...(left.words || []), ...(right.words || [])]
-  };
-}
-
-function normalizeWhisperXCuesForDisplay(cues: CaptionCue[]): CaptionCue[] {
-  // // WhisperX alignment can be word-tight; merge and pad cues so MOGRT clips remain readable on the timeline.
-  const sortedCues = cues
-    .filter((cue) => String(cue.text || "").trim())
-    .map((cue) => ({ ...cue, words: Array.isArray(cue.words) ? cue.words.map((word) => ({ ...word })) : [] }))
-    .sort((left, right) => Number(left.startSeconds || 0) - Number(right.startSeconds || 0));
-  const mergedCues: CaptionCue[] = [];
-  const minDurationSeconds = 1.05;
-  const minWordsForShortCue = 3;
-  const mergeGapSeconds = 0.45;
-  const leadPaddingSeconds = 0.08;
-  const tailPaddingSeconds = 0.18;
-
-  for (const cue of sortedCues) {
-    const lastCue = mergedCues[mergedCues.length - 1];
-    if (!lastCue) {
-      mergedCues.push(cue);
-      continue;
-    }
-
-    const cueDuration = Number(cue.endSeconds || 0) - Number(cue.startSeconds || 0);
-    const lastDuration = Number(lastCue.endSeconds || 0) - Number(lastCue.startSeconds || 0);
-    const gapSeconds = Number(cue.startSeconds || 0) - Number(lastCue.endSeconds || 0);
-    const shouldMerge =
-      gapSeconds >= -0.01 &&
-      gapSeconds <= mergeGapSeconds &&
-      (cueDuration < minDurationSeconds ||
-        lastDuration < minDurationSeconds ||
-        countCueWords(cue) < minWordsForShortCue ||
-        countCueWords(lastCue) < minWordsForShortCue);
-
-    if (shouldMerge) {
-      mergedCues[mergedCues.length - 1] = mergeCaptionCuesForDisplay(lastCue, cue);
-    } else {
-      mergedCues.push(cue);
-    }
-  }
-
-  return mergedCues.map((cue, index) => {
-    const previousCue = mergedCues[index - 1];
-    const nextCue = mergedCues[index + 1];
-    const minStart = previousCue ? Number(previousCue.endSeconds || 0) + 0.01 : 0;
-    const maxEnd = nextCue ? Number(nextCue.startSeconds || 0) - 0.01 : Number.POSITIVE_INFINITY;
-    const startSeconds = Math.max(minStart, Math.max(0, Number(cue.startSeconds || 0) - leadPaddingSeconds));
-    const desiredEnd = Math.max(Number(cue.endSeconds || 0) + tailPaddingSeconds, startSeconds + minDurationSeconds);
-    const endSeconds = Math.max(startSeconds + 0.12, Math.min(maxEnd, desiredEnd));
-    return {
-      ...cue,
-      startSeconds,
-      endSeconds
-    };
   });
 }
 

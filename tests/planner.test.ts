@@ -306,4 +306,22 @@ describe("buildCaptionPlan", () => {
     expect(planned[0].text).toBe("c'est fini!");
     expect(planned[0].words.map((word) => word.text)).toEqual(["c'est", "fini!"]);
   });
+
+  it("normalizes percent spacing for every generated source", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-12",
+          startSeconds: 0,
+          endSeconds: 1,
+          text: "20 % de mieux",
+          words: []
+        }
+      ],
+      baseOptions
+    );
+
+    expect(planned[0].text).toBe("20% de mieux");
+    expect(planned[0].words.map((word) => word.text)).toEqual(["20%", "de", "mieux"]);
+  });
 });

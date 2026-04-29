@@ -159,7 +159,7 @@ Use this when you want a transcription like `Whisper`, but with more precise wor
 6. Choose a MOGRT.
 7. Click `Generate subtitles`.
 
-Sub Creator exports a temporary WAV, transcribes it with the selected local Whisper model, aligns the detected words with WhisperX, then creates subtitle MOGRTs on the timeline.
+Sub Creator exports a temporary WAV, transcribes it with the selected local Whisper model, aligns the detected words with WhisperX, then creates subtitle MOGRTs on the timeline. Very short WhisperX groups are kept separate when there is a real pause, so quick replies from different speakers are less likely to be merged.
 
 ### Whisper + SRT
 

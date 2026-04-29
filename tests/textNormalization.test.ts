@@ -8,6 +8,11 @@ describe("textNormalization", () => {
     expect(tokenizeSubtitleText("Salut ! c 'est bon ?")).toEqual(["Salut!", "c'est", "bon?"]);
   });
 
+  it("removes extra spaces before percent signs", () => {
+    expect(normalizeInlineSubtitleText("Il reste 20 % maintenant")).toBe("Il reste 20% maintenant");
+    expect(tokenizeSubtitleText("On est a 100 % !")).toEqual(["On", "est", "a", "100%!"]);
+  });
+
   it("re-attaches hyphenated words when spacing is broken", () => {
     expect(normalizeInlineSubtitleText("peut -etre fin - de - phrase")).toBe("peut-etre fin-de-phrase");
     expect(tokenizeSubtitleText("peut -etre fin - de - phrase")).toEqual(["peut-etre", "fin-de-phrase"]);
@@ -40,6 +45,21 @@ describe("textNormalization", () => {
     expect(normalized).toEqual([
       { text: "peut-etre", startSeconds: 0, endSeconds: 0.7 },
       { text: "semi-transparent", startSeconds: 0.7, endSeconds: 1.2 }
+    ]);
+  });
+
+  it("merges timed percent tokens into numeric words", () => {
+    const normalized = normalizeCaptionWords([
+      { text: "20", startSeconds: 0, endSeconds: 0.2 },
+      { text: "%", startSeconds: 0.2, endSeconds: 0.25 },
+      { text: "30 %", startSeconds: 0.25, endSeconds: 0.45 },
+      { text: "ok", startSeconds: 0.25, endSeconds: 0.7 }
+    ]);
+
+    expect(normalized).toEqual([
+      { text: "20%", startSeconds: 0, endSeconds: 0.25 },
+      { text: "30%", startSeconds: 0.25, endSeconds: 0.45 },
+      { text: "ok", startSeconds: 0.25, endSeconds: 0.7 }
     ]);
   });
 });

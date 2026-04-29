@@ -36,6 +36,7 @@ export function normalizeInlineSubtitleText(text: string): string {
       .replace(afterApostrophePattern, "$1$2")
       .replace(beforeHyphenPattern, "$1$2")
       .replace(afterHyphenPattern, "$1$2")
+      .replace(/(\p{N})\s+%/gu, "$1%")
       .replace(/\s+([!?]+)/g, "$1")
       .replace(/\s+/g, " ")
       .trim();
@@ -65,12 +66,19 @@ export function normalizeCaptionWords(words: CaptionWord[]): CaptionWord[] {
 
   for (let index = 0; index < words.length; index += 1) {
     const sourceWord = words[index];
-    const currentText = String(sourceWord?.text || "").trim();
+    const currentText = String(sourceWord?.text || "")
+      .trim()
+      .replace(/(\p{N})\s+%/gu, "$1%");
     if (!currentText) {
       continue;
     }
 
     if (normalized.length > 0 && /^[!?]+$/.test(currentText)) {
+      appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
+      continue;
+    }
+
+    if (normalized.length > 0 && currentText === "%" && /\p{N}$/u.test(normalized[normalized.length - 1]?.text || "")) {
       appendToPrevious(currentText, Number(sourceWord.endSeconds || sourceWord.startSeconds || 0));
       continue;
     }

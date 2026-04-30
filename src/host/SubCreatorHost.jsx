@@ -9246,6 +9246,223 @@ function subcreator_get_or_create_top_video_track_index(sequence) {
   };
 }
 
+function subcreator_format_srt_timestamp(totalSeconds) {
+  // // Convert seconds into SRT timecode for Premiere's native subtitle importer.
+  var safeSeconds = Math.max(0, Number(totalSeconds) || 0);
+  var totalMilliseconds = Math.round(safeSeconds * 1000);
+  var hours = Math.floor(totalMilliseconds / 3600000);
+  var minutes = Math.floor((totalMilliseconds % 3600000) / 60000);
+  var seconds = Math.floor((totalMilliseconds % 60000) / 1000);
+  var milliseconds = totalMilliseconds % 1000;
+  return (
+    String(hours).replace(/^(\d)$/, "0$1") +
+    ":" +
+    String(minutes).replace(/^(\d)$/, "0$1") +
+    ":" +
+    String(seconds).replace(/^(\d)$/, "0$1") +
+    "," +
+    ("00" + String(milliseconds)).slice(-3)
+  );
+}
+
+function subcreator_normalize_srt_caption_text(value) {
+  // // Keep caption text valid for SRT blocks while preserving planner-created line breaks.
+  return subcreator_trim_string(String(value || ""))
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n\s*\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n");
+}
+
+function subcreator_serialize_cues_to_srt(cues) {
+  // // Serialize generated caption cues to one SRT file for fast native subtitle track creation.
+  var lines = [];
+  for (var i = 0; i < cues.length; i += 1) {
+    var cue = cues[i] || {};
+    var startSeconds = Number(cue.startSeconds);
+    var endSeconds = Number(cue.endSeconds);
+    var text = subcreator_normalize_srt_caption_text(cue.text || "");
+    if (!isFinite(startSeconds) || !isFinite(endSeconds) || endSeconds <= startSeconds || !text) {
+      continue;
+    }
+    lines.push(
+      String(lines.length + 1) +
+        "\n" +
+        subcreator_format_srt_timestamp(startSeconds) +
+        " --> " +
+        subcreator_format_srt_timestamp(endSeconds) +
+        "\n" +
+        text
+    );
+  }
+  return lines.join("\n\n") + (lines.length > 0 ? "\n" : "");
+}
+
+function subcreator_sanitize_filename_part(value) {
+  // // Build readable temp filenames without characters rejected by macOS or Windows file systems.
+  var normalized = subcreator_trim_string(String(value || "SubCreator"));
+  normalized = normalized.replace(/[\\\/:\*\?"<>\|]+/g, "-").replace(/\s+/g, "-");
+  if (!normalized) {
+    normalized = "SubCreator";
+  }
+  return normalized.slice(0, 48);
+}
+
+function subcreator_get_native_subtitle_folder() {
+  // // Store generated SRT sources in user data so Premiere projects do not depend on a volatile OS temp file.
+  var subcreatorFolder = new Folder(Folder.userData.fsName + "/SubCreator");
+  if (!subcreatorFolder.exists) {
+    subcreatorFolder.create();
+  }
+  var baseFolder = new Folder(subcreatorFolder.fsName + "/native-subtitles");
+  if (!baseFolder.exists && !baseFolder.create()) {
+    throw new Error("Unable to create native subtitle folder: " + baseFolder.fsName);
+  }
+  return baseFolder;
+}
+
+function subcreator_write_native_subtitle_srt(sequence, cues) {
+  // // Write planned cues to a uniquely named SRT that Premiere can import as a captions source clip.
+  var srtText = subcreator_serialize_cues_to_srt(cues);
+  if (!srtText) {
+    throw new Error("No valid subtitle cues to import.");
+  }
+
+  var targetFolder = subcreator_get_native_subtitle_folder();
+  var sequenceName = sequence && sequence.name ? String(sequence.name) : "Sequence";
+  var fileName = "SubCreator-" + subcreator_sanitize_filename_part(sequenceName) + "-" + String(new Date().getTime()) + ".srt";
+  var fileRef = new File(targetFolder.fsName + "/" + fileName);
+  fileRef.encoding = "UTF-8";
+  if (!fileRef.open("w")) {
+    throw new Error("Unable to write native subtitle SRT: " + fileRef.fsName);
+  }
+  fileRef.write(srtText);
+  fileRef.close();
+  return fileRef.fsName;
+}
+
+function subcreator_normalize_compare_path(value) {
+  // // Normalize host paths before comparing imported project items with the generated SRT file.
+  return subcreator_normalize_system_path(String(value || "")).replace(/\\/g, "/").toLowerCase();
+}
+
+function subcreator_find_project_item_by_path(rootItem, filePath, fileName) {
+  // // Walk the project tree to find the SRT ProjectItem Premiere just imported.
+  if (!rootItem) {
+    return null;
+  }
+
+  var targetPath = subcreator_normalize_compare_path(filePath);
+  var targetName = String(fileName || "").toLowerCase();
+  var children = subcreator_collection_to_array(rootItem.children);
+  for (var i = 0; i < children.length; i += 1) {
+    var child = children[i];
+    if (!child) {
+      continue;
+    }
+
+    var childPath = "";
+    try {
+      childPath = typeof child.getMediaPath === "function" ? child.getMediaPath() : "";
+    } catch (pathError) {
+      childPath = "";
+    }
+    if (childPath && subcreator_normalize_compare_path(childPath) === targetPath) {
+      return child;
+    }
+
+    var childName = "";
+    try {
+      childName = String(child.name || "").toLowerCase();
+    } catch (nameError) {
+      childName = "";
+    }
+    if (targetName && childName === targetName) {
+      var namePath = subcreator_normalize_compare_path(childPath);
+      if (!namePath || namePath === targetPath) {
+        return child;
+      }
+    }
+
+    var nested = subcreator_find_project_item_by_path(child, filePath, fileName);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function subcreator_import_native_subtitle_project_item(srtPath) {
+  // // Import the generated SRT into the project and return the ProjectItem needed by createCaptionTrack.
+  var fileRef = new File(srtPath);
+  if (!fileRef.exists) {
+    throw new Error("Native subtitle SRT not found: " + srtPath);
+  }
+
+  var importResult = app.project.importFiles([fileRef.fsName], true, app.project.rootItem, false);
+  if (!importResult) {
+    throw new Error("Premiere could not import native subtitle SRT: " + fileRef.fsName);
+  }
+
+  var projectItem = subcreator_find_project_item_by_path(app.project.rootItem, fileRef.fsName, fileRef.name);
+  if (!projectItem) {
+    throw new Error("Imported native subtitle SRT project item was not found.");
+  }
+  return projectItem;
+}
+
+function subcreator_create_native_caption_track(sequence, projectItem) {
+  // // Prefer Premiere's Subtitle caption format, falling back to the API default when the enum is unavailable.
+  if (!sequence || typeof sequence.createCaptionTrack !== "function") {
+    throw new Error("This Premiere version does not expose createCaptionTrack().");
+  }
+
+  try {
+    if (typeof Sequence !== "undefined" && typeof Sequence.CAPTION_FORMAT_SUBTITLE !== "undefined") {
+      return sequence.createCaptionTrack(projectItem, 0, Sequence.CAPTION_FORMAT_SUBTITLE);
+    }
+  } catch (enumError) {}
+
+  return sequence.createCaptionTrack(projectItem, 0);
+}
+
+function subcreator_apply_native_subtitles(payloadEncoded) {
+  // // Create one native Premiere subtitle track by importing generated cue timing as an SRT source clip.
+  try {
+    var payloadText = subcreator_decode_payload(payloadEncoded);
+    var payload = JSON.parse(payloadText);
+
+    if (!app || !app.project || !app.project.activeSequence) {
+      return JSON.stringify({ ok: false, error: "No active sequence in Premiere." });
+    }
+
+    var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
+    var cues = payload.cues || [];
+    var srtPath = subcreator_write_native_subtitle_srt(sequence, cues);
+    var projectItem = subcreator_import_native_subtitle_project_item(srtPath);
+    var created = subcreator_create_native_caption_track(sequence, projectItem);
+
+    return JSON.stringify({
+      ok: Boolean(created),
+      totalCues: cues.length,
+      insertedNativeSubtitles: Boolean(created) ? cues.length : 0,
+      nativeSubtitleTrackCreated: Boolean(created),
+      nativeSubtitleSrtPath: srtPath,
+      importedProjectItemName: projectItem && projectItem.name ? String(projectItem.name) : "",
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName
+    });
+  } catch (error) {
+    return JSON.stringify({ ok: false, error: error.toString() });
+  }
+}
+
 function subcreator_apply_captions(payloadEncoded) {
   // // Insert MOGRT instances or fallback timeline markers from generated caption plan.
   try {

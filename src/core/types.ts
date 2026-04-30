@@ -1,5 +1,6 @@
 // // Define strongly typed structures shared by the panel and host bridge.
 export type SourceMode = "srt" | "whisper_sequence" | "whisperx_sequence" | "corrected_align";
+export type OutputMode = "mogrt" | "premiere_subtitles";
 export type WhisperSequenceRangeMode = "entire_sequence" | "in_out";
 
 // // Support both per-word and per-line animation strategies.
@@ -45,6 +46,7 @@ export interface PremiereTemplateTextPayload {
 // // Describe full generation options for a build request.
 export interface CaptionBuildOptions {
   sourceMode: SourceMode;
+  outputMode: OutputMode;
   languageCode: string;
   style: CaptionStyleConfig;
   extensionRootPath: string;

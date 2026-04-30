@@ -1,11 +1,12 @@
 # Sub Creator
 
-Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs from an `SRT` file, a `Whisper` transcription, a `WhisperX` precision transcription, or `Whisper + SRT` alignment.
+Sub Creator is an Adobe Premiere extension for generating subtitle MOGRTs or native Premiere subtitle tracks from an `SRT` file, a `Whisper` transcription, a `WhisperX` precision transcription, or `Whisper + SRT` alignment.
 
 It is built for a simple workflow inside Premiere:
 - choose a subtitle source (whisper/srt)
-- choose a MOGRT in the gallery
-- generate subtitle clips on the timeline
+- choose `MOGRT` or `Premiere subtitles` output
+- choose a MOGRT in the gallery when using MOGRT output
+- generate subtitle clips or a native subtitle track on the timeline
 - adjust exposed controls in the `Visual editor`
 - rebalance text and timing in the `Text editor`
 
@@ -14,6 +15,7 @@ It is built for a simple workflow inside Premiere:
 - `SRT`, `Whisper`, `WhisperX`, and `Whisper + SRT` creation modes
 - generation on `Entire sequence` or `In/Out points`, with automatic fallback to the full sequence when no valid In/Out range exists
 - bundled base MOGRT templates with gallery support for your own templates
+- native Premiere subtitle track output from the same SRT/Whisper/WhisperX sources
 - searchable MOGRT gallery with remembered folder/view state between sessions
 - generation controls for max letters, max words, and max lines per subtitle
 - support for custom `.mogrt` files from after effect and premiere
@@ -128,8 +130,9 @@ Use this when you already have a subtitle file.
 2. Choose `SRT`.
 3. Select your `.srt` file.
 4. Choose `Entire sequence` or `In/Out points`.
-5. Choose a MOGRT.
-6. Click `Generate subtitles`.
+5. Choose `MOGRT` or `Premiere subtitles`.
+6. Choose a MOGRT when using MOGRT output.
+7. Click `Generate subtitles`.
 
 ### Whisper
 
@@ -140,10 +143,11 @@ Use this when you want Sub Creator to transcribe the active sequence audio.
 3. Select a local Whisper model.
 4. Choose a `Whisper language`, or leave `Auto detect`.
 5. Choose `Entire sequence` or `In/Out points`.
-6. Choose a MOGRT.
-7. Click `Generate subtitles`.
+6. Choose `MOGRT` or `Premiere subtitles`.
+7. Choose a MOGRT when using MOGRT output.
+8. Click `Generate subtitles`.
 
-Sub Creator exports a temporary WAV from the active sequence, runs Whisper, then creates subtitle MOGRTs on the timeline.
+Sub Creator exports a temporary WAV from the active sequence, runs Whisper, then creates subtitle MOGRTs or imports a native Premiere subtitle track.
 
 If you start the wrong analysis, use `Stop current job`.
 
@@ -156,10 +160,11 @@ Use this when you want a transcription like `Whisper`, but with more precise wor
 3. Select a local Whisper model.
 4. Choose a `Whisper language`, or leave `Auto detect`.
 5. Choose `Entire sequence` or `In/Out points`.
-6. Choose a MOGRT.
-7. Click `Generate subtitles`.
+6. Choose `MOGRT` or `Premiere subtitles`.
+7. Choose a MOGRT when using MOGRT output.
+8. Click `Generate subtitles`.
 
-Sub Creator exports a temporary WAV, transcribes it with the selected local Whisper model, aligns the detected words with WhisperX, then creates subtitle MOGRTs on the timeline. Very short WhisperX groups are kept separate when there is a real pause, so quick replies from different speakers are less likely to be merged.
+Sub Creator exports a temporary WAV, transcribes it with the selected local Whisper model, aligns the detected words with WhisperX, then creates subtitle MOGRTs or imports a native Premiere subtitle track. Very short WhisperX groups are kept separate when there is a real pause, so quick replies from different speakers are less likely to be merged.
 
 ### Whisper + SRT
 
@@ -170,10 +175,17 @@ Use this when you already have corrected text and want better timings than a pla
 3. Select a corrected `.srt` or `.txt`.
 4. Choose the explicit language used in the corrected transcript.
 5. Choose `Entire sequence` or `In/Out points`.
-6. Choose a MOGRT.
-7. Click `Generate subtitles`.
+6. Choose `MOGRT` or `Premiere subtitles`.
+7. Choose a MOGRT when using MOGRT output.
+8. Click `Generate subtitles`.
 
-Sub Creator exports a temporary WAV from the active sequence, aligns the corrected text with WhisperX, then creates the subtitle MOGRTs.
+Sub Creator exports a temporary WAV from the active sequence, aligns the corrected text with WhisperX, then creates subtitle MOGRTs or imports a native Premiere subtitle track.
+
+### Output type
+
+Use `MOGRT` when you want animated subtitle clips, custom templates, and the Visual/Text editor workflows.
+
+Use `Premiere subtitles` when you want a native subtitle track. Sub Creator still applies the max letters, max words, and max lines settings, then imports the result through a temporary SRT file. The MOGRT gallery is hidden in this mode because native Premiere subtitles do not use MOGRT templates.
 
 If you start the wrong analysis, use `Stop current job`.
 

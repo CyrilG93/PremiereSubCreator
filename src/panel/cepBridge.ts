@@ -3105,6 +3105,12 @@ export async function applyCaptionPlan(payload: HostApplyPayload): Promise<strin
   return evalScript(`subcreator_apply_captions("${escapeForJsx(encodedPayload)}")`);
 }
 
+export async function applyNativeSubtitlePlan(payload: HostApplyPayload): Promise<string> {
+  // // Send planned cues to ExtendScript so Premiere can import them as one native subtitle track from SRT.
+  const encodedPayload = encodeURIComponent(JSON.stringify(payload));
+  return evalScript(`subcreator_apply_native_subtitles("${escapeForJsx(encodedPayload)}")`);
+}
+
 export async function readTextFileFromHost(filePath: string): Promise<string> {
   // // Read subtitle files through host to avoid browser file access limitations.
   const encoded = encodeURIComponent(filePath);

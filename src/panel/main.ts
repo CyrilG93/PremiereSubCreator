@@ -21,11 +21,13 @@ import type {
   CaptionWord,
   HostApplyPayload,
   MogrtTemplateItem,
+  OutputMode,
   SourceMode,
   WhisperSequenceRangeMode
 } from "../core/types";
 import {
   applyCaptionPlan,
+  applyNativeSubtitlePlan,
   buildPremiereTemplateCueMogrts,
   cancelCurrentJob,
   alignCorrectedTranscript,
@@ -122,6 +124,7 @@ interface PanelStateSnapshot {
   whisperLanguageCode?: string;
   activeMode: PanelMode;
   sourceMode: SourceMode;
+  outputMode: OutputMode;
   srtPath: string;
   correctedTranscriptPath: string;
   whisperModel: string;
@@ -144,7 +147,11 @@ interface TextEditorBlockState extends TextEditorBlock {
 }
 
 interface ApplyCaptionPlanHostResult {
+  ok?: boolean;
+  error?: string;
   insertedMogrt?: number;
+  insertedNativeSubtitles?: number;
+  nativeSubtitleTrackCreated?: boolean;
   videoTrackUsed?: number;
   projectDocumentId?: string;
   projectPath?: string;
@@ -181,6 +188,7 @@ const elements = {
   modeVisual: document.querySelector<HTMLElement>("#modeVisual"),
   modeText: document.querySelector<HTMLElement>("#modeText"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
+  outputMode: document.querySelector<HTMLSelectElement>("#outputMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
   srtPath: document.querySelector<HTMLInputElement>("#srtPath"),
   srtBrowseButton: document.querySelector<HTMLButtonElement>("#srtBrowseButton"),
@@ -197,6 +205,7 @@ const elements = {
   whisperLanguageField: document.querySelector<HTMLElement>("#whisperLanguageField"),
   whisperLanguage: document.querySelector<HTMLSelectElement>("#whisperLanguage"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
+  animationField: document.querySelector<HTMLElement>("#animationField"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
   maxWords: document.querySelector<HTMLInputElement>("#maxWords"),
@@ -205,8 +214,10 @@ const elements = {
   mogrtSearchInput: document.querySelector<HTMLInputElement>("#mogrtSearchInput"),
   mogrtFolderButton: document.querySelector<HTMLButtonElement>("#mogrtFolderButton"),
   mogrtRefreshButton: document.querySelector<HTMLButtonElement>("#mogrtRefreshButton"),
+  mogrtGalleryField: document.querySelector<HTMLElement>("#mogrtGalleryField"),
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
+  outputModeHint: document.querySelector<HTMLParagraphElement>("#outputModeHint"),
   visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
   visualCopyButton: document.querySelector<HTMLButtonElement>("#visualCopyButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
@@ -1213,6 +1224,7 @@ function persistPanelState(): void {
     !elements.languageSelect ||
     !elements.tabGenerate ||
     !elements.sourceMode ||
+    !elements.outputMode ||
     !elements.srtPath ||
     !elements.whisperModel ||
     !elements.whisperLanguage ||
@@ -1232,6 +1244,7 @@ function persistPanelState(): void {
     whisperLanguageCode: getSelectedWhisperLanguageCode(),
     activeMode,
     sourceMode: getSourceMode(),
+    outputMode: getOutputMode(),
     srtPath: elements.srtPath.value || "",
     correctedTranscriptPath: elements.correctedTranscriptPath?.value || "",
     whisperModel: elements.whisperModel.value || pendingWhisperModelValue || "base",
@@ -1263,6 +1276,10 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (elements.sourceMode && snapshot.sourceMode && hasSelectOption(elements.sourceMode, snapshot.sourceMode)) {
     elements.sourceMode.value = snapshot.sourceMode;
+  }
+
+  if (elements.outputMode && snapshot.outputMode && hasSelectOption(elements.outputMode, snapshot.outputMode)) {
+    elements.outputMode.value = snapshot.outputMode;
   }
 
   if (elements.srtPath && typeof snapshot.srtPath === "string") {
@@ -1753,6 +1770,17 @@ function getSourceMode(): SourceMode {
   return (elements.sourceMode?.value as SourceMode) || "srt";
 }
 
+function getOutputMode(): OutputMode {
+  // // Normalize output mode so generation can switch between animated MOGRTs and native Premiere captions.
+  const value = elements.outputMode?.value;
+  return value === "premiere_subtitles" ? "premiere_subtitles" : "mogrt";
+}
+
+function isNativeSubtitleOutputMode(): boolean {
+  // // Keep native-caption UI checks centralized because this mode skips all MOGRT-specific controls.
+  return getOutputMode() === "premiere_subtitles";
+}
+
 function resolveExtensionRootPath(): string {
   // // Resolve extension root from current file:// URL in CEP panel context.
   try {
@@ -1832,6 +1860,7 @@ function collectTextEditorBuildOptions(): CaptionBuildOptions {
 
   return {
     ...options,
+    outputMode: "mogrt",
     mogrtTemplateRelativePath: textEditorTemplate.relativePath,
     mogrtPath: buildAbsoluteMogrtPath(options.extensionRootPath, textEditorTemplate.relativePath)
   };
@@ -1914,8 +1943,23 @@ function toggleSourceFields(): void {
   }
   refreshWhisperModelUi();
   refreshCorrectedAlignUi();
+  toggleOutputFields();
   if (elements.generateButton && !generateInProgress) {
     elements.generateButton.disabled = !isCurrentSourceReady();
+  }
+}
+
+function toggleOutputFields(): void {
+  // // Hide MOGRT-only controls when creating native Premiere subtitle tracks from generated SRT data.
+  const nativeSubtitleModeActive = isNativeSubtitleOutputMode();
+  if (elements.animationField) {
+    elements.animationField.style.display = nativeSubtitleModeActive ? "none" : "grid";
+  }
+  if (elements.mogrtGalleryField) {
+    elements.mogrtGalleryField.style.display = nativeSubtitleModeActive ? "none" : "grid";
+  }
+  if (elements.outputModeHint) {
+    elements.outputModeHint.textContent = translate(nativeSubtitleModeActive ? "help.nativeTracks" : "help.mogrtTracks");
   }
 }
 
@@ -2223,6 +2267,9 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   if (elements.sourceMode) {
     elements.sourceMode.disabled = isBusy;
   }
+  if (elements.outputMode) {
+    elements.outputMode.disabled = isBusy;
+  }
   if (elements.whisperModel) {
     elements.whisperModel.disabled =
       isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence") || availableWhisperModels.length < 1;
@@ -2242,7 +2289,7 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence" && getSourceMode() !== "corrected_align");
   }
   if (elements.animationMode) {
-    elements.animationMode.disabled = isBusy;
+    elements.animationMode.disabled = isBusy || isNativeSubtitleOutputMode();
   }
   if (elements.maxChars) {
     elements.maxChars.disabled = isBusy;
@@ -2254,13 +2301,13 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
     elements.linesPerCaption.disabled = isBusy;
   }
   if (elements.mogrtAspectFilter) {
-    elements.mogrtAspectFilter.disabled = isBusy;
+    elements.mogrtAspectFilter.disabled = isBusy || isNativeSubtitleOutputMode();
   }
   if (elements.mogrtFolderButton) {
-    elements.mogrtFolderButton.disabled = isBusy;
+    elements.mogrtFolderButton.disabled = isBusy || isNativeSubtitleOutputMode();
   }
   if (elements.mogrtRefreshButton) {
-    elements.mogrtRefreshButton.disabled = isBusy;
+    elements.mogrtRefreshButton.disabled = isBusy || isNativeSubtitleOutputMode();
   }
 }
 
@@ -4640,6 +4687,7 @@ function collectBuildOptions(): CaptionBuildOptions {
 
   return {
     sourceMode: getSourceMode(),
+    outputMode: getOutputMode(),
     languageCode: getSelectedWhisperLanguageCode(),
     style: {
       maxCharsPerLine: Number(elements.maxChars.value),
@@ -4759,6 +4807,15 @@ function buildWhisperXProgressLabel(progress: WhisperProgressUpdate): string {
   return translateTemplate("progress.whisperxAnalysis", {
     percent: String(Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0)))))
   });
+}
+
+function assertHostApplySucceeded(rawResult: string): ApplyCaptionPlanHostResult {
+  // // Surface host-side apply failures immediately instead of leaving them only in the expanded log payload.
+  const parsed = JSON.parse(String(rawResult || "{}")) as ApplyCaptionPlanHostResult;
+  if (parsed && parsed.ok === false) {
+    throw new Error(String(parsed.error || "Premiere did not apply the generated subtitles."));
+  }
+  return parsed;
 }
 
 async function resolveRequestedSequenceRange(
@@ -5016,6 +5073,18 @@ async function generate(): Promise<void> {
     await updateGenerateProgress(90, translate("progress.planCaptions"), true);
     let plannedCues = buildCaptionPlan(cues, options);
     assertGenerateNotCancelled();
+    if (options.outputMode === "premiere_subtitles") {
+      const payload: HostApplyPayload = {
+        options,
+        cues: plannedCues
+      };
+      await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
+      const hostResultRaw = await applyNativeSubtitlePlan(payload);
+      setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+      assertHostApplySucceeded(hostResultRaw);
+      return;
+    }
+
     const premiereTemplateTextPayloads = await readPremiereTemplateTextPayloads(options.mogrtPath);
     let cleanupMogrtPaths: string[] = [];
     if (premiereTemplateTextPayloads.length) {
@@ -5041,8 +5110,8 @@ async function generate(): Promise<void> {
       await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
       const hostResultRaw = await applyCaptionPlan(payload);
       setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
+      const hostResult = assertHostApplySucceeded(hostResultRaw);
       try {
-        const hostResult = JSON.parse(String(hostResultRaw || "")) as ApplyCaptionPlanHostResult;
         if (
           Number(hostResult.insertedMogrt || 0) === plannedCues.length &&
           Number.isFinite(Number(hostResult.videoTrackUsed)) &&
@@ -5135,6 +5204,7 @@ async function initialize(): Promise<void> {
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
     refreshWhisperLanguageUi(getSelectedWhisperLanguageCode());
+    toggleSourceFields();
     renderMogrtGallery();
     if (!loadedVisualProperties.length) {
       updateVisualSelectionSummary(translate("visual.selectionDefault"));
@@ -5157,6 +5227,11 @@ async function initialize(): Promise<void> {
 
   elements.sourceMode?.addEventListener("change", () => {
     toggleSourceFields();
+    persistPanelState();
+  });
+  elements.outputMode?.addEventListener("change", () => {
+    toggleOutputFields();
+    setGenerateButtonsBusy(generateInProgress);
     persistPanelState();
   });
 

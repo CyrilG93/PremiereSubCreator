@@ -67,13 +67,21 @@
             </div>
           </section>
 
-          <label class="field field--full">
+          <label class="field">
             <span data-i18n="field.source">Source des sous-titres</span>
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
               <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper</option>
               <option value="whisperx_sequence" data-i18n="source.whisperxSequence">WhisperX</option>
               <option value="corrected_align" data-i18n="source.correctedAlign">Whisper + SRT</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span data-i18n="field.outputMode">Type de sortie</span>
+            <select id="outputMode">
+              <option value="mogrt" data-i18n="output.mogrt">MOGRT</option>
+              <option value="premiere_subtitles" data-i18n="output.premiereSubtitles">Sous-titres Premiere</option>
             </select>
           </label>
 
@@ -137,7 +145,7 @@
             </div>
           </section>
 
-          <label class="field">
+          <label class="field" id="animationField">
             <span data-i18n="field.animation">Mode animation</span>
             <select id="animationMode">
               <option value="word" data-i18n="animation.word">Par mot</option>
@@ -193,7 +201,7 @@
             <p id="mogrtSelectedLabel" class="hint"></p>
           </section>
 
-          <p class="hint field--full" data-i18n="help.tracks">
+          <p id="outputModeHint" class="hint field--full" data-i18n="help.mogrtTracks">
             Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
           </p>
         </section>

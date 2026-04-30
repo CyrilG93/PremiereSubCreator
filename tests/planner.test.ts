@@ -5,6 +5,7 @@ import type { CaptionBuildOptions } from "../src/core/types";
 
 const baseOptions: CaptionBuildOptions = {
   sourceMode: "srt",
+  outputMode: "mogrt",
   languageCode: "fr",
   style: {
     presetId: "clean",

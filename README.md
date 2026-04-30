@@ -343,6 +343,12 @@ Use Premiere's `Properties` panel for that template. Some controls are not expos
 
 ## Changelog
 
+### 0.15.0 - 2026-04-30
+
+- Added `Premiere subtitles` output for creating native Premiere subtitle tracks from SRT, Whisper, WhisperX, or Whisper + SRT.
+- The new output keeps the same max letters, words, and lines controls, and hides the MOGRT gallery when it is not needed.
+- WhisperX setup is more reliable on macOS when alignment models need to download through Python.
+
 ### 0.14.0 - 2026-04-27
 
 - Added a new `WhisperX` subtitle source for more precise word timing from active sequence audio.

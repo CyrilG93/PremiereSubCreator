@@ -135,10 +135,10 @@ if not defined SUBCREATOR_SKIP_WHISPER_SETUP (
 
   REM // Install WhisperX when Python is compatible so corrected transcript align can run without extra setup.
   if !SUBCREATOR_PYTHON_MAJOR! EQU 3 if !SUBCREATOR_PYTHON_MINOR! GEQ 10 if !SUBCREATOR_PYTHON_MINOR! LEQ 13 (
-    call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade whisperx requests nltk
+    call !SUBCREATOR_PYTHON_CMD! -m pip install --user --upgrade whisperx requests nltk certifi
     if errorlevel 1 (
       echo WhisperX package install failed. You can run manually:
-      echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade whisperx requests nltk
+      echo   !SUBCREATOR_PYTHON_LABEL! -m pip install --user --upgrade whisperx requests nltk certifi
     ) else (
       echo WhisperX Python package installed successfully.
     )

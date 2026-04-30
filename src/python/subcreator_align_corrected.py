@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import ssl
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,57 @@ def subcreator_fail(message: str) -> int:
     sys.stderr.write(f"ERROR: {message}\n")
     sys.stderr.flush()
     return 1
+
+
+def subcreator_configure_certifi_ssl() -> bool:
+    # // Point urllib/torch downloads at certifi so macOS Python installs with missing local CAs can still fetch alignment models.
+    try:
+        import certifi  # type: ignore
+
+        cafile = certifi.where()
+    except Exception:
+        return False
+
+    if not cafile or not os.path.isfile(cafile):
+        return False
+
+    os.environ.setdefault("SSL_CERT_FILE", cafile)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+
+    def subcreator_create_certifi_https_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        # // Preserve explicit caller trust settings while defaulting missing CA paths to certifi.
+        if not kwargs.get("cafile") and not kwargs.get("capath") and not kwargs.get("cadata"):
+            kwargs["cafile"] = cafile
+        return ssl.create_default_context(*args, **kwargs)
+
+    try:
+        ssl._create_default_https_context = subcreator_create_certifi_https_context  # type: ignore[attr-defined]
+    except Exception:
+        return False
+    return True
+
+
+def subcreator_is_ssl_certificate_error(error: Exception) -> bool:
+    # // Recognize the certificate failure emitted by urllib when torch downloads WhisperX alignment models.
+    normalized = str(error or "").lower()
+    return (
+        "certificate_verify_failed" in normalized
+        or "sslcertverificationerror" in normalized
+        or "unable to get local issuer certificate" in normalized
+    )
+
+
+def subcreator_format_runtime_error(error: Exception, certifi_ssl_enabled: bool) -> str:
+    # // Add an actionable SSL hint without hiding the original WhisperX or torch error message.
+    message = str(error)
+    if subcreator_is_ssl_certificate_error(error):
+        if certifi_ssl_enabled:
+            return (
+                f"{message}. SSL certificate validation still failed after using certifi. "
+                "Check the network proxy/corporate certificate settings for this Python runtime."
+            )
+        return f"{message}. Install or update certifi with `python -m pip install --user --upgrade certifi`, then retry."
+    return message
 
 
 def subcreator_normalize_text(value: Any) -> str:
@@ -390,6 +442,8 @@ def main() -> int:
     if not transcribe_model and (not language_code or language_code == "auto"):
         return subcreator_fail("Corrected transcript align requires an explicit language code.")
 
+    certifi_ssl_enabled = subcreator_configure_certifi_ssl()
+
     try:
         subcreator_log_progress(8, "Loading WhisperX dependencies")
         import whisperx  # type: ignore
@@ -460,7 +514,7 @@ def main() -> int:
         subcreator_log_progress(100, "Corrected transcript alignment complete")
         return 0
     except Exception as error:
-        return subcreator_fail(str(error))
+        return subcreator_fail(subcreator_format_runtime_error(error, certifi_ssl_enabled))
 
 
 if __name__ == "__main__":

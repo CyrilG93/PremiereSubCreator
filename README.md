@@ -309,9 +309,11 @@ Open `Open Whisper models folder` and check that at least one `.pt` model is pre
 
 Check that Python, `ffmpeg`, and the required package are installed:
 - `openai-whisper` for `Whisper`
-- `whisperx` for `WhisperX` and `Whisper + SRT`
+- `whisperx` and `certifi` for `WhisperX` and `Whisper + SRT`
 
 If Whisper transcription quality is poor, check the `Whisper language` selector in the panel. It is separate from the UI language.
+
+If WhisperX stops while downloading an alignment model with an SSL certificate error, rerun the installer or update the Python packages with the install command shown by Sub Creator. The extension uses `certifi` to help Python trust the model download servers.
 
 ### `Window > Extensions` is greyed out on Windows
 

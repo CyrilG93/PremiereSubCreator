@@ -3880,13 +3880,13 @@ async function transcribeWithWhisperXViaCepNodeAsync(
 
   let installHint = "";
   if (runtimeConfig?.pythonPath) {
-    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx`;
+    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx certifi`;
   } else if (runtimeConfig?.pythonCommand) {
-    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx`;
+    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx certifi`;
   } else if (detectWindowsRuntime()) {
-    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx";
+    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx certifi";
   } else {
-    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx";
+    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx certifi";
   }
 
   throw new Error(
@@ -4091,13 +4091,13 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
 
   let installHint = "";
   if (runtimeConfig?.pythonPath) {
-    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx`;
+    installHint = `Install command: ${runtimeConfig.pythonPath} -m pip install --user --upgrade whisperx certifi`;
   } else if (runtimeConfig?.pythonCommand) {
-    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx`;
+    installHint = `Install command: ${runtimeConfig.pythonCommand} -m pip install --user --upgrade whisperx certifi`;
   } else if (detectWindowsRuntime()) {
-    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx";
+    installHint = "Install command: py -3.11 -m pip install --user --upgrade whisperx certifi";
   } else {
-    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx";
+    installHint = "Install command: python3.11 -m pip install --user --upgrade whisperx certifi";
   }
 
   throw new Error(

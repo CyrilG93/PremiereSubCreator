@@ -553,12 +553,12 @@ else
 
   # // Install WhisperX when the selected Python runtime is new enough for corrected transcript alignment.
   if subcreator_supports_whisperx_version "${SUBCREATOR_PYTHON_VERSION}"; then
-    if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk; then
+    if ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk certifi; then
       echo "WhisperX Python package installed successfully."
       subcreator_validate_whisperx_install || true
     else
       echo "WhisperX package install failed. You can run manually:"
-      echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk"
+      echo "  ${SUBCREATOR_PYTHON_CMD} -m pip install --user --upgrade whisperx requests nltk certifi"
     fi
   else
     echo "WhisperX setup skipped: Python ${SUBCREATOR_PYTHON_VERSION} detected (need 3.10 to 3.13 for corrected transcript align)."

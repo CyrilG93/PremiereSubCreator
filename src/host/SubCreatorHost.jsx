@@ -9276,9 +9276,10 @@ function subcreator_normalize_srt_caption_text(value) {
     .replace(/\n[ \t]+/g, "\n");
 }
 
-function subcreator_serialize_cues_to_srt(cues) {
-  // // Serialize generated caption cues to one SRT file for fast native subtitle track creation.
-  var lines = [];
+function subcreator_normalize_native_subtitle_cues(cues) {
+  // // Premiere's native SRT importer rejects overlapping cues, so normalize timeline timings before writing.
+  var normalized = [];
+  var source = [];
   for (var i = 0; i < cues.length; i += 1) {
     var cue = cues[i] || {};
     var startSeconds = Number(cue.startSeconds);
@@ -9287,14 +9288,58 @@ function subcreator_serialize_cues_to_srt(cues) {
     if (!isFinite(startSeconds) || !isFinite(endSeconds) || endSeconds <= startSeconds || !text) {
       continue;
     }
+    source.push({
+      startSeconds: Math.max(0, startSeconds),
+      endSeconds: Math.max(0, endSeconds),
+      text: text
+    });
+  }
+
+  source.sort(function (left, right) {
+    return left.startSeconds - right.startSeconds || left.endSeconds - right.endSeconds;
+  });
+
+  var minimumDurationSeconds = 0.05;
+  var gapSeconds = 0.001;
+  for (var index = 0; index < source.length; index += 1) {
+    var sourceCue = source[index];
+    var normalizedStart = sourceCue.startSeconds;
+    var normalizedEnd = Math.max(sourceCue.endSeconds, normalizedStart + minimumDurationSeconds);
+    if (normalized.length > 0) {
+      var previousCue = normalized[normalized.length - 1];
+      var minimumStart = previousCue.endSeconds + gapSeconds;
+      if (normalizedStart < minimumStart) {
+        normalizedStart = minimumStart;
+      }
+      if (normalizedEnd <= normalizedStart) {
+        normalizedEnd = normalizedStart + minimumDurationSeconds;
+      }
+    }
+
+    normalized.push({
+      startSeconds: normalizedStart,
+      endSeconds: normalizedEnd,
+      text: sourceCue.text
+    });
+  }
+
+  return normalized;
+}
+
+function subcreator_serialize_cues_to_srt(cues) {
+  // // Serialize generated caption cues to one SRT file for fast native subtitle track creation.
+  var lines = [];
+  var normalizedCues = subcreator_normalize_native_subtitle_cues(cues || []);
+  for (var i = 0; i < normalizedCues.length; i += 1) {
+    var cue = normalizedCues[i] || {};
     lines.push(
       String(lines.length + 1) +
         "\n" +
-        subcreator_format_srt_timestamp(startSeconds) +
+        subcreator_format_srt_timestamp(cue.startSeconds) +
         " --> " +
-        subcreator_format_srt_timestamp(endSeconds) +
+        subcreator_format_srt_timestamp(cue.endSeconds) +
         "\n" +
-        text
+        cue.text
     );
   }
   return lines.join("\n\n") + (lines.length > 0 ? "\n" : "");
@@ -9335,6 +9380,7 @@ function subcreator_write_native_subtitle_srt(sequence, cues) {
   var fileName = "SubCreator-" + subcreator_sanitize_filename_part(sequenceName) + "-" + String(new Date().getTime()) + ".srt";
   var fileRef = new File(targetFolder.fsName + "/" + fileName);
   fileRef.encoding = "UTF-8";
+  fileRef.lineFeed = "Windows";
   if (!fileRef.open("w")) {
     throw new Error("Unable to write native subtitle SRT: " + fileRef.fsName);
   }

@@ -338,7 +338,7 @@ describe("buildCaptionPlan", () => {
         },
         {
           id: "cue-13-b",
-          startSeconds: 1.06,
+          startSeconds: 1.18,
           endSeconds: 2,
           text: "second subtitle",
           words: []
@@ -364,7 +364,7 @@ describe("buildCaptionPlan", () => {
         },
         {
           id: "cue-14-b",
-          startSeconds: 1.4,
+          startSeconds: 1.24,
           endSeconds: 2,
           text: "second subtitle",
           words: []
@@ -375,6 +375,6 @@ describe("buildCaptionPlan", () => {
 
     expect(planned).toHaveLength(2);
     expect(planned[0].endSeconds).toBe(1);
-    expect(planned[1].startSeconds).toBe(1.4);
+    expect(planned[1].startSeconds).toBe(1.24);
   });
 });

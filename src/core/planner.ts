@@ -3,7 +3,7 @@ import type { CaptionBuildOptions, CaptionCue, CaptionWord } from "./types";
 import { normalizeCaptionWords, tokenizeSubtitleText } from "./textNormalization";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
-const SNAP_ADJACENT_CAPTION_GAP_SECONDS = 0.1;
+const SNAP_ADJACENT_CAPTION_GAP_SECONDS = 0.2;
 
 function normalizeWords(text: string): string[] {
   // // Keep contiguous word order so chunk timing stays coherent with speech rhythm.

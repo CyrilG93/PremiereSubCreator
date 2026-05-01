@@ -3,6 +3,8 @@ import type { CaptionBuildOptions, CaptionCue, CaptionWord } from "./types";
 import { normalizeCaptionWords, tokenizeSubtitleText } from "./textNormalization";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
+const SNAP_ADJACENT_CAPTION_GAP_SECONDS = 0.1;
+
 function normalizeWords(text: string): string[] {
   // // Keep contiguous word order so chunk timing stays coherent with speech rhythm.
   return tokenizeSubtitleText(text);
@@ -376,6 +378,37 @@ function renderChunkText(words: CaptionWord[], constraints: LineWrapConstraints)
   return balanced.join("\n");
 }
 
+function snapTinyGapsBetweenCues(cues: CaptionCue[]): CaptionCue[] {
+  // // Extend subtitles across frame-sized gaps so playback does not flash empty timeline space between near-adjacent captions.
+  if (cues.length < 2) {
+    return cues;
+  }
+
+  const snappedCues = cues.map((cue) => ({
+    ...cue,
+    words: cue.words.map((word) => ({ ...word }))
+  }));
+
+  for (let index = 0; index < snappedCues.length - 1; index += 1) {
+    const currentCue = snappedCues[index];
+    const nextCue = snappedCues[index + 1];
+    const gapSeconds = nextCue.startSeconds - currentCue.endSeconds;
+    if (gapSeconds <= 0 || gapSeconds > SNAP_ADJACENT_CAPTION_GAP_SECONDS) {
+      continue;
+    }
+
+    currentCue.endSeconds = nextCue.startSeconds;
+    if (currentCue.words.length > 0) {
+      currentCue.words[currentCue.words.length - 1].endSeconds = Math.max(
+        currentCue.words[currentCue.words.length - 1].endSeconds,
+        currentCue.endSeconds
+      );
+    }
+  }
+
+  return snappedCues;
+}
+
 export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOptions): CaptionCue[] {
   // // Split cues by contiguous word groups with timing proportional to word distribution.
   const plannedCues: CaptionCue[] = [];
@@ -425,5 +458,5 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
     });
   }
 
-  return plannedCues;
+  return snapTinyGapsBetweenCues(plannedCues);
 }

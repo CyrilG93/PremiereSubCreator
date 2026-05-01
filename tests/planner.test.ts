@@ -325,4 +325,56 @@ describe("buildCaptionPlan", () => {
     expect(planned[0].text).toBe("20% de mieux");
     expect(planned[0].words.map((word) => word.text)).toEqual(["20%", "de", "mieux"]);
   });
+
+  it("closes tiny gaps between near-adjacent source cues", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-13-a",
+          startSeconds: 0,
+          endSeconds: 1,
+          text: "first subtitle",
+          words: []
+        },
+        {
+          id: "cue-13-b",
+          startSeconds: 1.06,
+          endSeconds: 2,
+          text: "second subtitle",
+          words: []
+        }
+      ],
+      baseOptions
+    );
+
+    expect(planned).toHaveLength(2);
+    expect(planned[0].endSeconds).toBe(planned[1].startSeconds);
+    expect(planned[0].words[planned[0].words.length - 1].endSeconds).toBe(planned[1].startSeconds);
+  });
+
+  it("keeps real pauses between source cues", () => {
+    const planned = buildCaptionPlan(
+      [
+        {
+          id: "cue-14-a",
+          startSeconds: 0,
+          endSeconds: 1,
+          text: "first subtitle",
+          words: []
+        },
+        {
+          id: "cue-14-b",
+          startSeconds: 1.4,
+          endSeconds: 2,
+          text: "second subtitle",
+          words: []
+        }
+      ],
+      baseOptions
+    );
+
+    expect(planned).toHaveLength(2);
+    expect(planned[0].endSeconds).toBe(1);
+    expect(planned[1].startSeconds).toBe(1.4);
+  });
 });

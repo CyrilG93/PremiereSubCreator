@@ -89,6 +89,22 @@ interface UpdateState {
 
 type PanelMode = "generate" | "visual" | "text";
 
+interface OutputModeGenerationSettings {
+  sourceMode: SourceMode;
+  srtPath: string;
+  correctedTranscriptPath: string;
+  whisperModel: string;
+  whisperLanguageCode: string;
+  whisperSequenceRange: WhisperSequenceRangeMode;
+  animationMode: AnimationMode;
+  maxCharsPerLine: number;
+  maxWordsPerLine: number;
+  linesPerCaption: number;
+  mogrtAspectFilter: string;
+  mogrtSearchQuery: string;
+  selectedMogrtId: string;
+}
+
 interface HostVisualProperty {
   path: string;
   displayName: string;
@@ -121,10 +137,11 @@ interface VisualEditorMutableSectionNode extends Omit<VisualEditorSectionNode, "
 
 interface PanelStateSnapshot {
   languageCode: string;
-  whisperLanguageCode?: string;
   activeMode: PanelMode;
-  sourceMode: SourceMode;
   outputMode: OutputMode;
+  outputSettings?: Partial<Record<OutputMode, Partial<OutputModeGenerationSettings>>>;
+  whisperLanguageCode?: string;
+  sourceMode?: SourceMode;
   srtPath: string;
   correctedTranscriptPath: string;
   whisperModel: string;
@@ -272,6 +289,11 @@ const updateState: UpdateState = {
 const PANEL_STATE_STORAGE_KEY = "subcreator.panelState.v1";
 let pendingSelectedMogrtId = "";
 let activeMode: PanelMode = "generate";
+let activeOutputMode: OutputMode = "mogrt";
+let outputSettingsByMode: Record<OutputMode, OutputModeGenerationSettings> = {
+  mogrt: createDefaultOutputModeSettings("mogrt"),
+  premiere_subtitles: createDefaultOutputModeSettings("premiere_subtitles")
+};
 let loadedVisualProperties: HostVisualProperty[] = [];
 let loadedVisualComponents: SelectedMogrtVisualComponentDebug[] = [];
 let loadedVisualSelectionCount = 0;
@@ -1203,6 +1225,215 @@ function isCurrentSourceReady(): boolean {
   return true;
 }
 
+function isOutputModeValue(value: unknown): value is OutputMode {
+  // // Validate persisted output mode strings before using them as storage keys.
+  return value === "mogrt" || value === "premiere_subtitles";
+}
+
+function isSourceModeValue(value: unknown): value is SourceMode {
+  // // Validate persisted source mode strings before restoring them into the select.
+  return value === "srt" || value === "whisper_sequence" || value === "whisperx_sequence" || value === "corrected_align";
+}
+
+function isAnimationModeValue(value: unknown): value is AnimationMode {
+  // // Validate persisted animation mode strings before restoring MOGRT-specific behavior.
+  return value === "word" || value === "line" || value === "none";
+}
+
+function isWhisperSequenceRangeValue(value: unknown): value is WhisperSequenceRangeMode {
+  // // Validate persisted sequence range strings before restoring Whisper/In-Out behavior.
+  return value === "entire_sequence" || value === "in_out";
+}
+
+function sanitizePersistedNumber(value: unknown, fallback: number): number {
+  // // Keep older or corrupted localStorage values from pushing NaN into number fields.
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function createDefaultOutputModeSettings(mode: OutputMode): OutputModeGenerationSettings {
+  // // Provide independent defaults so first-time MOGRT and native output states can diverge safely later.
+  return {
+    sourceMode: "srt",
+    srtPath: "",
+    correctedTranscriptPath: "",
+    whisperModel: "base",
+    whisperLanguageCode: "auto",
+    whisperSequenceRange: "entire_sequence",
+    animationMode: mode === "premiere_subtitles" ? "none" : "line",
+    maxCharsPerLine: 28,
+    maxWordsPerLine: 12,
+    linesPerCaption: 2,
+    mogrtAspectFilter: "all",
+    mogrtSearchQuery: "",
+    selectedMogrtId: ""
+  };
+}
+
+function normalizeOutputModeSettings(
+  rawSettings: Partial<OutputModeGenerationSettings> | undefined,
+  fallback: OutputModeGenerationSettings
+): OutputModeGenerationSettings {
+  // // Merge stored partial settings with defaults so migrations and future fields remain backwards-compatible.
+  const raw = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
+  return {
+    sourceMode: isSourceModeValue(raw.sourceMode) ? raw.sourceMode : fallback.sourceMode,
+    srtPath: typeof raw.srtPath === "string" ? raw.srtPath : fallback.srtPath,
+    correctedTranscriptPath:
+      typeof raw.correctedTranscriptPath === "string" ? raw.correctedTranscriptPath : fallback.correctedTranscriptPath,
+    whisperModel: typeof raw.whisperModel === "string" && raw.whisperModel.trim() ? raw.whisperModel.trim() : fallback.whisperModel,
+    whisperLanguageCode:
+      typeof raw.whisperLanguageCode === "string" && raw.whisperLanguageCode.trim()
+        ? raw.whisperLanguageCode.trim()
+        : fallback.whisperLanguageCode,
+    whisperSequenceRange: isWhisperSequenceRangeValue(raw.whisperSequenceRange)
+      ? raw.whisperSequenceRange
+      : fallback.whisperSequenceRange,
+    animationMode: isAnimationModeValue(raw.animationMode) ? raw.animationMode : fallback.animationMode,
+    maxCharsPerLine: sanitizePersistedNumber(raw.maxCharsPerLine, fallback.maxCharsPerLine),
+    maxWordsPerLine: sanitizePersistedNumber(raw.maxWordsPerLine, fallback.maxWordsPerLine),
+    linesPerCaption: sanitizePersistedNumber(raw.linesPerCaption, fallback.linesPerCaption),
+    mogrtAspectFilter: typeof raw.mogrtAspectFilter === "string" && raw.mogrtAspectFilter ? raw.mogrtAspectFilter : fallback.mogrtAspectFilter,
+    mogrtSearchQuery: typeof raw.mogrtSearchQuery === "string" ? raw.mogrtSearchQuery : fallback.mogrtSearchQuery,
+    selectedMogrtId: typeof raw.selectedMogrtId === "string" ? raw.selectedMogrtId : fallback.selectedMogrtId
+  };
+}
+
+function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMode): OutputModeGenerationSettings {
+  // // Snapshot all generation controls for the output mode that is currently being edited.
+  const fallback = outputSettingsByMode[mode] || createDefaultOutputModeSettings(mode);
+  return normalizeOutputModeSettings(
+    {
+      sourceMode: getSourceMode(),
+      srtPath: elements.srtPath?.value || "",
+      correctedTranscriptPath: elements.correctedTranscriptPath?.value || "",
+      whisperModel: elements.whisperModel?.value || pendingWhisperModelValue || fallback.whisperModel,
+      whisperLanguageCode: getSelectedWhisperLanguageCode(),
+      whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
+      animationMode: (elements.animationMode?.value as AnimationMode) || fallback.animationMode,
+      maxCharsPerLine: Number(elements.maxChars?.value),
+      maxWordsPerLine: Number(elements.maxWords?.value),
+      linesPerCaption: Number(elements.linesPerCaption?.value),
+      mogrtAspectFilter: pendingMogrtAspectFilter || elements.mogrtAspectFilter?.value || fallback.mogrtAspectFilter,
+      mogrtSearchQuery: pendingMogrtSearchQuery || elements.mogrtSearchInput?.value || "",
+      selectedMogrtId: selectedMogrt?.id || pendingSelectedMogrtId || ""
+    },
+    fallback
+  );
+}
+
+function captureActiveOutputModeSettings(): void {
+  // // Save the visible controls into the in-memory bucket before switching output modes or persisting.
+  outputSettingsByMode[activeOutputMode] = captureOutputModeSettingsFromControls(activeOutputMode);
+}
+
+function applyOutputModeSettingsToControls(mode: OutputMode): void {
+  // // Restore the generation controls that belong to the selected output mode.
+  const settings = outputSettingsByMode[mode] || createDefaultOutputModeSettings(mode);
+  if (elements.sourceMode && hasSelectOption(elements.sourceMode, settings.sourceMode)) {
+    elements.sourceMode.value = settings.sourceMode;
+  }
+  if (elements.srtPath) {
+    elements.srtPath.value = settings.srtPath;
+  }
+  if (elements.correctedTranscriptPath) {
+    elements.correctedTranscriptPath.value = settings.correctedTranscriptPath;
+  }
+
+  pendingWhisperModelValue = settings.whisperModel || pendingWhisperModelValue || "base";
+  if (elements.whisperModel && hasSelectOption(elements.whisperModel, pendingWhisperModelValue)) {
+    elements.whisperModel.value = pendingWhisperModelValue;
+  }
+
+  pendingWhisperLanguageValue = settings.whisperLanguageCode || "auto";
+  if (elements.whisperLanguage && hasSelectOption(elements.whisperLanguage, pendingWhisperLanguageValue)) {
+    elements.whisperLanguage.value = pendingWhisperLanguageValue;
+  }
+
+  if (elements.whisperSequenceRange && hasSelectOption(elements.whisperSequenceRange, settings.whisperSequenceRange)) {
+    elements.whisperSequenceRange.value = settings.whisperSequenceRange;
+  }
+  if (elements.animationMode && hasSelectOption(elements.animationMode, settings.animationMode)) {
+    elements.animationMode.value = settings.animationMode;
+  }
+  if (elements.maxChars) {
+    elements.maxChars.value = String(settings.maxCharsPerLine);
+  }
+  if (elements.maxWords) {
+    elements.maxWords.value = String(settings.maxWordsPerLine);
+  }
+  if (elements.linesPerCaption) {
+    elements.linesPerCaption.value = String(settings.linesPerCaption);
+  }
+
+  pendingMogrtAspectFilter = settings.mogrtAspectFilter || "all";
+  if (elements.mogrtAspectFilter && hasSelectOption(elements.mogrtAspectFilter, pendingMogrtAspectFilter)) {
+    elements.mogrtAspectFilter.value = pendingMogrtAspectFilter;
+  }
+  pendingMogrtSearchQuery = settings.mogrtSearchQuery || "";
+  if (elements.mogrtSearchInput) {
+    elements.mogrtSearchInput.value = pendingMogrtSearchQuery;
+  }
+
+  pendingSelectedMogrtId = settings.selectedMogrtId || "";
+  if (pendingSelectedMogrtId) {
+    const restoredTemplate = availableMogrts.find((template) => template.id === pendingSelectedMogrtId);
+    if (restoredTemplate) {
+      selectedMogrt = restoredTemplate;
+    } else {
+      selectedMogrt = null;
+    }
+  } else {
+    selectedMogrt = null;
+  }
+}
+
+function buildLegacyOutputSettings(snapshot: Partial<PanelStateSnapshot>, fallback: OutputModeGenerationSettings): OutputModeGenerationSettings {
+  // // Convert the previous flat localStorage schema into the new per-output bucket for the active output mode.
+  return normalizeOutputModeSettings(
+    {
+      sourceMode: snapshot.sourceMode,
+      srtPath: snapshot.srtPath,
+      correctedTranscriptPath: snapshot.correctedTranscriptPath,
+      whisperModel: snapshot.whisperModel,
+      whisperLanguageCode: snapshot.whisperLanguageCode,
+      whisperSequenceRange: snapshot.whisperSequenceRange,
+      animationMode: snapshot.animationMode,
+      maxCharsPerLine: snapshot.maxCharsPerLine,
+      maxWordsPerLine: snapshot.maxWordsPerLine,
+      linesPerCaption: snapshot.linesPerCaption,
+      mogrtAspectFilter: snapshot.mogrtAspectFilter,
+      mogrtSearchQuery: snapshot.mogrtSearchQuery,
+      selectedMogrtId: snapshot.selectedMogrtId
+    },
+    fallback
+  );
+}
+
+function hydrateOutputModeSettings(snapshot: Partial<PanelStateSnapshot>): void {
+  // // Initialize both output-mode buckets, migrating old flat settings only into the currently selected mode.
+  const activeModeFromSnapshot = isOutputModeValue(snapshot.outputMode) ? snapshot.outputMode : "mogrt";
+  const storedSettings = snapshot.outputSettings && typeof snapshot.outputSettings === "object" ? snapshot.outputSettings : {};
+  const legacyActiveSettings = buildLegacyOutputSettings(snapshot, createDefaultOutputModeSettings(activeModeFromSnapshot));
+
+  outputSettingsByMode = {
+    mogrt: normalizeOutputModeSettings(
+      storedSettings.mogrt || (activeModeFromSnapshot === "mogrt" ? legacyActiveSettings : undefined),
+      createDefaultOutputModeSettings("mogrt")
+    ),
+    premiere_subtitles: normalizeOutputModeSettings(
+      storedSettings.premiere_subtitles || (activeModeFromSnapshot === "premiere_subtitles" ? legacyActiveSettings : undefined),
+      createDefaultOutputModeSettings("premiere_subtitles")
+    )
+  };
+
+  activeOutputMode = activeModeFromSnapshot;
+  if (elements.outputMode && hasSelectOption(elements.outputMode, activeOutputMode)) {
+    elements.outputMode.value = activeOutputMode;
+  }
+  applyOutputModeSettingsToControls(activeOutputMode);
+}
+
 function readPersistedPanelState(): Partial<PanelStateSnapshot> {
   // // Restore the previous panel configuration from localStorage when available.
   try {
@@ -1239,23 +1470,28 @@ function persistPanelState(): void {
     return;
   }
 
+  captureActiveOutputModeSettings();
   const snapshot: PanelStateSnapshot = {
     languageCode: elements.languageSelect.value || "en",
-    whisperLanguageCode: getSelectedWhisperLanguageCode(),
     activeMode,
-    sourceMode: getSourceMode(),
-    outputMode: getOutputMode(),
-    srtPath: elements.srtPath.value || "",
-    correctedTranscriptPath: elements.correctedTranscriptPath?.value || "",
-    whisperModel: elements.whisperModel.value || pendingWhisperModelValue || "base",
-    whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
-    animationMode: (elements.animationMode.value as AnimationMode) || "line",
-    maxCharsPerLine: Number(elements.maxChars.value),
-    maxWordsPerLine: Number(elements.maxWords.value),
-    linesPerCaption: Number(elements.linesPerCaption.value),
-    mogrtAspectFilter: pendingMogrtAspectFilter || elements.mogrtAspectFilter.value || "all",
-    mogrtSearchQuery: pendingMogrtSearchQuery || elements.mogrtSearchInput.value || "",
-    selectedMogrtId: selectedMogrt?.id || pendingSelectedMogrtId || "",
+    outputMode: activeOutputMode,
+    outputSettings: {
+      mogrt: outputSettingsByMode.mogrt,
+      premiere_subtitles: outputSettingsByMode.premiere_subtitles
+    },
+    whisperLanguageCode: outputSettingsByMode[activeOutputMode].whisperLanguageCode,
+    sourceMode: outputSettingsByMode[activeOutputMode].sourceMode,
+    srtPath: outputSettingsByMode[activeOutputMode].srtPath,
+    correctedTranscriptPath: outputSettingsByMode[activeOutputMode].correctedTranscriptPath,
+    whisperModel: outputSettingsByMode[activeOutputMode].whisperModel,
+    whisperSequenceRange: outputSettingsByMode[activeOutputMode].whisperSequenceRange,
+    animationMode: outputSettingsByMode[activeOutputMode].animationMode,
+    maxCharsPerLine: outputSettingsByMode[activeOutputMode].maxCharsPerLine,
+    maxWordsPerLine: outputSettingsByMode[activeOutputMode].maxWordsPerLine,
+    linesPerCaption: outputSettingsByMode[activeOutputMode].linesPerCaption,
+    mogrtAspectFilter: outputSettingsByMode[activeOutputMode].mogrtAspectFilter,
+    mogrtSearchQuery: outputSettingsByMode[activeOutputMode].mogrtSearchQuery,
+    selectedMogrtId: outputSettingsByMode[activeOutputMode].selectedMogrtId,
     visualLiveUpdate: visualLiveUpdateEnabled,
     logExpanded: logPanelExpanded,
     verboseLogs: verboseLogsEnabled
@@ -1274,80 +1510,7 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     return;
   }
 
-  if (elements.sourceMode && snapshot.sourceMode && hasSelectOption(elements.sourceMode, snapshot.sourceMode)) {
-    elements.sourceMode.value = snapshot.sourceMode;
-  }
-
-  if (elements.outputMode && snapshot.outputMode && hasSelectOption(elements.outputMode, snapshot.outputMode)) {
-    elements.outputMode.value = snapshot.outputMode;
-  }
-
-  if (elements.srtPath && typeof snapshot.srtPath === "string") {
-    elements.srtPath.value = snapshot.srtPath;
-  }
-
-  if (elements.correctedTranscriptPath && typeof snapshot.correctedTranscriptPath === "string") {
-    elements.correctedTranscriptPath.value = snapshot.correctedTranscriptPath;
-  }
-
-  if (typeof snapshot.whisperModel === "string" && snapshot.whisperModel.trim().length > 0) {
-    pendingWhisperModelValue = snapshot.whisperModel.trim();
-  }
-
-  if (elements.whisperModel && snapshot.whisperModel && hasSelectOption(elements.whisperModel, snapshot.whisperModel)) {
-    elements.whisperModel.value = snapshot.whisperModel;
-  }
-
-  if (typeof snapshot.whisperLanguageCode === "string" && snapshot.whisperLanguageCode.trim().length > 0) {
-    pendingWhisperLanguageValue = snapshot.whisperLanguageCode.trim();
-  }
-
-  if (
-    elements.whisperLanguage &&
-    typeof snapshot.whisperLanguageCode === "string" &&
-    hasSelectOption(elements.whisperLanguage, snapshot.whisperLanguageCode)
-  ) {
-    elements.whisperLanguage.value = snapshot.whisperLanguageCode;
-  }
-
-  if (
-    elements.whisperSequenceRange &&
-    snapshot.whisperSequenceRange &&
-    hasSelectOption(elements.whisperSequenceRange, snapshot.whisperSequenceRange)
-  ) {
-    elements.whisperSequenceRange.value = snapshot.whisperSequenceRange;
-  }
-
-  if (elements.animationMode && snapshot.animationMode && hasSelectOption(elements.animationMode, snapshot.animationMode)) {
-    elements.animationMode.value = snapshot.animationMode;
-  }
-
-  if (elements.maxChars && Number.isFinite(Number(snapshot.maxCharsPerLine))) {
-    elements.maxChars.value = String(snapshot.maxCharsPerLine);
-  }
-
-  if (elements.maxWords && Number.isFinite(Number(snapshot.maxWordsPerLine))) {
-    elements.maxWords.value = String(snapshot.maxWordsPerLine);
-  }
-
-  if (elements.linesPerCaption && Number.isFinite(Number(snapshot.linesPerCaption))) {
-    elements.linesPerCaption.value = String(snapshot.linesPerCaption);
-  }
-
-  if (elements.mogrtAspectFilter && snapshot.mogrtAspectFilter) {
-    if (hasSelectOption(elements.mogrtAspectFilter, snapshot.mogrtAspectFilter)) {
-      elements.mogrtAspectFilter.value = snapshot.mogrtAspectFilter;
-    } else {
-      pendingMogrtAspectFilter = snapshot.mogrtAspectFilter;
-    }
-  }
-
-  if (typeof snapshot.mogrtSearchQuery === "string") {
-    pendingMogrtSearchQuery = snapshot.mogrtSearchQuery;
-    if (elements.mogrtSearchInput) {
-      elements.mogrtSearchInput.value = snapshot.mogrtSearchQuery;
-    }
-  }
+  hydrateOutputModeSettings(snapshot);
 
   if (typeof snapshot.visualLiveUpdate === "boolean") {
     setVisualLiveUpdateEnabled(snapshot.visualLiveUpdate, true);
@@ -1359,10 +1522,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (typeof snapshot.verboseLogs === "boolean") {
     setVerboseLogsEnabled(snapshot.verboseLogs, true);
-  }
-
-  if (typeof snapshot.selectedMogrtId === "string" && snapshot.selectedMogrtId.length > 0) {
-    pendingSelectedMogrtId = snapshot.selectedMogrtId;
   }
 
   if (snapshot.activeMode === "visual" || snapshot.activeMode === "text") {
@@ -5230,7 +5389,11 @@ async function initialize(): Promise<void> {
     persistPanelState();
   });
   elements.outputMode?.addEventListener("change", () => {
-    toggleOutputFields();
+    captureActiveOutputModeSettings();
+    activeOutputMode = getOutputMode();
+    applyOutputModeSettingsToControls(activeOutputMode);
+    toggleSourceFields();
+    renderMogrtGallery();
     setGenerateButtonsBusy(generateInProgress);
     persistPanelState();
   });
@@ -5252,6 +5415,7 @@ async function initialize(): Promise<void> {
   });
 
   elements.mogrtAspectFilter?.addEventListener("change", () => {
+    pendingMogrtAspectFilter = elements.mogrtAspectFilter?.value || "all";
     renderMogrtGallery();
     persistPanelState();
   });

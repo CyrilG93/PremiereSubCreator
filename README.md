@@ -187,6 +187,8 @@ Use `MOGRT` when you want animated subtitle clips, custom templates, and the Vis
 
 Use `Premiere subtitles` when you want a native subtitle track. Sub Creator still applies the max letters, max words, and max lines settings, then imports the result through a temporary SRT file. The MOGRT gallery is hidden in this mode because native Premiere subtitles do not use MOGRT templates.
 
+Sub Creator remembers generation settings separately for `MOGRT` and `Premiere subtitles`, so switching output type restores the source, Whisper model, In/Out choice, line limits, and template settings last used for that output.
+
 When two generated subtitles are separated by only a tiny gap, Sub Creator keeps them visually continuous so playback does not flash empty space between near-adjacent subtitles.
 
 If you start the wrong analysis, use `Stop current job`.

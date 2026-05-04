@@ -13,6 +13,7 @@ const distRoot = path.join(projectRoot, "dist", "com.cyrilplugin.subcreator");
 const templatesRoot = path.join(projectRoot, "templates", "mogrt");
 const packageJsonPath = path.join(projectRoot, "package.json");
 const releaseRepoSlug = "CyrilG93/PremiereSubCreator";
+const excludedTemplateFolderNames = new Set(["backup"]);
 
 function subcreatorSlugify(input) {
   // // Build stable ids safe for JSON and DOM usage.
@@ -191,6 +192,9 @@ async function subcreatorScanMogrt(dir, rootDir, collector) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (excludedTemplateFolderNames.has(entry.name.toLowerCase())) {
+        continue;
+      }
       await subcreatorScanMogrt(fullPath, rootDir, collector);
       continue;
     }

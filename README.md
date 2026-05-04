@@ -244,6 +244,8 @@ Basic flow:
 
 Sub Creator keeps your original `.mogrt` filenames in the installed template folder, so updates do not silently rename bundled or custom templates.
 
+Repository-only archived templates can be kept in a `Backup` folder under `templates/mogrt`; this folder is not included in installation zips.
+
 For simple After Effects test templates, you can expose a slider named `Clip Duration`.
 Sub Creator will fill it automatically with each generated subtitle clip duration, which helps AE expressions adapt to the real timeline length without breaking older custom templates that already work.
 

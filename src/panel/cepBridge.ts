@@ -2323,6 +2323,7 @@ function buildPythonLauncherCandidates(
 ): PythonLauncherCandidate[] {
   // // Build Python launcher candidates used to detect `openai-whisper` module availability.
   const candidates: PythonLauncherCandidate[] = [];
+  const isWindows = detectWindowsRuntime();
 
   function pushCandidate(command: string, argsPrefix: string[], label: string): void {
     if (!command) {
@@ -2360,15 +2361,8 @@ function buildPythonLauncherCandidates(
     }
   }
 
-  const posixVersioned = ["python3.11", "python3.12", "python3.10", "python3.13", "python3.9", "python3.8"];
-  for (const command of posixVersioned) {
-    pushCandidate(command, [], command);
-  }
-
-  pushCandidate("python3", [], "python3");
-  pushCandidate("python", [], "python");
-
-  if (detectWindowsRuntime()) {
+  if (isWindows) {
+    // // Prefer the Windows Python launcher before generic aliases so Store stubs or unrelated `python.exe` do not block WhisperX.
     pushCandidate("py", ["-3.11"], "py -3.11");
     pushCandidate("py", ["-3.10"], "py -3.10");
     pushCandidate("py", ["-3.12"], "py -3.12");
@@ -2377,7 +2371,18 @@ function buildPythonLauncherCandidates(
     pushCandidate("py", ["-3.8"], "py -3.8");
     pushCandidate("py", ["-3"], "py -3");
     pushCandidate("py", [], "py");
+    pushCandidate("python", [], "python");
+    pushCandidate("python3", [], "python3");
+    return candidates;
   }
+
+  const posixVersioned = ["python3.11", "python3.12", "python3.10", "python3.13", "python3.9", "python3.8"];
+  for (const command of posixVersioned) {
+    pushCandidate(command, [], command);
+  }
+
+  pushCandidate("python3", [], "python3");
+  pushCandidate("python", [], "python");
 
   return candidates;
 }
@@ -2448,6 +2453,29 @@ function detectPythonModuleAvailabilityViaCepNode(
     available: false,
     details: `${checks.join(" | ")}${runtimeConfig ? ` | config=${runtimeConfig.sourcePath}` : ""}`
   };
+}
+
+function isRuntimeConfigPythonLauncher(launcher: PythonLauncherCandidate, runtimeConfig: SubcreatorRuntimeConfig | null): boolean {
+  // // Treat only explicit installer/runtime Python choices as authoritative enough to stop fallback probing.
+  if (!runtimeConfig) {
+    return false;
+  }
+
+  if (runtimeConfig.pythonPath && launcher.command === runtimeConfig.pythonPath && launcher.argsPrefix.length === 0) {
+    return true;
+  }
+
+  const pythonCommand = splitCommandString(runtimeConfig.pythonCommand);
+  if (!pythonCommand || launcher.command !== pythonCommand.command) {
+    return false;
+  }
+
+  return launcher.argsPrefix.join("\u0001") === pythonCommand.args.join("\u0001");
+}
+
+function shouldContinueAfterPythonHelperFailure(summary: string): boolean {
+  // // Keep probing alternate Python launchers when the helper ran under the wrong Python installation.
+  return /no module named ['"]?whisperx|python was not found|microsoft store|app execution aliases/i.test(String(summary || ""));
 }
 
 function detectWhisperAvailabilityViaCepNode(): WhisperRuntimeStatus {
@@ -3848,8 +3876,7 @@ async function transcribeWithWhisperXViaCepNodeAsync(
       collectedOutput = attemptOutput;
     }
     const authoritativeAttempt =
-      attemptOutput.indexOf("SUBCREATOR_ALIGN_PROGRESS") !== -1 ||
-      (Boolean(runtimeConfig?.pythonPath) && launcher.command === runtimeConfig?.pythonPath && launcher.argsPrefix.length === 0);
+      isRuntimeConfigPythonLauncher(launcher, runtimeConfig) && !shouldContinueAfterPythonHelperFailure(attemptOutput);
 
     if (attemptResult.code !== 0) {
       const summary = summarizeWhisperErrorOutput(attemptOutput);
@@ -4060,8 +4087,7 @@ async function alignCorrectedTranscriptViaCepNodeAsync(
       collectedOutput = attemptOutput;
     }
     const authoritativeAttempt =
-      attemptOutput.indexOf("SUBCREATOR_ALIGN_PROGRESS") !== -1 ||
-      (Boolean(runtimeConfig?.pythonPath) && launcher.command === runtimeConfig?.pythonPath && launcher.argsPrefix.length === 0);
+      isRuntimeConfigPythonLauncher(launcher, runtimeConfig) && !shouldContinueAfterPythonHelperFailure(attemptOutput);
 
     if (attemptResult.code !== 0) {
       const summary = summarizeWhisperErrorOutput(attemptOutput);

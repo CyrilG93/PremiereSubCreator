@@ -107,6 +107,8 @@ Sub Creator remembers separate generation settings for `MOGRT` output and `Premi
 - `MOGRT`: creates animated graphic clips using a template.
 - `Premiere subtitles`: creates a native Premiere subtitle track.
 
+When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an `SRT` folder next to the current `.prproj` file.
+
 ### After Generation
 
 - Use `Visual editor` to copy visual settings between MOGRT clips.

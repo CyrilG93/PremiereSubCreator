@@ -9355,8 +9355,39 @@ function subcreator_sanitize_filename_part(value) {
   return normalized.slice(0, 48);
 }
 
+function subcreator_get_project_adjacent_srt_folder() {
+  // // Prefer a visible SRT folder next to the current .prproj so generated subtitle sources stay with the project.
+  var projectPath = "";
+  try {
+    projectPath = subcreator_trim_string(app && app.project && app.project.path ? String(app.project.path) : "");
+  } catch (projectPathError) {
+    projectPath = "";
+  }
+
+  if (!projectPath) {
+    return null;
+  }
+
+  var projectFile = new File(projectPath);
+  var projectFolder = projectFile.parent;
+  if (!projectFolder) {
+    return null;
+  }
+
+  var srtFolder = new Folder(projectFolder.fsName + "/SRT");
+  if (!srtFolder.exists && !srtFolder.create()) {
+    throw new Error("Unable to create project SRT folder: " + srtFolder.fsName);
+  }
+  return srtFolder;
+}
+
 function subcreator_get_native_subtitle_folder() {
-  // // Store generated SRT sources in user data so Premiere projects do not depend on a volatile OS temp file.
+  // // Store generated SRT sources beside the Premiere project, with a user-data fallback for unsaved projects.
+  var projectSrtFolder = subcreator_get_project_adjacent_srt_folder();
+  if (projectSrtFolder) {
+    return projectSrtFolder;
+  }
+
   var subcreatorFolder = new Folder(Folder.userData.fsName + "/SubCreator");
   if (!subcreatorFolder.exists) {
     subcreatorFolder.create();

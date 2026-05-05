@@ -9472,6 +9472,74 @@ function subcreator_find_project_item_by_path(rootItem, filePath, fileName) {
   return null;
 }
 
+function subcreator_is_project_bin_item(projectItem) {
+  // // Detect Premiere project bins without depending on one host version's enum availability.
+  if (!projectItem) {
+    return false;
+  }
+
+  try {
+    if (typeof ProjectItemType !== "undefined" && typeof ProjectItemType.BIN !== "undefined" && projectItem.type === ProjectItemType.BIN) {
+      return true;
+    }
+  } catch (typeError) {}
+
+  try {
+    return Boolean(projectItem.children && typeof projectItem.createBin === "function");
+  } catch (fallbackError) {
+    return false;
+  }
+}
+
+function subcreator_find_child_bin_by_name(parentItem, binName) {
+  // // Reuse an existing top-level bin so repeated native subtitle runs stay grouped in Premiere.
+  if (!parentItem) {
+    return null;
+  }
+
+  var targetName = String(binName || "").toLowerCase();
+  var children = subcreator_collection_to_array(parentItem.children);
+  for (var i = 0; i < children.length; i += 1) {
+    var child = children[i];
+    var childName = "";
+    try {
+      childName = String(child && child.name ? child.name : "").toLowerCase();
+    } catch (nameError) {
+      childName = "";
+    }
+
+    if (childName === targetName && subcreator_is_project_bin_item(child)) {
+      return child;
+    }
+  }
+
+  return null;
+}
+
+function subcreator_get_or_create_project_bin(binName) {
+  // // Import generated subtitle source files into a dedicated Premiere project bin instead of the root.
+  var rootItem = app && app.project ? app.project.rootItem : null;
+  if (!rootItem) {
+    return null;
+  }
+
+  var existingBin = subcreator_find_child_bin_by_name(rootItem, binName);
+  if (existingBin) {
+    return existingBin;
+  }
+
+  try {
+    if (typeof rootItem.createBin === "function") {
+      var createdBin = rootItem.createBin(binName);
+      if (createdBin && subcreator_is_project_bin_item(createdBin)) {
+        return createdBin;
+      }
+    }
+  } catch (createError) {}
+
+  return subcreator_find_child_bin_by_name(rootItem, binName) || rootItem;
+}
+
 function subcreator_import_native_subtitle_project_item(srtPath) {
   // // Import the generated SRT into the project and return the ProjectItem needed by createCaptionTrack.
   var fileRef = new File(srtPath);
@@ -9479,7 +9547,8 @@ function subcreator_import_native_subtitle_project_item(srtPath) {
     throw new Error("Native subtitle SRT not found: " + srtPath);
   }
 
-  var importResult = app.project.importFiles([fileRef.fsName], true, app.project.rootItem, false);
+  var targetBin = subcreator_get_or_create_project_bin("SRT") || app.project.rootItem;
+  var importResult = app.project.importFiles([fileRef.fsName], true, targetBin, false);
   if (!importResult) {
     throw new Error("Premiere could not import native subtitle SRT: " + fileRef.fsName);
   }

@@ -130,6 +130,12 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
+### 0.16.0 - 2026-05-05
+
+- Native `Premiere subtitles` output now saves generated SRT files in an `SRT` folder next to the Premiere project and imports them into an `SRT` bin in Premiere.
+- WhisperX startup is more reliable on Windows when multiple Python launchers are present.
+- Very small gaps between generated subtitles are closed for smoother playback.
+
 ### 0.15.4 - 2026-05-04
 
 - Added native `Premiere subtitles` output.

@@ -98,9 +98,9 @@ Sub Creator remembers separate generation settings for `MOGRT` output and `Premi
 ### Available Sources
 
 - `SRT`: uses an existing subtitle file.
-- `Whisper`: transcribes the active sequence audio.
-- `WhisperX`: transcribes with Whisper, then improves subtitle timing.
-- `Whisper + SRT`: uses corrected text and aligns it with the audio.
+- `Whisper (fast)`: transcribes the active sequence audio.
+- `WhisperX (precise)`: transcribes with Whisper, then improves subtitle timing.
+- `Whisper + SRT (corrected)`: uses corrected text and aligns it with the audio.
 
 ### Available Outputs
 
@@ -112,6 +112,7 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 ### After Generation
 
 - Use `Visual editor` to copy visual settings between MOGRT clips.
+- `Live update` is enabled by default on new installations and can be turned off in `Visual editor`.
 - Use `Text editor` to correct, move, split, or merge generated subtitles.
 - Add your own `.mogrt` files from `Open MOGRT folder`, then click `Refresh gallery`.
 

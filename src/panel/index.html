@@ -71,9 +71,9 @@
             <span data-i18n="field.source">Source des sous-titres</span>
             <select id="sourceMode">
               <option value="srt" data-i18n="source.srt">Fichier SRT</option>
-              <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper</option>
-              <option value="whisperx_sequence" data-i18n="source.whisperxSequence">WhisperX</option>
-              <option value="corrected_align" data-i18n="source.correctedAlign">Whisper + SRT</option>
+              <option value="whisper_sequence" data-i18n="source.whisperSequence">Whisper (rapide)</option>
+              <option value="whisperx_sequence" data-i18n="source.whisperxSequence">WhisperX (precis)</option>
+              <option value="corrected_align" data-i18n="source.correctedAlign">Whisper + SRT (corrige)</option>
             </select>
           </label>
 
@@ -215,7 +215,7 @@
             </p>
             <div class="inline-row inline-row--actions">
               <button id="visualReadButton" type="button" class="button button--secondary" data-i18n="action.readMogrtProps">
-                Lire parametres selection
+                Charger parametres selection
               </button>
               <button
                 id="visualCopyButton"
@@ -229,11 +229,11 @@
               <button
                 id="visualLiveUpdateButton"
                 type="button"
-                class="button button--secondary button--toggle"
-                aria-pressed="false"
-                data-i18n="action.liveUpdateOff"
+                class="button button--toggle is-active"
+                aria-pressed="true"
+                data-i18n="action.liveUpdateOn"
               >
-                Live update OFF
+                Live update ON
               </button>
               <button id="visualApplyButton" type="button" class="button" data-i18n="action.applyMogrtProps">
                 Appliquer modifications
@@ -273,7 +273,6 @@
       </section>
       <section id="logPanel" class="log-panel">
         <div class="log-panel__header">
-          <span data-i18n="field.logs">Logs</span>
           <div class="log-panel__actions">
             <button id="logVerbosityButton" type="button" class="button button--secondary" data-i18n="action.compactLogs">
               Logs compacts

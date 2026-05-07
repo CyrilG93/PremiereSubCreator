@@ -311,7 +311,7 @@ let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
-let visualLiveUpdateEnabled = false;
+let visualLiveUpdateEnabled = true;
 let logPanelExpanded = true;
 let verboseLogsEnabled = false;
 let currentLogState: PanelLogState | null = null;
@@ -1635,6 +1635,7 @@ function refreshLogControlsState(): void {
     elements.logToggleButton.textContent = translate(logPanelExpanded ? "action.hideLogs" : "action.showLogs");
   }
   if (elements.logVerbosityButton) {
+    elements.logVerbosityButton.hidden = !logPanelExpanded;
     elements.logVerbosityButton.setAttribute("aria-pressed", verboseLogsEnabled ? "true" : "false");
     elements.logVerbosityButton.textContent = translate(verboseLogsEnabled ? "action.fullLogs" : "action.compactLogs");
   }
@@ -5353,7 +5354,7 @@ async function initialize(): Promise<void> {
 
   await loadLocale(elements.languageSelect?.value ?? "en");
   refreshWhisperLanguageUi();
-  setVisualLiveUpdateEnabled(false, true);
+  setVisualLiveUpdateEnabled(true, true);
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();

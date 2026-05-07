@@ -943,15 +943,10 @@ input[type="checkbox"] {
 }
 
 .log-panel__header {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.log-panel__header > span {
-  font-size: 0.76rem;
-  color: var(--text-dim);
+  justify-content: flex-end;
 }
 
 .log-panel__actions {
@@ -1022,7 +1017,7 @@ input[type="checkbox"] {
   }
 
   .log-panel__header {
-    grid-template-columns: 1fr;
+    justify-content: stretch;
   }
 
   .log-panel__actions {

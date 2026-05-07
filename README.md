@@ -131,6 +131,12 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
+### 1.0.0 - 2026-05-07
+
+- First stable release of Sub Creator.
+- Includes MOGRT generation, native Premiere subtitles, Whisper, WhisperX, and Whisper + SRT workflows.
+- Improved installers, project-side SRT organization, visual editing, text editing, and subtitle timing behavior.
+
 ### 0.16.0 - 2026-05-05
 
 - Native `Premiere subtitles` output now saves generated SRT files in an `SRT` folder next to the Premiere project and imports them into an `SRT` bin in Premiere.

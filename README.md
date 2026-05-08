@@ -53,6 +53,8 @@ The Windows installer automatically enables the CEP debug mode required for unsi
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
+A Font folder is provided for the included MOGRT and have to be installed manually.
+
 ## Whisper
 
 The `base` model is included with the installer. It is enough for testing and many simple projects.

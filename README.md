@@ -133,7 +133,7 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
-### Unreleased
+### 1.0.2 - 2026-05-09
 
 - Windows and macOS installers now install bundled template fonts automatically for the current user.
 - MOGRT duration trimming is more conservative so Premiere-authored templates with internal keyframes keep their animations after generation.

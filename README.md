@@ -133,6 +133,11 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
+### 1.0.1 - 2026-05-09
+
+- Fixed Premiere-authored MOGRT text baking for presets whose binary Source Text payload cannot be resized in place.
+- Presets like `Empero.mogrt` and `empero3.mogrt` now receive the generated subtitle text instead of repeating their default text.
+
 ### 1.0.0 - 2026-05-07
 
 - First stable release of Sub Creator.

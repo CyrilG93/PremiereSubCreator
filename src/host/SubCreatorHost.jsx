@@ -6618,6 +6618,61 @@ function subcreator_find_binary_text_payload_candidate(rawValue) {
   return bestCandidate;
 }
 
+function subcreator_try_append_flatbuffer_text_string(sourceBytes, stringOffset, replacementBytes) {
+  // // Some Premiere text payloads cannot be resized in place; append the new string and retarget existing string pointers instead.
+  if (!sourceBytes || typeof sourceBytes.length !== "number" || stringOffset < 4 || !replacementBytes) {
+    return null;
+  }
+
+  var pointerOffsets = [];
+  for (var offset = 0; offset <= stringOffset - 4; offset += 4) {
+    var pointerValue =
+      (sourceBytes[offset] & 255) |
+      ((sourceBytes[offset + 1] & 255) << 8) |
+      ((sourceBytes[offset + 2] & 255) << 16) |
+      ((sourceBytes[offset + 3] & 255) << 24);
+    if (pointerValue > 0 && offset + pointerValue === stringOffset) {
+      pointerOffsets.push(offset);
+    }
+  }
+
+  if (!pointerOffsets.length) {
+    return null;
+  }
+
+  var patchedBytes = sourceBytes.slice(0);
+  while (patchedBytes.length % 4 !== 0) {
+    patchedBytes.push(0);
+  }
+
+  var appendedStringOffset = patchedBytes.length;
+  patchedBytes.push(replacementBytes.length & 255);
+  patchedBytes.push((replacementBytes.length >> 8) & 255);
+  patchedBytes.push((replacementBytes.length >> 16) & 255);
+  patchedBytes.push((replacementBytes.length >> 24) & 255);
+  for (var byteIndex = 0; byteIndex < replacementBytes.length; byteIndex += 1) {
+    patchedBytes.push(replacementBytes[byteIndex] & 255);
+  }
+  patchedBytes.push(0);
+  while (patchedBytes.length % 4 !== 0) {
+    patchedBytes.push(0);
+  }
+
+  for (var pointerIndex = 0; pointerIndex < pointerOffsets.length; pointerIndex += 1) {
+    var pointerOffset = pointerOffsets[pointerIndex];
+    var relativeOffset = appendedStringOffset - pointerOffset;
+    if (relativeOffset < 1) {
+      return null;
+    }
+    patchedBytes[pointerOffset] = relativeOffset & 255;
+    patchedBytes[pointerOffset + 1] = (relativeOffset >> 8) & 255;
+    patchedBytes[pointerOffset + 2] = (relativeOffset >> 16) & 255;
+    patchedBytes[pointerOffset + 3] = (relativeOffset >> 24) & 255;
+  }
+
+  return patchedBytes;
+}
+
 function subcreator_try_patch_binary_text_payload(rawValue, textValue) {
   // // Rewrite only the terminal UTF-8 text segment of Premiere Source Text blobs so font/style data stays untouched.
   var candidate = subcreator_find_binary_text_payload_candidate(rawValue);
@@ -6626,11 +6681,15 @@ function subcreator_try_patch_binary_text_payload(rawValue, textValue) {
   }
 
   var replacementBytes = subcreator_utf8_text_to_byte_array(subcreator_normalize_caption_text(textValue));
+  var sourceBytes = subcreator_binary_string_to_byte_array(rawValue);
   if (!candidate.hasOnlyZeroPaddingAfter && replacementBytes.length !== candidate.byteLength) {
+    var retargetedBytes = subcreator_try_append_flatbuffer_text_string(sourceBytes, candidate.offset, replacementBytes);
+    if (retargetedBytes) {
+      return subcreator_byte_array_to_binary_string(retargetedBytes);
+    }
     return "";
   }
 
-  var sourceBytes = subcreator_binary_string_to_byte_array(rawValue);
   var replacementLengthOffset = candidate.offset;
   var replacementTextOffset = candidate.offset + 4;
   var patchedBytes = sourceBytes.slice(0, replacementLengthOffset);

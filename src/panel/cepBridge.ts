@@ -1191,6 +1191,55 @@ function extractPremiereTemplateTextPayloads(
   }
 }
 
+function patchPremiereFlatbufferStringByAppending(bytes: Uint8Array, stringOffset: number, replacementBytes: Uint8Array): Uint8Array | null {
+  const pointerOffsets: number[] = [];
+  for (let offset = 0; offset <= stringOffset - 4; offset += 4) {
+    const pointerValue =
+      (bytes[offset] ?? 0) |
+      ((bytes[offset + 1] ?? 0) << 8) |
+      ((bytes[offset + 2] ?? 0) << 16) |
+      ((bytes[offset + 3] ?? 0) << 24);
+    if (pointerValue > 0 && offset + pointerValue === stringOffset) {
+      pointerOffsets.push(offset);
+    }
+  }
+
+  if (!pointerOffsets.length) {
+    return null;
+  }
+
+  const patched = Array.from(bytes);
+  while (patched.length % 4 !== 0) {
+    patched.push(0);
+  }
+
+  const appendedStringOffset = patched.length;
+  patched.push(replacementBytes.length & 255);
+  patched.push((replacementBytes.length >> 8) & 255);
+  patched.push((replacementBytes.length >> 16) & 255);
+  patched.push((replacementBytes.length >> 24) & 255);
+  for (const replacementByte of replacementBytes) {
+    patched.push(replacementByte);
+  }
+  patched.push(0);
+  while (patched.length % 4 !== 0) {
+    patched.push(0);
+  }
+
+  for (const pointerOffset of pointerOffsets) {
+    const relativeOffset = appendedStringOffset - pointerOffset;
+    if (relativeOffset < 1) {
+      return null;
+    }
+    patched[pointerOffset] = relativeOffset & 255;
+    patched[pointerOffset + 1] = (relativeOffset >> 8) & 255;
+    patched[pointerOffset + 2] = (relativeOffset >> 16) & 255;
+    patched[pointerOffset + 3] = (relativeOffset >> 24) & 255;
+  }
+
+  return Uint8Array.from(patched);
+}
+
 function patchPremiereTemplatePayloadBase64(sourcePayloadBase64: string, nextText: string): string {
   // // Rewrite the UTF-8 text segment inside one Premiere Source Text payload while keeping the rest of the binary style document untouched.
   const bytes = Uint8Array.from(Buffer.from(String(sourcePayloadBase64 || "").replace(/\s+/g, ""), "base64"));
@@ -1277,6 +1326,10 @@ function patchPremiereTemplatePayloadBase64(sourcePayloadBase64: string, nextTex
 
   const replacementBytes = Uint8Array.from(Buffer.from(String(nextText || "").replace(/\r\n/g, "\n").replace(/\n/g, "\r"), "utf8"));
   if (!bestHasOnlyZeroPaddingAfter && replacementBytes.length !== bestByteLength) {
+    const retargetedPayload = patchPremiereFlatbufferStringByAppending(bytes, bestOffset, replacementBytes);
+    if (retargetedPayload) {
+      return Buffer.from(retargetedPayload).toString("base64");
+    }
     return sourcePayloadBase64;
   }
 

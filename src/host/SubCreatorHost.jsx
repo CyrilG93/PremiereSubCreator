@@ -8581,6 +8581,22 @@ function subcreator_track_item_starts_near_seconds(trackItem, startSeconds, tole
   return Math.abs(candidateStart - requestedStart) <= tolerance;
 }
 
+function subcreator_track_item_ends_near_seconds(trackItem, endSeconds, toleranceSeconds) {
+  // // Prefer timeline-end trimming over source outPoint edits so Premiere-authored MOGRT keyframes stay intact.
+  var candidateEnd = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.endTime));
+  var requestedEnd = Number(endSeconds);
+  var tolerance = Number(toleranceSeconds);
+  if (isNaN(candidateEnd) || isNaN(requestedEnd)) {
+    return false;
+  }
+
+  if (isNaN(tolerance) || tolerance <= 0) {
+    tolerance = 0.2;
+  }
+
+  return Math.abs(candidateEnd - requestedEnd) <= tolerance;
+}
+
 function subcreator_push_unique_path(list, value) {
   // // Keep only distinct non-empty candidate paths for import attempts.
   if (!value) {
@@ -8723,6 +8739,10 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
         applied = true;
       }
     } catch (endSecondsError) {}
+  }
+
+  if (applied && subcreator_track_item_ends_near_seconds(trackItem, safeEnd, 0.2)) {
+    return true;
   }
 
   try {

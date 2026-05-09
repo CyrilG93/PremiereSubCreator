@@ -27,6 +27,7 @@ set "SUBCREATOR_LEGACY_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subc
 set "SUBCREATOR_RUNTIME_DIR=%APPDATA%\SubCreator"
 set "SUBCREATOR_RUNTIME_FILE=%SUBCREATOR_RUNTIME_DIR%\subcreator-runtime.json"
 set "SUBCREATOR_BUNDLED_MODELS_DIR=%SUBCREATOR_PROJECT_DIR%\Models"
+set "SUBCREATOR_BUNDLED_FONTS_DIR=%SUBCREATOR_PROJECT_DIR%\Fonts"
 set "SUBCREATOR_WHISPER_MODELS_CACHE_DIR=%USERPROFILE%\.cache\whisper"
 set "SUBCREATOR_PYTHON_CMD="
 set "SUBCREATOR_PYTHON_LABEL="
@@ -69,6 +70,7 @@ echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode
 call :subcreator_copy_bundled_models
 call :subcreator_validate_bundled_model_cache
+call :subcreator_install_bundled_fonts
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
@@ -211,6 +213,16 @@ if !SUBCREATOR_DEBUG_MODE_WRITES! GTR 0 (
   echo CEP debug mode enabled for CSXS.7 to CSXS.20
 ) else (
   echo WARNING: unable to verify CEP debug mode under HKCU\Software\Adobe\CSXS.*
+)
+goto :eof
+
+:subcreator_install_bundled_fonts
+REM // Install bundled fonts for the current Windows user so the included MOGRT templates can resolve their typography without admin rights.
+if not exist "%SUBCREATOR_BUNDLED_FONTS_DIR%" goto :eof
+for /f "tokens=* delims=" %%C in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$source = [IO.Path]::GetFullPath($env:SUBCREATOR_BUNDLED_FONTS_DIR); $target = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'; $registryPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'; if (-not (Test-Path -LiteralPath $source)) { Write-Output 0; exit 0 }; New-Item -ItemType Directory -Path $target -Force | Out-Null; New-Item -Path $registryPath -Force | Out-Null; $installed = 0; Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object { $_.Extension -match '^\.(ttf|otf|ttc)$' } | ForEach-Object { $destination = Join-Path $target $_.Name; Copy-Item -LiteralPath $_.FullName -Destination $destination -Force; $fontKind = if ($_.Extension -ieq '.otf') { 'OpenType' } else { 'TrueType' }; $displayName = [IO.Path]::GetFileNameWithoutExtension($_.Name) -replace '[-_]+',' '; New-ItemProperty -Path $registryPath -Name ($displayName + ' (' + $fontKind + ')') -Value $destination -PropertyType String -Force | Out-Null; $installed++ }; Write-Output $installed"') do (
+  if %%C GTR 0 (
+    echo Installed %%C bundled font^(s^) for the current Windows user.
+  )
 )
 goto :eof
 

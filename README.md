@@ -41,7 +41,7 @@ Quick tips:
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The Windows installer automatically enables the CEP debug mode required for unsigned extensions.
+The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user.
 
 ### Install on macOS
 
@@ -53,7 +53,7 @@ The Windows installer automatically enables the CEP debug mode required for unsi
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-A Font folder is provided for the included MOGRT and have to be installed manually.
+The macOS installer automatically installs the bundled fonts for the current macOS user.
 
 ## Whisper
 
@@ -132,6 +132,10 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 - Discord: https://www.cyrilplugin.com/website/social/discord
 
 ## Changelog
+
+### Unreleased
+
+- Windows and macOS installers now install bundled template fonts automatically for the current user.
 
 ### 1.0.1 - 2026-05-09
 

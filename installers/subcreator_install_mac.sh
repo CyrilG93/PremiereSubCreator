@@ -14,6 +14,7 @@ SUBCREATOR_LEGACY_DEST_DIR="${HOME}/Library/Application Support/Adobe/CEP/extens
 SUBCREATOR_RUNTIME_DIR="${HOME}/Library/Application Support/SubCreator"
 SUBCREATOR_RUNTIME_FILE="${SUBCREATOR_RUNTIME_DIR}/subcreator-runtime.json"
 SUBCREATOR_BUNDLED_MODELS_DIR="${SUBCREATOR_PROJECT_DIR}/Models"
+SUBCREATOR_BUNDLED_FONTS_DIR="${SUBCREATOR_PROJECT_DIR}/Fonts"
 SUBCREATOR_WHISPER_MODELS_CACHE_DIR="${HOME}/.cache/whisper"
 SUBCREATOR_PYTHON_CMD=""
 SUBCREATOR_PYTHON_VERSION=""
@@ -197,6 +198,27 @@ subcreator_copy_bundled_whisper_models() {
 
   if [ "${copied_count}" -gt 0 ]; then
     echo "Copied ${copied_count} bundled Whisper model(s) to ${SUBCREATOR_WHISPER_MODELS_CACHE_DIR}"
+  fi
+}
+
+subcreator_install_bundled_fonts() {
+  # // Install bundled fonts for the current macOS user so included MOGRT templates can render with their intended typography.
+  if [ ! -d "${SUBCREATOR_BUNDLED_FONTS_DIR}" ]; then
+    return 0
+  fi
+
+  local target_dir="${HOME}/Library/Fonts"
+  local copied_count=0
+  local font_path=""
+  mkdir -p "${target_dir}"
+
+  while IFS= read -r -d '' font_path; do
+    cp -f "${font_path}" "${target_dir}/$(basename "${font_path}")"
+    copied_count=$((copied_count + 1))
+  done < <(find "${SUBCREATOR_BUNDLED_FONTS_DIR}" -type f \( -iname "*.ttf" -o -iname "*.otf" -o -iname "*.ttc" -o -iname "*.dfont" \) -print0)
+
+  if [ "${copied_count}" -gt 0 ]; then
+    echo "Installed ${copied_count} bundled font(s) for the current macOS user."
   fi
 }
 
@@ -524,6 +546,7 @@ echo "Sub Creator installed to ${SUBCREATOR_DEST_DIR}"
 subcreator_enable_cep_debug_mode
 subcreator_copy_bundled_whisper_models
 subcreator_validate_bundled_model_cache
+subcreator_install_bundled_fonts
 
 # // Discover supported Python runtime; when multiple versions exist we pick the newest supported one.
 if ! subcreator_select_python_cmd; then

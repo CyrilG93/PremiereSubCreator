@@ -133,13 +133,10 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
-### 1.0.2 - 2026-05-09
+### 1.1.0 - 2026-05-11
 
 - Windows and macOS installers now install bundled template fonts automatically for the user.
 - MOGRT duration trimming is more conservative so Premiere-authored templates with internal keyframes keep their animations after generation.
-
-### 1.0.1 - 2026-05-09
-
 - Fixed Premiere-authored MOGRT text baking for presets whose binary Source Text payload cannot be resized in place.
 - Presets like `Empero.mogrt` and `empero3.mogrt` now receive the generated subtitle text instead of repeating their default text.
 

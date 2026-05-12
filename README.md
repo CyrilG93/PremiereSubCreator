@@ -133,6 +133,11 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ## Changelog
 
+### 1.1.1 - 2026-05-12
+
+- Improved Premiere host error messages during Whisper sequence export.
+- Fixed a Windows installer message about bundled Whisper model validation.
+
 ### 1.1.0 - 2026-05-11
 
 - The generation of MOGRT created in Premiere now keep keyframes.

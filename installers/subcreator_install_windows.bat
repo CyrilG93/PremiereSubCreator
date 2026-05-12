@@ -69,7 +69,6 @@ if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode
 call :subcreator_copy_bundled_models
-call :subcreator_validate_bundled_model_cache
 call :subcreator_install_bundled_fonts
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
@@ -259,9 +258,6 @@ for /f "tokens=* delims=" %%L in ('powershell -NoProfile -ExecutionPolicy Bypass
 if !SUBCREATOR_MODELS_COPIED! GTR 0 (
   echo Copied !SUBCREATOR_MODELS_COPIED! bundled Whisper model^(s^) to %SUBCREATOR_WHISPER_MODELS_CACHE_DIR%
 )
-goto :eof
-
-:subcreator_validate_bundled_model_cache
 REM // Confirm that the bundled base model is reachable from the cache directory used by the panel.
 if exist "%SUBCREATOR_BUNDLED_MODELS_DIR%\base.pt" (
   if exist "%SUBCREATOR_WHISPER_MODELS_CACHE_DIR%\base.pt" (

@@ -367,9 +367,30 @@ function evalScript(script: string): Promise<string> {
   );
 }
 
+function getHostFunctionName(script: string): string {
+  // // Extract the host function name so guarded evalScript errors point to the failing Premiere bridge call.
+  const match = String(script || "").trim().match(/^([A-Za-z_$][\w$]*)\s*\(/);
+  return match ? match[1] : "unknown host function";
+}
+
+function buildGuardedHostJsonScript(script: string): string {
+  // // Wrap JSON-returning ExtendScript calls so missing host functions return actionable JSON instead of raw "EvalScript error".
+  const hostFunctionName = getHostFunctionName(script);
+  const missingError = JSON.stringify(
+    `Premiere host function is missing: ${hostFunctionName}. Restart Premiere Pro, then reinstall Sub Creator with Premiere closed.`
+  );
+  const exceptionPrefix = JSON.stringify(`Premiere host error in ${hostFunctionName}: `);
+  const missingGuard =
+    hostFunctionName !== "unknown host function"
+      ? `if (typeof ${hostFunctionName} !== "function") { return JSON.stringify({ ok: false, error: ${missingError} }); }`
+      : "";
+
+  return `(function(){try{${missingGuard}return ${script};}catch(error){return JSON.stringify({ ok: false, error: ${exceptionPrefix} + String(error) });}})()`;
+}
+
 async function evalHostJson<T>(script: string): Promise<HostJsonResponse<T>> {
   // // Parse JSON returned by host-side ExtendScript function calls.
-  const raw = await evalScript(script);
+  const raw = await evalScript(buildGuardedHostJsonScript(script));
 
   try {
     return JSON.parse(raw) as HostJsonResponse<T>;

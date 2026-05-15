@@ -373,6 +373,15 @@ function getHostFunctionName(script: string): string {
   return match ? match[1] : "unknown host function";
 }
 
+function previewHostResponse(value: unknown, maxLength = 800): string {
+  // // Keep malformed host responses shareable in logs without flooding the CEP panel.
+  const text = String(value ?? "");
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...`;
+}
+
 function buildGuardedHostJsonScript(script: string): string {
   // // Wrap JSON-returning ExtendScript calls so missing host functions return actionable JSON instead of raw "EvalScript error".
   const hostFunctionName = getHostFunctionName(script);
@@ -380,26 +389,61 @@ function buildGuardedHostJsonScript(script: string): string {
     `Premiere host function is missing: ${hostFunctionName}. Restart Premiere Pro, then reinstall Sub Creator with Premiere closed.`
   );
   const exceptionPrefix = JSON.stringify(`Premiere host error in ${hostFunctionName}: `);
+  const quotedHostFunctionName = JSON.stringify(hostFunctionName);
   const missingGuard =
     hostFunctionName !== "unknown host function"
       ? `if (typeof ${hostFunctionName} !== "function") { return JSON.stringify({ ok: false, error: ${missingError} }); }`
       : "";
 
-  return `(function(){try{${missingGuard}return ${script};}catch(error){return JSON.stringify({ ok: false, error: ${exceptionPrefix} + String(error) });}})()`;
+  return `(function(){try{${missingGuard}return ${script};}catch(error){var message=String(error);var details={hostFunction:${quotedHostFunctionName},name:"",message:message,line:"",fileName:""};try{details.name=String(error&&error.name?error.name:"");details.message=String(error&&error.message?error.message:message);details.line=String(error&&error.line?error.line:"");details.fileName=String(error&&error.fileName?error.fileName:"");}catch(detailError){}return JSON.stringify({ ok: false, error: ${exceptionPrefix} + details.message, debug: details });}})()`;
+}
+
+function buildInvalidHostJsonResponse<T>(
+  script: string,
+  guardedScript: string,
+  raw: unknown,
+  parseError: unknown
+): HostJsonResponse<T> {
+  // // Convert CEP's opaque EvalScript failures into actionable JSON that users can paste from the debug log.
+  const hostFunctionName = getHostFunctionName(script);
+  const rawText = String(raw ?? "");
+  const rawPreview = previewHostResponse(rawText);
+  const looksLikeEvalScriptError = /^EvalScript error\.?$/i.test(rawText.trim());
+  const hint = looksLikeEvalScriptError
+    ? "Premiere rejected the ExtendScript call before Sub Creator could read an error. Restart Premiere Pro, reinstall Sub Creator with Premiere closed, then retry. If it persists, share this debug payload."
+    : "Premiere returned a non-JSON response. Share this debug payload so the failing host call can be identified.";
+
+  return {
+    ok: false,
+    error: `Invalid host response from ${hostFunctionName}: ${String(parseError)}. ${hint}`,
+    debug: {
+      hostFunction: hostFunctionName,
+      rawPreview,
+      rawLength: rawText.length,
+      scriptLength: script.length,
+      guardedScriptLength: guardedScript.length,
+      cepHostAvailable: Boolean(window.__adobe_cep__),
+      generatedAt: new Date().toISOString()
+    }
+  };
 }
 
 async function evalHostJson<T>(script: string): Promise<HostJsonResponse<T>> {
   // // Parse JSON returned by host-side ExtendScript function calls.
-  const raw = await evalScript(buildGuardedHostJsonScript(script));
+  const guardedScript = buildGuardedHostJsonScript(script);
+  const raw = await evalScript(guardedScript);
 
   try {
     return JSON.parse(raw) as HostJsonResponse<T>;
   } catch (error) {
-    return {
-      ok: false,
-      error: `Invalid host response: ${String(error)} | raw=${raw}`
-    };
+    return buildInvalidHostJsonResponse<T>(script, guardedScript, raw, error);
   }
+}
+
+async function evalHostJsonRaw(script: string): Promise<string> {
+  // // Preserve the historical raw-string API while still guarding host calls and malformed CEP responses.
+  const response = await evalHostJson<Record<string, unknown>>(script);
+  return JSON.stringify(response);
 }
 
 function resolveCepNodeModules(): CepNodeModules | null {
@@ -3204,13 +3248,13 @@ export async function pingHost(): Promise<string> {
 export async function applyCaptionPlan(payload: HostApplyPayload): Promise<string> {
   // // Send JSON payload as URI-encoded text to avoid quote escaping edge-cases.
   const encodedPayload = encodeURIComponent(JSON.stringify(payload));
-  return evalScript(`subcreator_apply_captions("${escapeForJsx(encodedPayload)}")`);
+  return evalHostJsonRaw(`subcreator_apply_captions("${escapeForJsx(encodedPayload)}")`);
 }
 
 export async function applyNativeSubtitlePlan(payload: HostApplyPayload): Promise<string> {
   // // Send planned cues to ExtendScript so Premiere can import them as one native subtitle track from SRT.
   const encodedPayload = encodeURIComponent(JSON.stringify(payload));
-  return evalScript(`subcreator_apply_native_subtitles("${escapeForJsx(encodedPayload)}")`);
+  return evalHostJsonRaw(`subcreator_apply_native_subtitles("${escapeForJsx(encodedPayload)}")`);
 }
 
 export async function readTextFileFromHost(filePath: string): Promise<string> {

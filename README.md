@@ -131,6 +131,10 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 - Website: https://www.cyrilplugin.com/
 - Discord: https://www.cyrilplugin.com/website/social/discord
 
+## Troubleshooting
+
+If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
+
 ## Changelog
 
 ### 1.1.1 - 2026-05-12

@@ -3,7 +3,7 @@
 Sub Creator is an Adobe Premiere Pro extension for creating subtitles from an `SRT` file, Whisper transcription, WhisperX transcription, or corrected text.
 It can generate animated `MOGRT` subtitles or native Premiere subtitle tracks.
 
-Compatible with Premiere Pro `2025+` on Windows and macOS, not compatible with Premiere 24 or earlier.
+Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible with Premiere 24 or earlier.
 
 ## Main Features
 

@@ -5,4 +5,6 @@ coverage/
 *.log
 .DS_Store
 Releases/*.zip
+Releases/Beta/
+Releases/BETA/
 AE/Adobe After Effects Auto-Save/

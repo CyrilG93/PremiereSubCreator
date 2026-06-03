@@ -5,6 +5,10 @@ coverage/
 *.log
 .DS_Store
 Releases/*.zip
+Releases/*.exe
+Releases/*.DDF
+Releases/~*
 Releases/Beta/
 Releases/BETA/
 AE/Adobe After Effects Auto-Save/
+.subcreator-exe-staging/

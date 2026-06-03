@@ -17,7 +17,9 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 
 Sub Creator works without extra dependencies if you only use `SRT` mode.
 
-To use `Whisper`, `WhisperX`, or `Whisper + SRT`, also install:
+On Windows, the easiest option is the private-runtime `.exe` installer. It includes Sub Creator, Python, FFmpeg, and the Python tools needed for `Whisper`, `WhisperX`, and `Whisper + SRT`.
+
+If you use the `.zip` installer, or if you install on macOS, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
 
 - Python `3.11` or `3.12`: [python.org/downloads](https://www.python.org/downloads/)
 - FFmpeg: [ffmpeg.org/download.html](https://ffmpeg.org/download.html)
@@ -31,7 +33,18 @@ Quick tips:
 - macOS: install Python and FFmpeg before running the Sub Creator installer again.
 - If Python or FFmpeg is installed after Sub Creator, run the Sub Creator installer again.
 
-### Install on Windows
+### Install on Windows with the `.exe`
+
+1. Download `SubCreator-v...-Windows-PrivateRuntime.exe`.
+2. Close Premiere Pro.
+3. Run the installer.
+4. Wait for the installation summary.
+5. Reopen Premiere Pro.
+6. Open the extension from `Window > Extensions > Sub Creator`.
+
+This installer keeps its Python and FFmpeg runtime inside the current Windows user profile, so it does not modify the system Python installation.
+
+### Install on Windows with the `.zip`
 
 1. Download the `.zip` from the latest version.
 2. Unzip it.
@@ -136,6 +149,10 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
 
 ## Changelog
+
+### 1.1.3 - 2026-06-03
+
+- Added a Windows `.exe` installer option with a private Python and FFmpeg runtime.
 
 ### 1.1.1 - 2026-05-12
 

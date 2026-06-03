@@ -42,7 +42,7 @@ Quick tips:
 5. Reopen Premiere Pro.
 6. Open the extension from `Window > Extensions > Sub Creator`.
 
-This installer keeps its Python and FFmpeg runtime inside the current Windows user profile, so it does not modify the system Python installation.
+This installer keeps its Python and LGPL FFmpeg runtime inside the current Windows user profile, so it does not modify the system Python installation.
 
 ### Install on Windows with the `.zip`
 
@@ -149,6 +149,10 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
 
 ## Changelog
+
+### 1.1.4 - 2026-06-03
+
+- Switched the Windows private-runtime installer to an LGPL FFmpeg build.
 
 ### 1.1.3 - 2026-06-03
 

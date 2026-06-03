@@ -20,7 +20,8 @@ const pythonEmbedUrl =
   `https://www.python.org/ftp/python/${pythonVersion}/python-${pythonVersion}-embed-amd64.zip`;
 const getPipUrl = process.env.SUBCREATOR_GET_PIP_URL || "https://bootstrap.pypa.io/get-pip.py";
 const ffmpegZipUrl =
-  process.env.SUBCREATOR_FFMPEG_ZIP_URL || "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+  process.env.SUBCREATOR_FFMPEG_ZIP_URL ||
+  "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip";
 const innoSetupUrl =
   process.env.SUBCREATOR_INNO_SETUP_URL ||
   "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe";
@@ -198,7 +199,7 @@ async function validatePythonRuntime() {
 async function prepareFfmpegRuntime() {
   // // Bundle a private FFmpeg binary so Whisper can run without a system PATH dependency.
   const localFfmpegZip = process.env.SUBCREATOR_FFMPEG_ZIP || "";
-  const ffmpegZip = localFfmpegZip || path.join(downloadsDir, "ffmpeg-release-essentials.zip");
+  const ffmpegZip = localFfmpegZip || path.join(downloadsDir, path.basename(new URL(ffmpegZipUrl).pathname));
   const extractedDir = path.join(stagingRoot, "ffmpeg-extracted");
   const runtimeFfmpegDir = path.join(runtimeRoot, "ffmpeg");
 
@@ -223,7 +224,27 @@ async function prepareFfmpegRuntime() {
     ].join(" ")
   ]);
 
-  await runCommand(path.join(runtimeFfmpegDir, "bin", "ffmpeg.exe"), ["-version"]);
+  await validateFfmpegRuntime();
+}
+
+async function validateFfmpegRuntime() {
+  // // Validate FFmpeg from a temp copy because some Windows policies deny direct execution from hidden staging paths.
+  const runtimeFfmpegExe = path.join(runtimeRoot, "ffmpeg", "bin", "ffmpeg.exe");
+  const tempFfmpegExe = path.join(process.env.TEMP || stagingRoot, "subcreator-ffmpeg-lgpl-test.exe");
+
+  if (!(await pathExists(runtimeFfmpegExe))) {
+    throw new Error(`FFmpeg executable missing from runtime payload: ${runtimeFfmpegExe}`);
+  }
+
+  await cp(runtimeFfmpegExe, tempFfmpegExe);
+  await runCommand("powershell", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `Unblock-File -LiteralPath ${JSON.stringify(tempFfmpegExe)} -ErrorAction SilentlyContinue`
+  ]);
+  await runCommand(tempFfmpegExe, ["-version"]);
 }
 
 async function copyReleasePayload() {
@@ -378,7 +399,7 @@ async function main() {
     await preparePythonRuntime();
   }
   if (reuseStaging && (await pathExists(path.join(runtimeRoot, "ffmpeg", "bin", "ffmpeg.exe")))) {
-    await runCommand(path.join(runtimeRoot, "ffmpeg", "bin", "ffmpeg.exe"), ["-version"]);
+    await validateFfmpegRuntime();
   } else {
     await prepareFfmpegRuntime();
   }

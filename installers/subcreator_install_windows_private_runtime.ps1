@@ -1,5 +1,7 @@
 param(
-  [string]$PayloadRoot = ""
+  [string]$PayloadRoot = "",
+  [switch]$SkipRuntimeInstall,
+  [string]$RuntimeVersion = "1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +23,7 @@ $bundledModelsDir = Join-Path $PayloadRoot "Models"
 $bundledFontsDir = Join-Path $PayloadRoot "Fonts"
 $payloadRuntimeDir = Join-Path $PayloadRoot "runtime"
 $whisperCacheDir = Join-Path $env:USERPROFILE ".cache\whisper"
+$runtimeVersionFile = Join-Path $runtimeDir ".subcreator-runtime-version"
 
 function Write-SubCreatorInfo {
   param([string]$Message)
@@ -255,6 +258,12 @@ function Test-SubCreatorPrivateRuntime {
   }
 }
 
+function Write-SubCreatorRuntimeVersion {
+  # // Mark the validated runtime so future connected installers can skip the large runtime download.
+  Set-Content -LiteralPath $runtimeVersionFile -Value $RuntimeVersion -Encoding ASCII
+  Write-SubCreatorInfo "Private runtime version $RuntimeVersion is ready."
+}
+
 if (-not (Test-Path -LiteralPath $sourceDir)) {
   throw "Build missing: $sourceDir"
 }
@@ -278,8 +287,13 @@ Write-SubCreatorInfo "Sub Creator installed to $destDir."
 Enable-SubCreatorCepDebugMode
 Copy-SubCreatorBundledModels
 Install-SubCreatorBundledFonts
-Install-SubCreatorPrivateRuntime
+if (-not $SkipRuntimeInstall) {
+  Install-SubCreatorPrivateRuntime
+} else {
+  Write-SubCreatorInfo "Keeping the compatible private runtime already installed."
+}
 Write-SubCreatorRuntimeConfig
 Test-SubCreatorPrivateRuntime
+Write-SubCreatorRuntimeVersion
 
 Write-SubCreatorInfo "Installation complete. Restart Premiere Pro, then open Window > Extensions > Sub Creator."

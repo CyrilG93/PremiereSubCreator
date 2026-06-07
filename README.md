@@ -17,7 +17,7 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 
 Sub Creator works without extra dependencies if you only use `SRT` mode.
 
-On Windows, the easiest option is the private-runtime `.exe` installer. It includes Sub Creator, Python, FFmpeg, and the Python tools needed for `Whisper`, `WhisperX`, and `Whisper + SRT`.
+On Windows, the easiest option is the connected `.exe` installer. It installs Sub Creator and automatically downloads the private Python, FFmpeg, and Whisper tools only when they are missing or need an update.
 
 If you use the `.zip` installer, or if you install on macOS, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
 
@@ -35,14 +35,15 @@ Quick tips:
 
 ### Install on Windows with the `.exe`
 
-1. Download `SubCreator-v...-Windows-PrivateRuntime.exe`.
+1. Download `SubCreator-v...-Windows-Installer.exe`.
 2. Close Premiere Pro.
 3. Run the installer.
-4. Wait for the installation summary.
-5. Reopen Premiere Pro.
-6. Open the extension from `Window > Extensions > Sub Creator`.
+4. Choose the Whisper models you want to keep available offline.
+5. Wait for the installation summary.
+6. Reopen Premiere Pro.
+7. Open the extension from `Window > Extensions > Sub Creator`.
 
-This installer keeps its Python and LGPL FFmpeg runtime inside the current Windows user profile, so it does not modify the system Python installation.
+The first installation downloads the private runtime. Later updates keep a compatible runtime and existing Whisper models, so only the lightweight extension installer is normally downloaded again. The private Python and LGPL FFmpeg runtime stays inside the current Windows user profile and does not modify the system Python installation.
 
 ### Install on Windows with the `.zip`
 
@@ -70,7 +71,9 @@ The macOS installer automatically installs the bundled fonts for the current mac
 
 ## Whisper
 
-The `base` model is included with the installer. It is enough for testing and many simple projects.
+The Windows `.exe` offers `tiny`, `base`, `small`, `medium`, and `large-v3` during installation. It downloads only selected models that are missing or damaged and never removes models already installed.
+
+The `.zip` installers include the `base` model. It is enough for testing and many simple projects.
 
 To add other models, download a `.pt` file and place it in the Whisper cache folder:
 
@@ -149,6 +152,11 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
 
 ## Changelog
+
+### 1.1.5 - 2026-06-07
+
+- Added a lightweight Windows installer that reuses the existing private runtime during updates.
+- Added optional Whisper model downloads directly in the Windows installer.
 
 ### 1.1.4 - 2026-06-03
 

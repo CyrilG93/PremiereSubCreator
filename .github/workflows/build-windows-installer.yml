@@ -51,6 +51,7 @@ jobs:
         shell: pwsh
         env:
           FORCE_REBUILD_RUNTIME: ${{ inputs.force_rebuild_runtime }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # // Derive the GitHub release tag from package.json so artifacts and source metadata cannot drift.
           $package = Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json
@@ -70,6 +71,8 @@ jobs:
                 Select-Object -First 1
             )
           }
+          # // A missing release is an expected first-build state, not a workflow failure.
+          $global:LASTEXITCODE = 0
 
           $rebuildRuntime = ($env:FORCE_REBUILD_RUNTIME -eq "true") -or (-not $runtimeAssetExists)
           if ($rebuildRuntime) {

@@ -179,7 +179,7 @@ async function prunePythonRuntime(runtimePythonDir) {
     "-Command",
     [
       `$root = ${JSON.stringify(runtimePythonDir)};`,
-      "Get-ChildItem -LiteralPath $root -Recurse -File -Include *.lib,*.pdb -ErrorAction SilentlyContinue | Remove-Item -Force;",
+      "Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.lib', '.pdb' } | Remove-Item -Force;",
       "$torchInclude = Join-Path $root 'Lib\\site-packages\\torch\\include';",
       "if (Test-Path -LiteralPath $torchInclude) { Remove-Item -LiteralPath $torchInclude -Recurse -Force; }",
       "Get-ChildItem -LiteralPath $root -Recurse -Directory -Filter __pycache__ -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"

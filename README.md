@@ -17,9 +17,9 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 
 Sub Creator works without extra dependencies if you only use `SRT` mode.
 
-On Windows, the easiest option is the connected `.exe` installer. It installs Sub Creator and automatically downloads the private Python, FFmpeg, and Whisper tools only when they are missing or need an update.
+On Windows, the easiest option is the connected `.exe` installer. On macOS, use the connected `.pkg` installer. Both install Sub Creator and automatically download the private Python, FFmpeg, and Whisper tools only when they are missing or need an update.
 
-If you use the `.zip` installer, or if you install on macOS, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
+If you use the manual `.zip` installer, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
 
 - Python `3.11` or `3.12`: [python.org/downloads](https://www.python.org/downloads/)
 - FFmpeg: [ffmpeg.org/download.html](https://ffmpeg.org/download.html)
@@ -30,7 +30,7 @@ Quick tips:
 
 - Windows: during Python installation, enable `Add python.exe to PATH`.
 - Windows: keep the `py launcher` if the Python installer offers it.
-- macOS: install Python and FFmpeg before running the Sub Creator installer again.
+- macOS ZIP installer: install Python and FFmpeg before running the Sub Creator installer again.
 - If Python or FFmpeg is installed after Sub Creator, run the Sub Creator installer again.
 
 ### Install on Windows with the `.exe`
@@ -57,21 +57,32 @@ The first installation downloads the private runtime. Later updates keep a compa
 
 The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user.
 
-### Install on macOS
+### Install on macOS with the `.pkg`
 
-1. Download the `.zip` from the latest version.
-2. Unzip it.
-3. Close Premiere Pro.
-4. Run `subcreator_install_mac.sh`.
-5. If needed, drag the `.sh` file into Terminal and press Enter.
+1. Download `SubCreator-v...-macOS-Installer-arm64.pkg` for Apple Silicon or `SubCreator-v...-macOS-Installer-x86_64.pkg` for an Intel Mac.
+2. Close Premiere Pro.
+3. Open the `.pkg`.
+4. Choose the Whisper models you want to keep available offline.
+5. Complete the installation.
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The macOS installer automatically installs the bundled fonts for the current macOS user.
+The first installation downloads a private Python and LGPL FFmpeg runtime. Later updates reuse a compatible runtime and existing Whisper models. The installer also enables CEP debug mode and installs the bundled fonts for the current macOS user.
+
+### Install on macOS with the `.zip`
+
+1. Download and unzip the latest `.zip`.
+2. Close Premiere Pro.
+3. Run `subcreator_install_mac.sh`.
+4. If needed, drag the `.sh` file into Terminal and press Enter.
+5. Reopen Premiere Pro.
+6. Open the extension from `Window > Extensions > Sub Creator`.
+
+The manual ZIP installer uses compatible Python and FFmpeg installations already available on the Mac.
 
 ## Whisper
 
-The Windows `.exe` offers `tiny`, `base`, `small`, `medium`, and `large-v3` during installation. It downloads only selected models that are missing or damaged and never removes models already installed.
+The Windows `.exe` and macOS `.pkg` offer `tiny`, `base`, `small`, `medium`, and `large-v3` during installation. They download only selected models that are missing or damaged and never remove models already installed.
 
 The `.zip` installers include the `base` model. It is enough for testing and many simple projects.
 

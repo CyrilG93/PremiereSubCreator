@@ -69,6 +69,15 @@ The Windows installer automatically enables the CEP debug mode required for unsi
 
 The `.pkg` includes the private Python and LGPL FFmpeg runtime for the selected Mac architecture, so it does not depend on a separate runtime download. Existing compatible runtimes and Whisper models are preserved. The installer also enables CEP debug mode and installs the bundled fonts for the current macOS user.
 
+### Update an existing macOS installation
+
+1. Download `SubCreator-v...-macOS-Update.pkg`.
+2. Close Premiere Pro.
+3. Open the `.pkg` and complete the installation.
+4. Reopen Premiere Pro.
+
+The update package works on Apple Silicon and Intel Macs. It updates only the extension and bundled fonts, while preserving the private runtime, downloaded Whisper models, and custom MOGRT files. Use the full architecture-specific installer for the first installation.
+
 ### Install on macOS with the `.zip`
 
 1. Download and unzip the latest `.zip`.

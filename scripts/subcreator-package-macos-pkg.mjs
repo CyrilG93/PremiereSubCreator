@@ -472,7 +472,7 @@ function xmlEscape(value) {
 }
 
 async function copyConnectedPayload(runtimeManifest, version) {
-  // // Stage the extension, fonts, installer script, and architecture-specific runtime metadata inside the core package.
+  // // Stage the extension, fonts, installer script, private runtime, and architecture metadata inside the core package.
   await rm(coreScriptsDir, { recursive: true, force: true });
   await mkdir(path.join(coreScriptsDir, "payload", "dist"), { recursive: true });
   await cp(
@@ -494,6 +494,16 @@ async function copyConnectedPayload(runtimeManifest, version) {
   await runCommand("chmod", ["755", installScriptTarget]);
 
   const asset = runtimeManifest.assets[macArch];
+  const runtimeAssetPath = path.join(releasesDir, asset.assetName);
+  if (!(await pathExists(runtimeAssetPath))) {
+    throw new Error(`Runtime asset is missing before PKG creation: ${runtimeAssetPath}`);
+  }
+  if (process.env.SUBCREATOR_MAC_CONNECTED_ONLY !== "1") {
+    // // Make the default PKG offline-capable so installation never depends on a GitHub release being published first.
+    const bundledRuntimeDir = path.join(coreScriptsDir, "runtime");
+    await mkdir(bundledRuntimeDir, { recursive: true });
+    await cp(runtimeAssetPath, path.join(bundledRuntimeDir, asset.assetName));
+  }
   const runtimeUrl =
     process.env.SUBCREATOR_RUNTIME_DOWNLOAD_URL ||
     `https://github.com/CyrilG93/PremiereSubCreator/releases/download/${runtimeManifest.releaseTag}/${asset.assetName}`;

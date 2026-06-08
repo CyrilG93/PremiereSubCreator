@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "releaseTag": "v1.1.6",
+  "releaseTag": "v1.1.7",
   "assets": {
     "arm64": {
       "assetName": "SubCreator-macOS-Runtime-v1-arm64.tar.gz",

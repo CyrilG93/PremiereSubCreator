@@ -172,16 +172,22 @@ subcreator_runtime_is_current() {
 }
 
 subcreator_download_runtime() {
-  # // Download and verify the immutable private runtime asset for the current Mac architecture.
+  # // Prefer the bundled runtime archive and download it only for explicitly connected-only packages.
   runtime_dir="$1"
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-runtime.XXXXXX")"
-  archive_path="${temp_root}/${SUBCREATOR_RUNTIME_ASSET_NAME}"
+  bundled_archive_path="${SUBCREATOR_SCRIPT_DIR}/runtime/${SUBCREATOR_RUNTIME_ASSET_NAME}"
+  archive_path="${bundled_archive_path}"
   extracted_root="${temp_root}/extracted"
   mkdir -p "${extracted_root}"
 
-  echo "Downloading the private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
-  curl --fail --location --retry 3 --connect-timeout 30 \
-    "${SUBCREATOR_RUNTIME_URL}" --output "${archive_path}"
+  if [ -f "${bundled_archive_path}" ]; then
+    echo "Using the bundled private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
+  else
+    archive_path="${temp_root}/${SUBCREATOR_RUNTIME_ASSET_NAME}"
+    echo "Downloading the private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
+    curl --fail --location --retry 3 --connect-timeout 30 \
+      "${SUBCREATOR_RUNTIME_URL}" --output "${archive_path}"
+  fi
   actual_hash="$(shasum -a 256 "${archive_path}" | awk '{print tolower($1)}')"
   if [ "${actual_hash}" != "${SUBCREATOR_RUNTIME_SHA256}" ]; then
     rm -rf "${temp_root}"

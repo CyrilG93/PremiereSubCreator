@@ -17,7 +17,7 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 
 Sub Creator works without extra dependencies if you only use `SRT` mode.
 
-On Windows, the easiest option is the connected `.exe` installer. On macOS, use the connected `.pkg` installer. Both install Sub Creator and automatically download the private Python, FFmpeg, and Whisper tools only when they are missing or need an update.
+On Windows, the easiest option is the connected `.exe` installer. On macOS, use the unified `.pkg` installer. Both install Sub Creator and configure the private Python, FFmpeg, and Whisper tools automatically.
 
 If you use the manual `.zip` installer, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
 
@@ -67,7 +67,7 @@ The Windows installer automatically enables the CEP debug mode required for unsi
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The first installation downloads a private Python and LGPL FFmpeg runtime. Later updates reuse a compatible runtime and existing Whisper models. The installer also enables CEP debug mode and installs the bundled fonts for the current macOS user.
+The `.pkg` includes the private Python and LGPL FFmpeg runtime for the selected Mac architecture, so it does not depend on a separate runtime download. Existing compatible runtimes and Whisper models are preserved. The installer also enables CEP debug mode and installs the bundled fonts for the current macOS user.
 
 ### Install on macOS with the `.zip`
 

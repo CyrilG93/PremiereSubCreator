@@ -31,6 +31,7 @@ const innoSetupUrl =
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const reuseStaging = process.env.SUBCREATOR_REUSE_STAGING === "1";
 const rebuildRuntime = process.env.SUBCREATOR_REBUILD_RUNTIME === "1";
+const skipRuntimeAssetDownload = process.env.SUBCREATOR_SKIP_RUNTIME_ASSET_DOWNLOAD === "1";
 const privatePythonEnv = {
   PYTHONUTF8: "1",
   PYTHONNOUSERSITE: "1",
@@ -409,6 +410,12 @@ async function createRuntimeInstaller(compilerPath, runtimeManifest) {
       return runtimeManifest;
     }
     throw new Error(`Local runtime asset hash does not match ${runtimeManifestPath}.`);
+  }
+
+  if (!rebuildRuntime && runtimeManifest.sha256 && skipRuntimeAssetDownload) {
+    // // Let CI compile only the connected installer after it has confirmed the immutable GitHub asset exists.
+    process.stdout.write(`Reusing published Windows runtime metadata for ${runtimeManifest.assetName}.\n`);
+    return runtimeManifest;
   }
 
   if (!rebuildRuntime && runtimeManifest.sha256 && !(await pathExists(outputPath))) {

@@ -246,8 +246,25 @@ async function preparePythonRuntime() {
 async function validatePythonRuntime() {
   // // Confirm the private Python runtime imports core packages without leaking user site-packages.
   const pythonExe = path.join(runtimeRoot, "python", "python.exe");
-  await runCommand(pythonExe, ["-c", "import sys, whisper, whisperx; print('Private Python runtime OK'); print('\\n'.join(sys.path))"], {
-    env: privatePythonEnv
+  const validationCode =
+    "import sys, whisper, whisperx; print('Private Python runtime OK'); print('\\n'.join(sys.path))";
+  await runCommand("powershell", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    [
+      `$python = ${JSON.stringify(pythonExe)};`,
+      "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw \"Private Python executable is missing: $python\" }",
+      "Unblock-File -LiteralPath $python -ErrorAction SilentlyContinue;",
+      "& $python -c $env:SUBCREATOR_PYTHON_VALIDATION_CODE;",
+      "exit $LASTEXITCODE"
+    ].join(" ")
+  ], {
+    env: {
+      ...privatePythonEnv,
+      SUBCREATOR_PYTHON_VALIDATION_CODE: validationCode
+    }
   });
 }
 

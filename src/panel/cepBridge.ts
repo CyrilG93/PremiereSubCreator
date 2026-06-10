@@ -605,6 +605,7 @@ function listWhisperModelCacheDirectories(modules: CepNodeModules): string[] {
   const homeDir = typeof modules.os.homedir === "function" ? String(modules.os.homedir() || "").trim() : "";
   const xdgCacheHome = String(env.XDG_CACHE_HOME || "").trim();
   const userProfile = String(env.USERPROFILE || "").trim();
+  const windowsHome = `${String(env.HOMEDRIVE || "").trim()}${String(env.HOMEPATH || "").trim()}`.trim();
 
   if (xdgCacheHome) {
     pushUniqueString(directories, modules.path.join(xdgCacheHome, "whisper"));
@@ -615,6 +616,9 @@ function listWhisperModelCacheDirectories(modules: CepNodeModules): string[] {
   }
   if (userProfile) {
     pushUniqueString(directories, modules.path.join(userProfile, ".cache", "whisper"));
+  }
+  if (windowsHome) {
+    pushUniqueString(directories, modules.path.join(windowsHome, ".cache", "whisper"));
   }
 
   return directories.filter((directory) => modules.fs.existsSync(directory));
@@ -634,6 +638,7 @@ function resolvePreferredWhisperModelCacheDirectory(modules: CepNodeModules, pre
   const env = modules.process.env || {};
   const xdgCacheHome = String(env.XDG_CACHE_HOME || "").trim();
   const userProfile = String(env.USERPROFILE || "").trim();
+  const windowsHome = `${String(env.HOMEDRIVE || "").trim()}${String(env.HOMEPATH || "").trim()}`.trim();
   const homeDir = typeof modules.os.homedir === "function" ? String(modules.os.homedir() || "").trim() : "";
   if (xdgCacheHome) {
     return modules.path.join(xdgCacheHome, "whisper");
@@ -641,7 +646,21 @@ function resolvePreferredWhisperModelCacheDirectory(modules: CepNodeModules, pre
   if (userProfile) {
     return modules.path.join(userProfile, ".cache", "whisper");
   }
+  if (windowsHome) {
+    return modules.path.join(windowsHome, ".cache", "whisper");
+  }
   return modules.path.join(homeDir, ".cache", "whisper");
+}
+
+function folderOpenCommandSucceeded(
+  result: { error?: { code?: string } | null; status?: number | null },
+  windowsRuntime: boolean
+): boolean {
+  // // Windows Explorer commonly opens the folder successfully while returning exit code 1 through CEP.
+  if (result.error) {
+    return false;
+  }
+  return windowsRuntime || result.status === 0 || result.status === null;
 }
 
 function detectInstalledWhisperModelsViaCepNode(modules: CepNodeModules): {
@@ -3687,7 +3706,7 @@ export async function openInstalledMogrtFolder(extensionRootPath: string): Promi
       timeout: 15000,
       env: modules.process.env
     });
-    if (!result.error && (result.status === 0 || result.status === null)) {
+    if (folderOpenCommandSucceeded(result, detectWindowsRuntime())) {
       return templatesRoot;
     }
   }
@@ -3718,7 +3737,7 @@ export async function openWhisperModelsFolder(modelCachePaths: string[] = []): P
       timeout: 15000,
       env: modules.process.env
     });
-    if (!result.error && (result.status === 0 || result.status === null)) {
+    if (folderOpenCommandSucceeded(result, detectWindowsRuntime())) {
       return modelsRoot;
     }
   }

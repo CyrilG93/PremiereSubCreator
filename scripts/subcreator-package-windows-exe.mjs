@@ -1,4 +1,4 @@
-// // Build a small connected Windows installer plus a separately downloadable private runtime.
+// // Build light and full Windows installers plus a separately downloadable private runtime.
 import { createReadStream } from "node:fs";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -517,11 +517,12 @@ function createModelPascalDefinitions() {
   });
 }
 
-async function createConnectedInstaller(compilerPath, version, runtimeManifest) {
-  // // Create the user-facing installer that downloads only a missing runtime and selected models.
-  const outputBaseName = `SubCreator-v${version}-Windows-Installer`;
+async function createUserInstaller(compilerPath, version, runtimeManifest, mode) {
+  // // Create either a connected lightweight installer or a complete installer with the runtime embedded.
+  const includeRuntime = mode === "full";
+  const outputBaseName = `SubCreator-v${version}-Windows-${includeRuntime ? "Full" : "Light"}-Installer`;
   const outputPath = path.join(releasesDir, `${outputBaseName}.exe`);
-  const scriptPath = path.join(installerRoot, "SubCreatorConnected.iss");
+  const scriptPath = path.join(installerRoot, `SubCreator${includeRuntime ? "Full" : "Light"}.iss`);
   const runtimeUrl =
     process.env.SUBCREATOR_RUNTIME_DOWNLOAD_URL ||
     `https://github.com/CyrilG93/PremiereSubCreator/releases/download/${runtimeManifest.releaseTag}/${runtimeManifest.assetName}`;
@@ -569,11 +570,16 @@ async function createConnectedInstaller(compilerPath, version, runtimeManifest) 
     ...(await pathExists(path.join(payloadRoot, "Fonts")))
       ? [`Source: "${escapeInnoString(path.join(payloadRoot, "Fonts", "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\Fonts"; Flags: recursesubdirs createallsubdirs ignoreversion`]
       : [],
+    ...(includeRuntime
+      ? [`Source: "${escapeInnoString(path.join(runtimeRoot, "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\runtime"; Flags: recursesubdirs createallsubdirs ignoreversion`]
+      : []),
     ...modelFileEntries,
     "",
     "[Run]",
-    `Filename: "{tmp}\\${runtimeManifest.assetName}"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"; StatusMsg: "Installing the private Whisper runtime..."; Flags: waituntilterminated runhidden; Check: ShouldInstallRuntime`,
-    `Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\\SubCreatorPayload\\installers\\subcreator_install_windows_private_runtime.ps1"" -PayloadRoot ""{tmp}\\SubCreatorPayload"" -SkipRuntimeInstall -RuntimeVersion ""${runtimeManifest.version}"""; StatusMsg: "Installing Sub Creator..."; Flags: waituntilterminated`,
+    ...(includeRuntime
+      ? []
+      : [`Filename: "{tmp}\\${runtimeManifest.assetName}"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"; StatusMsg: "Installing the private Whisper runtime..."; Flags: waituntilterminated runhidden; Check: ShouldInstallRuntime`]),
+    `Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\\SubCreatorPayload\\installers\\subcreator_install_windows_private_runtime.ps1"" -PayloadRoot ""{tmp}\\SubCreatorPayload""${includeRuntime ? "" : " -SkipRuntimeInstall"} -RuntimeVersion ""${runtimeManifest.version}"""; StatusMsg: "Installing Sub Creator..."; Flags: waituntilterminated`,
     "",
     "[Code]",
     "var",
@@ -648,9 +654,13 @@ async function createConnectedInstaller(compilerPath, version, runtimeManifest) 
     "  if CurPageID = wpReady then",
     "  begin",
     "    DownloadPage.Clear;",
-    "    DownloadRuntime := not RuntimeIsCurrent;",
-    "    if DownloadRuntime then",
-    `      DownloadPage.Add('${escapePascalString(runtimeUrl)}', '${runtimeManifest.assetName}', '${runtimeManifest.sha256}');`,
+    `    DownloadRuntime := ${includeRuntime ? "False" : "not RuntimeIsCurrent"};`,
+    ...(includeRuntime
+      ? []
+      : [
+          "    if DownloadRuntime then",
+          `      DownloadPage.Add('${escapePascalString(runtimeUrl)}', '${runtimeManifest.assetName}', '${runtimeManifest.sha256}');`
+        ]),
     ...prepareModelDownloads,
     "",
     "    if DownloadRuntime or " +
@@ -690,7 +700,7 @@ async function createConnectedInstaller(compilerPath, version, runtimeManifest) 
   await rm(outputPath, { force: true });
   await writeFile(scriptPath, iss, "utf8");
   await runCommand(compilerPath, ["/Qp", scriptPath]);
-  process.stdout.write(`Connected Windows installer created at ${outputPath}\n`);
+  process.stdout.write(`${includeRuntime ? "Full" : "Light"} Windows installer created at ${outputPath}\n`);
 }
 
 async function readPackageVersion() {
@@ -737,7 +747,12 @@ async function main() {
 
   const compilerPath = await prepareInnoCompiler();
   const finalizedRuntimeManifest = await createRuntimeInstaller(compilerPath, runtimeManifest);
-  await createConnectedInstaller(compilerPath, version, finalizedRuntimeManifest);
+  await createUserInstaller(compilerPath, version, finalizedRuntimeManifest, "light");
+  if (await pathExists(path.join(runtimeRoot, "python", "python.exe"))) {
+    await createUserInstaller(compilerPath, version, finalizedRuntimeManifest, "full");
+  } else {
+    process.stdout.write("Full Windows installer skipped because the unpacked runtime is not available.\n");
+  }
 }
 
 main().catch((error) => {

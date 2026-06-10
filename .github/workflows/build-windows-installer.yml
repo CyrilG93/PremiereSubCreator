@@ -76,8 +76,7 @@ jobs:
 
           $rebuildRuntime = ($env:FORCE_REBUILD_RUNTIME -eq "true") -or (-not $runtimeAssetExists)
           if ($rebuildRuntime) {
-            # // Publish a newly generated runtime beside this version and let the builder calculate its final hash.
-            $manifest.releaseTag = $releaseTag
+            # // Rebuild the runtime under its dedicated stable dependency tag and calculate its final hash.
             $manifest.sha256 = ""
             $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
             "SUBCREATOR_REBUILD_RUNTIME=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -88,6 +87,7 @@ jobs:
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "runtime_release_tag=$($manifest.releaseTag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "runtime_asset_name=$($manifest.assetName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "runtime_rebuilt=$($rebuildRuntime.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -102,10 +102,10 @@ jobs:
           RUNTIME_ASSET_NAME: ${{ steps.release.outputs.runtime_asset_name }}
           RUNTIME_REBUILT: ${{ steps.release.outputs.runtime_rebuilt }}
         run: |
-          # // Fail before upload when Inno Setup did not create the expected connected installer.
-          $installerPath = "Releases/SubCreator-v$env:VERSION-Windows-Installer.exe"
-          if (-not (Test-Path -LiteralPath $installerPath)) {
-            throw "Connected Windows installer is missing: $installerPath"
+          # // Fail before upload when Inno Setup did not create the expected lightweight installer.
+          $lightInstallerPath = "Releases/SubCreator-v$env:VERSION-Windows-Light-Installer.exe"
+          if (-not (Test-Path -LiteralPath $lightInstallerPath)) {
+            throw "Light Windows installer is missing: $lightInstallerPath"
           }
 
           if ($env:RUNTIME_REBUILT -eq "true") {
@@ -113,16 +113,30 @@ jobs:
             if (-not (Test-Path -LiteralPath $runtimePath)) {
               throw "Windows runtime installer is missing: $runtimePath"
             }
+            $fullInstallerPath = "Releases/SubCreator-v$env:VERSION-Windows-Full-Installer.exe"
+            if (-not (Test-Path -LiteralPath $fullInstallerPath)) {
+              throw "Full Windows installer is missing: $fullInstallerPath"
+            }
+            "full_installer_path=$fullInstallerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
 
-          Get-FileHash -Algorithm SHA256 -LiteralPath $installerPath
-          "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Get-FileHash -Algorithm SHA256 -LiteralPath $lightInstallerPath
+          "light_installer_path=$lightInstallerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Upload the connected installer artifact
+      - name: Upload the light installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: SubCreator-v${{ steps.release.outputs.version }}-Windows-Installer
-          path: ${{ steps.artifacts.outputs.installer_path }}
+          name: SubCreator-v${{ steps.release.outputs.version }}-Windows-Light-Installer
+          path: ${{ steps.artifacts.outputs.light_installer_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload the full installer artifact
+        if: steps.release.outputs.runtime_rebuilt == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: SubCreator-v${{ steps.release.outputs.version }}-Windows-Full-Installer
+          path: ${{ steps.artifacts.outputs.full_installer_path }}
           if-no-files-found: error
           retention-days: 14
 
@@ -141,8 +155,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RUNTIME_RELEASE_TAG: ${{ steps.release.outputs.runtime_release_tag }}
           VERSION: ${{ steps.release.outputs.version }}
-          INSTALLER_PATH: ${{ steps.artifacts.outputs.installer_path }}
+          LIGHT_INSTALLER_PATH: ${{ steps.artifacts.outputs.light_installer_path }}
+          FULL_INSTALLER_PATH: ${{ steps.artifacts.outputs.full_installer_path }}
           RUNTIME_ASSET_NAME: ${{ steps.release.outputs.runtime_asset_name }}
           RUNTIME_REBUILT: ${{ steps.release.outputs.runtime_rebuilt }}
         run: |
@@ -156,9 +172,18 @@ jobs:
           }
 
           # // Replace only matching Windows assets while leaving macOS assets on the same release untouched.
-          gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH --clobber
+          gh release upload $env:RELEASE_TAG $env:LIGHT_INSTALLER_PATH --clobber
           if ($env:RUNTIME_REBUILT -eq "true") {
-            gh release upload $env:RELEASE_TAG "Releases/$env:RUNTIME_ASSET_NAME" --clobber
+            gh release upload $env:RELEASE_TAG $env:FULL_INSTALLER_PATH --clobber
+            gh release view $env:RUNTIME_RELEASE_TAG 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              gh release create $env:RUNTIME_RELEASE_TAG `
+                --target $env:GITHUB_SHA `
+                --title "Sub Creator Windows Runtime v1" `
+                --notes "Private Python, WhisperX, and LGPL FFmpeg runtime used by the lightweight Windows installer." `
+                --prerelease
+            }
+            gh release upload $env:RUNTIME_RELEASE_TAG "Releases/$env:RUNTIME_ASSET_NAME" --clobber
           }
 
       - name: Persist rebuilt runtime metadata

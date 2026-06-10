@@ -1,6 +1,10 @@
 # Windows installer with GitHub Actions
 
-The `Build Windows Installer` workflow creates the Windows `.exe` on a temporary GitHub-hosted Windows machine.
+The `Build Windows Installer` workflow creates the Windows `.exe` files on a temporary GitHub-hosted Windows machine.
+
+- `Windows-Light-Installer.exe` contains the extension and downloads the private runtime only when it is missing.
+- `Windows-Full-Installer.exe` contains the extension and private runtime for a first installation without a separate runtime file.
+- Both installers offer the same optional Whisper model downloads.
 
 ## Run the workflow
 
@@ -19,8 +23,8 @@ The first run can take much longer because the workflow checks the private Windo
 If that runtime is missing from GitHub, the workflow:
 
 1. Builds the private Python and LGPL FFmpeg runtime.
-2. Builds the lightweight connected installer.
-3. Uploads both files when release publication is enabled.
+2. Builds the lightweight connected installer and the complete installer.
+3. Uploads the user installers to the matching product release and the reusable runtime to the dedicated `windows-runtime-v1` dependency release when publication is enabled.
 4. Commits the generated runtime tag and SHA-256 back to the selected branch.
 
 Later runs reuse the published runtime and normally rebuild only the lightweight installer.

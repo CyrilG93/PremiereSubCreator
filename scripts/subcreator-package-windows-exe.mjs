@@ -32,6 +32,7 @@ const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const reuseStaging = process.env.SUBCREATOR_REUSE_STAGING === "1";
 const rebuildRuntime = process.env.SUBCREATOR_REBUILD_RUNTIME === "1";
 const skipRuntimeAssetDownload = process.env.SUBCREATOR_SKIP_RUNTIME_ASSET_DOWNLOAD === "1";
+const lightOnly = process.env.SUBCREATOR_LIGHT_ONLY === "1";
 const privatePythonEnv = {
   PYTHONUTF8: "1",
   PYTHONNOUSERSITE: "1",
@@ -578,7 +579,7 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
     "[Run]",
     ...(includeRuntime
       ? []
-      : [`Filename: "{tmp}\\${runtimeManifest.assetName}"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"; StatusMsg: "Installing the private Whisper runtime..."; Flags: waituntilterminated runhidden; Check: ShouldInstallRuntime`]),
+      : [`Filename: "{tmp}\\${runtimeManifest.assetName}"; Parameters: "/SILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"; StatusMsg: "Preparing the private Whisper runtime. Windows security checks can take a moment..."; Flags: waituntilterminated; Check: ShouldInstallRuntime`]),
     `Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\\SubCreatorPayload\\installers\\subcreator_install_windows_private_runtime.ps1"" -PayloadRoot ""{tmp}\\SubCreatorPayload""${includeRuntime ? "" : " -SkipRuntimeInstall"} -RuntimeVersion ""${runtimeManifest.version}"""; StatusMsg: "Installing Sub Creator..."; Flags: waituntilterminated`,
     "",
     "[Code]",
@@ -748,10 +749,12 @@ async function main() {
   const compilerPath = await prepareInnoCompiler();
   const finalizedRuntimeManifest = await createRuntimeInstaller(compilerPath, runtimeManifest);
   await createUserInstaller(compilerPath, version, finalizedRuntimeManifest, "light");
-  if (await pathExists(path.join(runtimeRoot, "python", "python.exe"))) {
+  if (!lightOnly && (await pathExists(path.join(runtimeRoot, "python", "python.exe")))) {
     await createUserInstaller(compilerPath, version, finalizedRuntimeManifest, "full");
-  } else {
+  } else if (!lightOnly) {
     process.stdout.write("Full Windows installer skipped because the unpacked runtime is not available.\n");
+  } else {
+    process.stdout.write("Full Windows installer skipped because SUBCREATOR_LIGHT_ONLY=1.\n");
   }
 }
 

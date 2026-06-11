@@ -263,6 +263,7 @@ const elements = {
 };
 
 interface PanelLogState {
+  timestamp: string;
   plainText: string;
   structuredTitle: string;
   structuredPayload: unknown;
@@ -314,7 +315,8 @@ let visualApplyInProgress = false;
 let visualLiveUpdateEnabled = true;
 let logPanelExpanded = true;
 let verboseLogsEnabled = false;
-let currentLogState: PanelLogState | null = null;
+const logHistory: PanelLogState[] = [];
+const MAX_LOG_HISTORY_ENTRIES = 200;
 let passiveMogrtRefreshTimer: number | null = null;
 let lastPassiveMogrtCatalogRefreshAt = 0;
 let generateInProgress = false;
@@ -1594,27 +1596,31 @@ function buildCompactLogValue(value: unknown, depth = 0, fieldName = ""): unknow
 }
 
 function renderCurrentLog(): void {
-  // // Re-render the current log entry whenever locale, verbosity, or visibility changes.
+  // // Re-render the complete session history whenever locale, verbosity, or visibility changes.
   if (!elements.logOutput) {
     return;
   }
 
-  if (!currentLogState) {
+  if (logHistory.length < 1) {
     elements.logOutput.textContent = "";
     elements.logOutput.classList.remove("log--error");
     return;
   }
 
-  let outputText = currentLogState.plainText;
-  if (currentLogState.structuredTitle) {
-    const payloadToRender = verboseLogsEnabled
-      ? currentLogState.structuredPayload
-      : buildCompactLogValue(currentLogState.structuredPayload);
-    outputText = `${currentLogState.structuredTitle}\n${JSON.stringify(payloadToRender, null, 2)}`;
-  }
-
-  elements.logOutput.textContent = outputText;
-  elements.logOutput.classList.toggle("log--error", currentLogState.isError);
+  elements.logOutput.textContent = logHistory
+    .map((entry) => {
+      let outputText = entry.plainText;
+      if (entry.structuredTitle) {
+        const payloadToRender = verboseLogsEnabled
+          ? entry.structuredPayload
+          : buildCompactLogValue(entry.structuredPayload);
+        outputText = `${entry.structuredTitle}\n${JSON.stringify(payloadToRender, null, 2)}`;
+      }
+      return `[${entry.timestamp}] ${outputText}`;
+    })
+    .join("\n\n");
+  elements.logOutput.classList.toggle("log--error", Boolean(logHistory[logHistory.length - 1]?.isError));
+  elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
 }
 
 function refreshLogControlsState(): void {
@@ -1656,13 +1662,17 @@ function setVerboseLogsEnabled(enabled: boolean, skipPersist = false): void {
 }
 
 function setStructuredLog(title: string, payload: unknown, isError = false): void {
-  // // Store one structured log payload so verbosity changes can re-render without recomputing host calls.
-  currentLogState = {
+  // // Append structured payloads so verbosity changes can re-render the complete operation history.
+  logHistory.push({
+    timestamp: new Date().toLocaleTimeString(),
     plainText: "",
     structuredTitle: title,
     structuredPayload: payload,
     isError
-  };
+  });
+  if (logHistory.length > MAX_LOG_HISTORY_ENTRIES) {
+    logHistory.splice(0, logHistory.length - MAX_LOG_HISTORY_ENTRIES);
+  }
   renderCurrentLog();
 }
 
@@ -1787,13 +1797,17 @@ async function openUpdateDownload(): Promise<void> {
 }
 
 function setLog(message: string, isError = false): void {
-  // // Provide a single visible place for runtime status and error traces.
-  currentLogState = {
+  // // Append runtime status and error traces so every generation stage remains visible.
+  logHistory.push({
+    timestamp: new Date().toLocaleTimeString(),
     plainText: message,
     structuredTitle: "",
     structuredPayload: null,
     isError
-  };
+  });
+  if (logHistory.length > MAX_LOG_HISTORY_ENTRIES) {
+    logHistory.splice(0, logHistory.length - MAX_LOG_HISTORY_ENTRIES);
+  }
   renderCurrentLog();
 }
 
@@ -5033,6 +5047,7 @@ async function loadCuesFromSelectedSource(
   assertNotCancelled();
   const requestedSequenceRange = await resolveRequestedSequenceRange(options);
   assertNotCancelled();
+  setStructuredLog(translate("log.sequenceRange"), requestedSequenceRange);
 
   if (options.sourceMode === "srt") {
     if (!elements.srtPath || !elements.srtPath.value.trim()) {
@@ -5135,6 +5150,7 @@ async function loadCuesFromSelectedSource(
   }
   const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
   assertNotCancelled();
+  setStructuredLog(translate("log.audioExportDone"), exportResult);
   const whisperAudioPath = exportResult.audioPath;
   const cleanupAudioPath = exportResult.audioPath;
 
@@ -5189,6 +5205,12 @@ async function loadCuesFromSelectedSource(
         model: options.whisperModel,
         extensionRootPath: options.extensionRootPath
       };
+      setStructuredLog(translate("log.whisperStarted"), {
+        mode: options.sourceMode,
+        model: options.whisperModel,
+        languageCode: options.languageCode,
+        audioPath: whisperAudioPath
+      });
       whisperResult = await (whisperxModeActive
         ? transcribeWithWhisperX(transcriptionRequest, (progress) => {
             latestRealWhisperProgressAt = Date.now();
@@ -5202,6 +5224,13 @@ async function loadCuesFromSelectedSource(
       window.clearInterval(fallbackProgressTimer);
     }
     assertNotCancelled();
+    setStructuredLog(translate("log.whisperResult"), {
+      model: whisperResult.model,
+      audioPath: whisperResult.audioPath,
+      hasJson: Boolean(whisperResult.jsonText),
+      srtLength: String(whisperResult.srtText || "").length,
+      commandOutput: whisperResult.commandOutput || ""
+    });
 
     let cues: CaptionCue[] = [];
     if (onProgress) {
@@ -5221,6 +5250,11 @@ async function loadCuesFromSelectedSource(
       throw new Error(translate("error.emptyWhisper"));
     }
 
+    setStructuredLog(translate("log.cuesReady"), {
+      count: displayCues.length,
+      firstStartSeconds: displayCues[0]?.startSeconds,
+      lastEndSeconds: displayCues[displayCues.length - 1]?.endSeconds
+    });
     setLog(`${translate(whisperxModeActive ? "log.whisperxDone" : "log.whisperDone")} ${whisperResult.model}`);
     return shiftCaptionCues(displayCues, Number(requestedSequenceRange.rangeStartSeconds) || 0);
   } finally {
@@ -5251,6 +5285,14 @@ async function generate(): Promise<void> {
       await enforceWhisperSourceAvailability();
     }
     const options = collectBuildOptions();
+    setStructuredLog(translate("log.generateConfiguration"), {
+      sourceMode: options.sourceMode,
+      outputMode: options.outputMode,
+      languageCode: options.languageCode,
+      whisperModel: options.whisperModel,
+      whisperSequenceRange: options.whisperSequenceRange,
+      mogrtTemplateRelativePath: options.mogrtTemplateRelativePath
+    });
     setLog(translate("log.processing"));
     await updateGenerateProgress(4, translate("progress.prepareGeneration"), true);
     assertGenerateNotCancelled();
@@ -5258,6 +5300,11 @@ async function generate(): Promise<void> {
     assertGenerateNotCancelled();
     await updateGenerateProgress(90, translate("progress.planCaptions"), true);
     let plannedCues = buildCaptionPlan(cues, options);
+    setStructuredLog(translate("log.captionPlanReady"), {
+      sourceCueCount: cues.length,
+      plannedCueCount: plannedCues.length,
+      outputMode: options.outputMode
+    });
     assertGenerateNotCancelled();
     if (options.outputMode === "premiere_subtitles") {
       const payload: HostApplyPayload = {

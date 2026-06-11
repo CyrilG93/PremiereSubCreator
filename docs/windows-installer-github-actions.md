@@ -29,6 +29,8 @@ If that runtime is missing from GitHub, the workflow:
 
 Later runs reuse the published runtime and normally rebuild only the lightweight installer.
 
+For a local Windows build that must generate only the connected installer, set `SUBCREATOR_LIGHT_ONLY=1` before running `npm run subcreator:package:windows-exe`.
+
 ## Signing
 
 The workflow currently creates unsigned `.exe` files. They work, but Windows may display a stronger SmartScreen warning. Code signing can be added later after a Windows signing certificate is available.

@@ -119,7 +119,7 @@ Which model to choose:
 
 If transcription is unstable, manually select the language in `Whisper language` instead of using `Auto detect`.
 
-If `Generate` cannot start in a Whisper mode, the log panel now shows the detected runtime, installed models, and cache paths. Share this diagnostic block when requesting support.
+The log panel keeps a timestamped history of generation stages. If `Generate` cannot start in a Whisper mode, it also shows the detected runtime, installed models, and cache paths. Share this diagnostic block when requesting support.
 
 ## Usage
 

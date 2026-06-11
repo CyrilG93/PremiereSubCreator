@@ -326,6 +326,7 @@ let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
 let whisperModelCachePaths: string[] = [];
 let whisperRuntimeAvailable = false;
+let whisperRuntimeDetails = "";
 let correctedAlignAvailable = false;
 let correctedAlignRuntimeDetails = "";
 let pendingWhisperModelValue = "base";
@@ -1211,16 +1212,10 @@ function refreshCorrectedAlignUi(): void {
 }
 
 function isCurrentSourceReady(): boolean {
-  // // Gate generation when the active source mode is missing required runtime pieces.
+  // // Keep Generate clickable so missing Whisper dependencies produce a visible diagnostic instead of a silent disabled button.
   const mode = getSourceMode();
-  if (mode === "whisper_sequence") {
-    return whisperRuntimeAvailable && availableWhisperModels.length > 0;
-  }
-  if (mode === "whisperx_sequence") {
-    return correctedAlignAvailable && availableWhisperModels.length > 0;
-  }
   if (mode === "corrected_align") {
-    return correctedAlignAvailable && getSelectedWhisperLanguageCode() !== "auto";
+    return getSelectedWhisperLanguageCode() !== "auto";
   }
   return true;
 }
@@ -2128,6 +2123,7 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
   try {
     const status = await getWhisperRuntimeStatus();
     whisperRuntimeAvailable = Boolean(status.available);
+    whisperRuntimeDetails = String(status.details || "");
     availableWhisperModels = Array.isArray(status.installedModels) ? status.installedModels.slice() : [];
     whisperModelCachePaths = Array.isArray(status.modelCachePaths) ? status.modelCachePaths.slice() : [];
     correctedAlignAvailable = Boolean(status.alignmentAvailable);
@@ -2135,8 +2131,9 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     refreshWhisperModelUi(pendingWhisperModelValue);
     refreshCorrectedAlignUi();
     toggleSourceFields();
-  } catch {
+  } catch (error) {
     whisperRuntimeAvailable = false;
+    whisperRuntimeDetails = `Runtime detection failed: ${String(error)}`;
     availableWhisperModels = [];
     whisperModelCachePaths = [];
     correctedAlignAvailable = false;
@@ -2144,6 +2141,23 @@ async function enforceWhisperSourceAvailability(): Promise<void> {
     refreshWhisperModelUi(pendingWhisperModelValue);
     refreshCorrectedAlignUi();
   }
+}
+
+function buildWhisperDiagnostic(): string {
+  // // Build a compact shareable snapshot for customer machines where runtime detection differs from development.
+  const selectedModel = String(elements.whisperModel?.value || pendingWhisperModelValue || "").trim();
+  return [
+    `Sub Creator: ${String(panelMeta.version || FALLBACK_PANEL_META.version || "unknown")}`,
+    `Source: ${getSourceMode()}`,
+    `Platform: ${String(navigator?.platform || "unknown")}`,
+    `Whisper runtime: ${whisperRuntimeAvailable ? "available" : "unavailable"}`,
+    `Runtime details: ${whisperRuntimeDetails || "none"}`,
+    `WhisperX runtime: ${correctedAlignAvailable ? "available" : "unavailable"}`,
+    `WhisperX details: ${correctedAlignRuntimeDetails || "none"}`,
+    `Selected model: ${selectedModel || "none"}`,
+    `Detected models: ${availableWhisperModels.join(", ") || "none"}`,
+    `Model cache paths: ${whisperModelCachePaths.join(" | ") || "none"}`
+  ].join("\n");
 }
 
 function setActiveMode(mode: PanelMode): void {
@@ -4825,11 +4839,13 @@ function collectBuildOptions(): CaptionBuildOptions {
     (getSourceMode() === "whisper_sequence" || getSourceMode() === "whisperx_sequence") &&
     !String(elements.whisperModel.value || "").trim()
   ) {
-    throw new Error(translate("error.whisperModelMissing"));
+    throw new Error(`${translate("error.whisperModelMissing")}\n\n${buildWhisperDiagnostic()}`);
+  }
+  if (getSourceMode() === "whisper_sequence" && !whisperRuntimeAvailable) {
+    throw new Error(`${translate("error.whisperUnavailable")}\n\n${buildWhisperDiagnostic()}`);
   }
   if (getSourceMode() === "whisperx_sequence" && !correctedAlignAvailable) {
-    const runtimeDetail = correctedAlignRuntimeDetails ? ` ${correctedAlignRuntimeDetails}` : "";
-    throw new Error(`${translate("error.whisperxUnavailable")}${runtimeDetail ? ` (${runtimeDetail})` : ""}`);
+    throw new Error(`${translate("error.whisperxUnavailable")}\n\n${buildWhisperDiagnostic()}`);
   }
   if (getSourceMode() === "corrected_align" && !String(elements.correctedTranscriptPath.value || "").trim()) {
     throw new Error(translate("error.missingCorrectedTranscriptPath"));
@@ -5224,6 +5240,16 @@ async function generate(): Promise<void> {
   generateCancelRequested = false;
   setGenerateButtonsBusy(true);
   try {
+    setLog(translate("log.generateRequested"));
+    const requestedSourceMode = getSourceMode();
+    if (
+      requestedSourceMode === "whisper_sequence" ||
+      requestedSourceMode === "whisperx_sequence" ||
+      requestedSourceMode === "corrected_align"
+    ) {
+      setLog(translate("log.whisperRuntimeCheck"));
+      await enforceWhisperSourceAvailability();
+    }
     const options = collectBuildOptions();
     setLog(translate("log.processing"));
     await updateGenerateProgress(4, translate("progress.prepareGeneration"), true);

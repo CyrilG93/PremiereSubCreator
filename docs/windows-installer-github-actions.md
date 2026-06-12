@@ -5,6 +5,7 @@ The `Build Windows Installer` workflow creates the Windows `.exe` files on a tem
 - `Windows-Light-Installer.exe` contains the extension and downloads the private runtime only when it is missing.
 - `Windows-Full-Installer.exe` contains the extension and private runtime for a first installation without a separate runtime file.
 - Both installers offer the same optional Whisper model downloads.
+- The extension can recover the standard private runtime directly if its generated configuration file is missing or unreadable.
 
 ## Run the workflow
 

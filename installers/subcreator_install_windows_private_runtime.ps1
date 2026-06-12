@@ -236,7 +236,9 @@ function Write-SubCreatorRuntimeConfig {
     pathHints = @($pathHints)
   }
 
-  $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runtimeConfigFile -Encoding UTF8
+  # // Write UTF-8 without BOM so every CEP/ExtendScript JSON parser can read the runtime config.
+  $configJson = $config | ConvertTo-Json -Depth 4
+  [System.IO.File]::WriteAllText($runtimeConfigFile, $configJson, (New-Object System.Text.UTF8Encoding($false)))
   Write-SubCreatorInfo "Runtime config written: $runtimeConfigFile"
 }
 

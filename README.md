@@ -175,6 +175,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.17 - 2026-06-12
+
+- Fixed Whisper detection after a first Windows installation.
+- Improved recovery of the bundled private runtime and Windows model cache path.
+
 ### 1.1.5 - 2026-06-07
 
 - Added a lightweight Windows installer that reuses the existing private runtime during updates.

@@ -610,14 +610,20 @@ function listWhisperModelCacheDirectories(modules: CepNodeModules): string[] {
   if (xdgCacheHome) {
     pushUniqueString(directories, modules.path.join(xdgCacheHome, "whisper"));
   }
+  if (detectWindowsRuntime() && userProfile) {
+    pushUniqueString(directories, modules.path.join(userProfile, ".cache", "whisper"));
+  }
+  if (detectWindowsRuntime() && windowsHome) {
+    pushUniqueString(directories, modules.path.join(windowsHome, ".cache", "whisper"));
+  }
   if (homeDir) {
     pushUniqueString(directories, modules.path.join(homeDir, ".cache", "whisper"));
     pushUniqueString(directories, modules.path.join(homeDir, "Library", "Caches", "whisper"));
   }
-  if (userProfile) {
+  if (!detectWindowsRuntime() && userProfile) {
     pushUniqueString(directories, modules.path.join(userProfile, ".cache", "whisper"));
   }
-  if (windowsHome) {
+  if (!detectWindowsRuntime() && windowsHome) {
     pushUniqueString(directories, modules.path.join(windowsHome, ".cache", "whisper"));
   }
 
@@ -2211,6 +2217,46 @@ function resolveRuntimeConfigPathCandidates(modules: CepNodeModules): string[] {
   return candidates;
 }
 
+function buildWindowsPrivateRuntimeConfig(modules: CepNodeModules): SubcreatorRuntimeConfig | null {
+  // // Recover the standard private runtime directly when an older installer wrote an unreadable or missing config file.
+  if (!detectWindowsRuntime()) {
+    return null;
+  }
+
+  const localAppData = String(modules.process.env.LOCALAPPDATA || "").trim();
+  if (!localAppData) {
+    return null;
+  }
+
+  const runtimeRoot = modules.path.join(localAppData, "SubCreator", "runtime");
+  const pythonPath = modules.path.join(runtimeRoot, "python", "python.exe");
+  const whisperPath = modules.path.join(runtimeRoot, "python", "Scripts", "whisper.exe");
+  const ffmpegPath = modules.path.join(runtimeRoot, "ffmpeg", "bin", "ffmpeg.exe");
+  if (!modules.fs.existsSync(pythonPath)) {
+    return null;
+  }
+
+  const pathHints: string[] = [];
+  pushUniqueString(pathHints, modules.path.dirname(pythonPath));
+  if (modules.fs.existsSync(whisperPath)) {
+    pushUniqueString(pathHints, modules.path.dirname(whisperPath));
+  }
+  if (modules.fs.existsSync(ffmpegPath)) {
+    pushUniqueString(pathHints, modules.path.dirname(ffmpegPath));
+  }
+  pushUniqueString(pathHints, modules.path.join(String(modules.process.env.SystemRoot || "C:\\Windows"), "System32"));
+
+  return {
+    sourcePath: `${runtimeRoot} (automatic recovery)`,
+    pythonCommand: pythonPath,
+    pythonPath,
+    pythonVersion: "",
+    whisperPath: modules.fs.existsSync(whisperPath) ? whisperPath : "",
+    ffmpegPath: modules.fs.existsSync(ffmpegPath) ? ffmpegPath : "",
+    pathHints
+  };
+}
+
 function readRuntimeConfigFromDisk(modules: CepNodeModules): SubcreatorRuntimeConfig | null {
   // // Read installer-generated runtime config so CEP can use exact binary paths reliably.
   const candidates = resolveRuntimeConfigPathCandidates(modules);
@@ -2220,7 +2266,7 @@ function readRuntimeConfigFromDisk(modules: CepNodeModules): SubcreatorRuntimeCo
     }
 
     try {
-      const rawText = String(modules.fs.readFileSync(candidatePath, "utf8") || "");
+      const rawText = String(modules.fs.readFileSync(candidatePath, "utf8") || "").replace(/^\uFEFF/, "");
       if (!rawText.trim()) {
         continue;
       }
@@ -2250,7 +2296,7 @@ function readRuntimeConfigFromDisk(modules: CepNodeModules): SubcreatorRuntimeCo
     }
   }
 
-  return null;
+  return buildWindowsPrivateRuntimeConfig(modules);
 }
 
 function getRuntimeConfig(modules: CepNodeModules): SubcreatorRuntimeConfig | null {

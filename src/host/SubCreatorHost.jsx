@@ -601,12 +601,44 @@ function subcreator_read_runtime_config() {
     }
 
     try {
+      // // Strip the UTF-8 BOM emitted by Windows PowerShell 5.1 before parsing older runtime configs.
+      payload = payload.replace(/^\uFEFF/, "");
       var parsed = JSON.parse(payload);
       if (parsed && typeof parsed === "object") {
         parsed.__sourcePath = candidatePath;
         return parsed;
       }
     } catch (error) {}
+  }
+
+  if (subcreator_is_windows()) {
+    // // Recover the standard private runtime even when the installer config is absent or unreadable.
+    var localAppData = "";
+    try {
+      localAppData = subcreator_trim_string($.getenv("LOCALAPPDATA"));
+    } catch (error) {}
+
+    if (localAppData) {
+      var runtimeRoot = localAppData + "/SubCreator/runtime";
+      var pythonPath = runtimeRoot + "/python/python.exe";
+      var whisperPath = runtimeRoot + "/python/Scripts/whisper.exe";
+      var ffmpegPath = runtimeRoot + "/ffmpeg/bin/ffmpeg.exe";
+      if (new File(pythonPath).exists) {
+        return {
+          pythonCommand: pythonPath,
+          pythonPath: pythonPath,
+          whisperPath: new File(whisperPath).exists ? whisperPath : "",
+          ffmpegPath: new File(ffmpegPath).exists ? ffmpegPath : "",
+          pathHints: [
+            runtimeRoot + "/python",
+            runtimeRoot + "/python/Scripts",
+            runtimeRoot + "/ffmpeg/bin",
+            "C:/Windows/System32"
+          ],
+          __sourcePath: runtimeRoot + " (automatic recovery)"
+        };
+      }
+    }
   }
 
   return null;

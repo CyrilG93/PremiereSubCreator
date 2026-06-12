@@ -5098,7 +5098,7 @@ async function loadCuesFromSelectedSource(
     if (onProgress) {
       await onProgress(18, translate("progress.exportSequence"), true);
     }
-    const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+    const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange, options.extensionRootPath);
     assertNotCancelled();
     const cleanupAudioPath = exportResult.audioPath;
     if (!cleanupAudioPath) {
@@ -5148,7 +5148,7 @@ async function loadCuesFromSelectedSource(
   if (onProgress) {
     await onProgress(10, translate("progress.exportSequence"), true);
   }
-  const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange);
+  const exportResult = await exportActiveSequenceAudioForWhisper(options.whisperSequenceRange, options.extensionRootPath);
   assertNotCancelled();
   setStructuredLog(translate("log.audioExportDone"), exportResult);
   const whisperAudioPath = exportResult.audioPath;

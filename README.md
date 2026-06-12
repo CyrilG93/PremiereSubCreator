@@ -175,6 +175,10 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.19 - 2026-06-12
+
+- Whisper sequence export now includes its own WAV preset and no longer depends on localized Adobe preset names.
+
 ### 1.1.18 - 2026-06-12
 
 - Windows updates no longer fail when an included font is already loaded by another application.

@@ -11,6 +11,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const sourceRoot = path.join(projectRoot, "src");
 const distRoot = path.join(projectRoot, "dist", "com.cyrilplugin.subcreator");
 const templatesRoot = path.join(projectRoot, "templates", "mogrt");
+const bundledAudioPresetPath = path.join(projectRoot, "assets", "presets", "SubCreator-WAV-48kHz-16bit.epr");
 const packageJsonPath = path.join(projectRoot, "package.json");
 const releaseRepoSlug = "CyrilG93/PremiereSubCreator";
 const excludedTemplateFolderNames = new Set(["backup"]);
@@ -315,6 +316,7 @@ async function subcreatorBuild() {
     mkdir(path.join(distRoot, "locales"), { recursive: true }),
     mkdir(path.join(distRoot, "python"), { recursive: true }),
     mkdir(path.join(distRoot, "assets"), { recursive: true }),
+    mkdir(path.join(distRoot, "assets", "presets"), { recursive: true }),
     mkdir(path.join(distRoot, "templates", "mogrt"), { recursive: true })
   ]);
 
@@ -336,7 +338,8 @@ async function subcreatorBuild() {
     cp(path.join(sourceRoot, "host", "manifest.xml"), path.join(distRoot, "CSXS", "manifest.xml")),
     cp(path.join(sourceRoot, "python", "subcreator_align_corrected.py"), path.join(distRoot, "python", "subcreator_align_corrected.py")),
     cp(path.join(sourceRoot, "locales", "fr.json"), path.join(distRoot, "locales", "fr.json")),
-    cp(path.join(sourceRoot, "locales", "en.json"), path.join(distRoot, "locales", "en.json"))
+    cp(path.join(sourceRoot, "locales", "en.json"), path.join(distRoot, "locales", "en.json")),
+    cp(bundledAudioPresetPath, path.join(distRoot, "assets", "presets", "SubCreator-WAV-48kHz-16bit.epr"))
   ]);
 
   await subcreatorBuildMogrtCatalog(path.join(distRoot, "assets"), path.join(distRoot, "templates", "mogrt"));

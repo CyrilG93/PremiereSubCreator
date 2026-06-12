@@ -798,8 +798,22 @@ function findWhisperSequencePresetInSystemPresets(modules: CepNodeModules, syste
   return matchEntry(systemPresetsRoot);
 }
 
-function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules): string {
-  // // Prefer the newest installed Adobe system WAV preset so active-sequence export needs no manual setup.
+function detectWhisperSequencePresetPathViaCepNode(modules: CepNodeModules, extensionRootPath: string): string {
+  // // Prefer the bundled WAV preset so active-sequence export is independent from Adobe language and preset installation.
+  const normalizedExtensionRoot = String(extensionRootPath || "").trim();
+  if (normalizedExtensionRoot) {
+    const bundledPresetPath = modules.path.join(
+      normalizedExtensionRoot,
+      "assets",
+      "presets",
+      "SubCreator-WAV-48kHz-16bit.epr"
+    );
+    if (modules.fs.existsSync(bundledPresetPath)) {
+      return bundledPresetPath;
+    }
+  }
+
+  // // Keep Adobe system presets as a fallback for older or incomplete extension bundles.
   const candidates: Array<{ path: string; score: number }> = [];
 
   function pushCandidate(candidatePath: string, score: number): void {
@@ -3373,7 +3387,8 @@ export async function pickCorrectedTranscriptPath(): Promise<string> {
 }
 
 export async function exportActiveSequenceAudioForWhisper(
-  rangeMode: WhisperSequenceRangeMode = "entire_sequence"
+  rangeMode: WhisperSequenceRangeMode = "entire_sequence",
+  extensionRootPath = ""
 ): Promise<WhisperSequenceExportResult> {
   // // Export the active sequence audible mix to a temporary WAV file so Whisper can analyze the current edit directly.
   const modules = resolveCepNodeModules();
@@ -3381,7 +3396,7 @@ export async function exportActiveSequenceAudioForWhisper(
     throw new Error("CEP Node runtime unavailable. Unable to export active sequence audio for Whisper.");
   }
 
-  const presetPath = detectWhisperSequencePresetPathViaCepNode(modules);
+  const presetPath = detectWhisperSequencePresetPathViaCepNode(modules, extensionRootPath);
   if (!presetPath) {
     throw new Error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
   }

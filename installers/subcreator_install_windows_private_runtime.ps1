@@ -181,17 +181,50 @@ function Install-SubCreatorBundledFonts {
   New-Item -Path $registryPath -Force | Out-Null
 
   $installed = 0
+  $skipped = 0
+  $failed = 0
   Get-ChildItem -LiteralPath $bundledFontsDir -Recurse -File | Where-Object { $_.Extension -match "^\.(ttf|otf|ttc)$" } | ForEach-Object {
     $destination = Join-Path $targetDir $_.Name
-    Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+    $copyNeeded = $true
+    if (Test-Path -LiteralPath $destination) {
+      try {
+        # // Avoid overwriting an identical font because Windows may keep installed fonts memory-mapped while Adobe apps are open.
+        $sourceHash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+        $destinationHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+        if ($sourceHash -eq $destinationHash) {
+          $copyNeeded = $false
+          $skipped += 1
+        }
+      } catch {
+        Write-SubCreatorInfo "WARNING: unable to compare installed font $destination."
+      }
+    }
+
+    if ($copyNeeded) {
+      try {
+        Copy-Item -LiteralPath $_.FullName -Destination $destination -Force -ErrorAction Stop
+        $installed += 1
+      } catch {
+        # // Keep the extension/runtime installation successful when Windows has a previously installed font locked in memory.
+        $failed += 1
+        Write-SubCreatorInfo "WARNING: font is currently in use and could not be updated: $destination"
+        return
+      }
+    }
+
     $kind = if ($_.Extension -ieq ".otf") { "OpenType" } else { "TrueType" }
     $displayName = ([System.IO.Path]::GetFileNameWithoutExtension($_.Name) -replace "[-_]+", " ")
     New-ItemProperty -Path $registryPath -Name "$displayName ($kind)" -Value $destination -PropertyType String -Force | Out-Null
-    $installed += 1
   }
 
   if ($installed -gt 0) {
     Write-SubCreatorInfo "Installed $installed bundled font(s) for the current Windows user."
+  }
+  if ($skipped -gt 0) {
+    Write-SubCreatorInfo "Kept $skipped identical bundled font(s) already installed."
+  }
+  if ($failed -gt 0) {
+    Write-SubCreatorInfo "WARNING: kept $failed locked font file(s); close Adobe applications before reinstalling to update them."
   }
 }
 

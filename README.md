@@ -175,6 +175,10 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.18 - 2026-06-12
+
+- Windows updates no longer fail when an included font is already loaded by another application.
+
 ### 1.1.17 - 2026-06-12
 
 - Fixed Whisper detection after a first Windows installation.

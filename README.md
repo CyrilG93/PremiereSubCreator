@@ -45,6 +45,8 @@ Quick tips:
 
 The full installer embeds the private runtime and does not need a separate runtime file beside it. The light installer downloads the private runtime when it is missing, so it needs an internet connection and a published runtime asset for a first installation. Later updates keep a compatible runtime and existing Whisper models. The private Python and LGPL FFmpeg runtime stays inside the current Windows user profile and does not modify the system Python installation.
 
+After clicking `Install`, Setup can appear frozen for a few seconds while Windows checks the files. During installation, leave any Command Prompt or PowerShell windows open until Setup finishes.
+
 ### Install on Windows with the `.zip`
 
 1. Download the `.zip` from the latest version.

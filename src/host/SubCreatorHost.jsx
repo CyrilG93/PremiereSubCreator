@@ -6004,11 +6004,6 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         continue;
       }
 
-      var textApplyDurationApplied = subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds);
-      if (textApplyDurationApplied) {
-        durationAdjusted += 1;
-      }
-
       if (sourceSnapshot.visualChanges && sourceSnapshot.visualChanges.length > 0) {
         var cloneStats = subcreator_apply_visual_changes_to_track_item(insertedTrackItem, sourceSnapshot.visualChanges, debugLines);
         clonedStyleUpdates += cloneStats.updatedCount;
@@ -6054,22 +6049,21 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         debugLines.push("text_apply text_update_missing index=" + String(editedIndex));
       }
 
-      if (!textApplyDurationApplied) {
-        if (subcreator_try_set_mogrt_duration(insertedTrackItem, startSeconds, endSeconds)) {
-          durationAdjusted += 1;
-        } else {
-          debugLines.push("text_apply duration_failed index=" + String(editedIndex));
-        }
-      }
-
-      subcreator_disable_mogrt_time_remapping(
+      var textApplyDurationResult = subcreator_try_razor_mogrt_duration(
         sequence,
         insertedTrackItem,
         targetTrackIndex,
+        startSeconds,
         endSeconds,
         debugLines,
         "text_apply index=" + String(editedIndex)
       );
+      if (textApplyDurationResult.applied) {
+        durationAdjusted += 1;
+        insertedTrackItem = textApplyDurationResult.trackItem;
+      } else {
+        debugLines.push("text_apply duration_failed index=" + String(editedIndex));
+      }
       selectedTrackItems.push(insertedTrackItem);
       rebuiltCount += 1;
     }
@@ -8637,160 +8631,130 @@ function subcreator_track_item_ends_near_seconds(trackItem, endSeconds, toleranc
   return Math.abs(candidateEnd - requestedEnd) <= tolerance;
 }
 
-function subcreator_is_time_remapping_component(component) {
-  // // Match only Premiere's intrinsic time-remapping component without touching MOGRT animation controls.
-  var identifiers = [
-    component && component.matchName,
-    component && component.displayName,
-    component && component.name
-  ];
+function subcreator_find_track_clip_near_start(track, startSeconds, projectItem) {
+  // // Resolve a timeline fragment by start time after QE razor invalidates the original TrackItem reference.
+  var clips = subcreator_collection_to_array(track ? track.clips : null);
+  var safeStart = Number(startSeconds);
+  var bestItem = null;
+  var bestDistance = Number.POSITIVE_INFINITY;
 
-  for (var identifierIndex = 0; identifierIndex < identifiers.length; identifierIndex += 1) {
-    var identifier = subcreator_trim_string(String(identifiers[identifierIndex] || "")).toLowerCase();
-    if (
-      identifier.indexOf("time remap") !== -1 ||
-      identifier.indexOf("time-remap") !== -1 ||
-      identifier.indexOf("remappage temporel") !== -1
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function subcreator_disable_exposed_mogrt_time_remapping(trackItem) {
-  // // Disable exposed time-remapping streams after removing their generated speed keys.
-  if (!trackItem || !trackItem.components || typeof trackItem.components.numItems !== "number") {
-    return false;
-  }
-
-  var foundTimeRemapping = false;
-  var disabledTimeVaryingProperty = false;
-
-  for (var componentIndex = 0; componentIndex < trackItem.components.numItems; componentIndex += 1) {
-    var component = trackItem.components[componentIndex];
-    if (!subcreator_is_time_remapping_component(component) || !component.properties) {
+  for (var clipIndex = 0; clipIndex < clips.length; clipIndex += 1) {
+    var candidate = clips[clipIndex];
+    if (!candidate) {
       continue;
     }
-
-    foundTimeRemapping = true;
-    for (var propertyIndex = 0; propertyIndex < component.properties.numItems; propertyIndex += 1) {
-      var property = component.properties[propertyIndex];
-      if (!property || typeof property.setTimeVarying !== "function") {
+    if (projectItem && candidate.projectItem && candidate.projectItem !== projectItem) {
+      var sourceNodeId = subcreator_trim_string(String(projectItem.nodeId || ""));
+      var candidateNodeId = subcreator_trim_string(String(candidate.projectItem.nodeId || ""));
+      if (!sourceNodeId || !candidateNodeId || sourceNodeId !== candidateNodeId) {
         continue;
       }
+    }
 
-      try {
-        if (typeof property.areKeyframesSupported === "function" && !property.areKeyframesSupported()) {
-          continue;
-        }
-      } catch (keyframeSupportError) {}
-
-      try {
-        if (typeof property.getKeys === "function" && typeof property.removeKey === "function") {
-          var keys = property.getKeys();
-          if (keys && typeof keys.length === "number") {
-            for (var keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) {
-              try {
-                property.removeKey(keys[keyIndex]);
-              } catch (removeTimeRemappingKeyError) {}
-            }
-          }
-        }
-        property.setTimeVarying(false);
-        if (typeof property.isTimeVarying !== "function" || !property.isTimeVarying()) {
-          disabledTimeVaryingProperty = true;
-        }
-      } catch (disableTimeRemappingError) {}
+    var candidateStart = subcreator_to_seconds(candidate.start || candidate.inPoint || candidate.startTime);
+    var distance = Math.abs(candidateStart - safeStart);
+    if (!isNaN(candidateStart) && distance <= 0.2 && distance < bestDistance) {
+      bestItem = candidate;
+      bestDistance = distance;
     }
   }
 
-  return foundTimeRemapping && disabledTimeVaryingProperty;
+  return bestItem;
 }
 
-function subcreator_find_qe_video_clip(sequence, trackItem, videoTrackIndex) {
-  // // Resolve the QE clip by track and exact start ticks because QE includes transition items in its indices.
-  if (!sequence || !trackItem || isNaN(Number(videoTrackIndex))) {
-    return null;
+function subcreator_format_qe_razor_time(sequence, seconds) {
+  // // Convert sequence seconds to the timecode string expected by QETrack.razor().
+  try {
+    var settings = sequence.getSettings();
+    var razorTime = new Time();
+    razorTime.seconds = Number(seconds);
+    if (settings && settings.videoFrameRate && typeof razorTime.getFormatted === "function") {
+      return razorTime.getFormatted(settings.videoFrameRate, settings.videoDisplayFormat);
+    }
+  } catch (formatRazorTimeError) {}
+
+  return "";
+}
+
+function subcreator_try_razor_mogrt_duration(sequence, trackItem, videoTrackIndex, startSeconds, endSeconds, debugLines, debugPrefix) {
+  // // Cut the imported MOGRT like a manual razor edit so its source duration stays available for later extension.
+  var result = {
+    applied: false,
+    trackItem: trackItem,
+    removedRightFragment: false,
+    razorTimecode: ""
+  };
+  var safeStart = Number(startSeconds);
+  var safeEnd = Number(endSeconds);
+  var targetTrack = sequence && sequence.videoTracks ? sequence.videoTracks[videoTrackIndex] : null;
+  var currentEnd = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.endTime));
+
+  if (!trackItem || !targetTrack || isNaN(safeStart) || isNaN(safeEnd) || safeEnd <= safeStart) {
+    return result;
+  }
+  if (!isNaN(currentEnd) && Math.abs(currentEnd - safeEnd) <= 0.025) {
+    result.applied = true;
+    return result;
+  }
+  if (!isNaN(currentEnd) && currentEnd < safeEnd) {
+    return result;
   }
 
   try {
     if (typeof app.enableQE === "function") {
       app.enableQE();
     }
-    if (typeof qe === "undefined" || !qe.project || typeof qe.project.getActiveSequence !== "function") {
-      return null;
+    var razorTimecode = subcreator_format_qe_razor_time(sequence, safeEnd);
+    result.razorTimecode = razorTimecode;
+    if (
+      !razorTimecode ||
+      typeof qe === "undefined" ||
+      !qe.project ||
+      typeof qe.project.getActiveSequence !== "function"
+    ) {
+      return result;
     }
 
     var qeSequence = qe.project.getActiveSequence();
     var qeTrack = qeSequence && typeof qeSequence.getVideoTrackAt === "function"
       ? qeSequence.getVideoTrackAt(Number(videoTrackIndex))
       : null;
-    if (!qeTrack || typeof qeTrack.getItemAt !== "function") {
-      return null;
+    if (!qeTrack || typeof qeTrack.razor !== "function") {
+      return result;
     }
 
-    var targetStartTicks = String(trackItem.start && trackItem.start.ticks ? trackItem.start.ticks : "");
-    var targetStartSeconds = subcreator_to_seconds(trackItem.start || trackItem.startTime);
-    for (var itemIndex = 0; itemIndex < Number(qeTrack.numItems || 0); itemIndex += 1) {
-      var qeItem = qeTrack.getItemAt(itemIndex);
-      if (!qeItem || (qeItem.type && String(qeItem.type) !== "Clip")) {
-        continue;
-      }
+    var sourceProjectItem = trackItem.projectItem || null;
+    qeTrack.razor(razorTimecode);
 
-      var qeStartTicks = "";
-      try {
-        qeStartTicks = String(qeItem.start && qeItem.start.ticks ? qeItem.start.ticks : "");
-      } catch (qeTicksError) {}
-      if (targetStartTicks && qeStartTicks === targetStartTicks) {
-        return qeItem;
-      }
-
-      var qeStartSeconds = NaN;
-      try {
-        qeStartSeconds = Number(qeItem.start && typeof qeItem.start.secs !== "undefined" ? qeItem.start.secs : NaN);
-      } catch (qeSecondsError) {}
-      if (!isNaN(targetStartSeconds) && !isNaN(qeStartSeconds) && Math.abs(qeStartSeconds - targetStartSeconds) <= 0.01) {
-        return qeItem;
-      }
+    var leftFragment = subcreator_find_track_clip_near_start(targetTrack, safeStart, sourceProjectItem);
+    var rightFragment = subcreator_find_track_clip_near_start(targetTrack, safeEnd, sourceProjectItem);
+    if (rightFragment && rightFragment !== leftFragment) {
+      result.removedRightFragment = subcreator_remove_track_item_without_ripple(rightFragment);
     }
-  } catch (findQeClipError) {}
-
-  return null;
-}
-
-function subcreator_disable_mogrt_time_remapping(sequence, trackItem, videoTrackIndex, expectedEndSeconds, debugLines, debugPrefix) {
-  // // Reset QE clip speed after MOGRT initialization because the public DOM can hide the Time Remapping component.
-  var exposedDisabled = subcreator_disable_exposed_mogrt_time_remapping(trackItem);
-  var qeReset = false;
-  var qeClip = subcreator_find_qe_video_clip(sequence, trackItem, videoTrackIndex);
-
-  if (qeClip && typeof qeClip.setSpeed === "function") {
-    try {
-      qeClip.setSpeed(1, "", false, false, false);
-      qeReset = true;
-    } catch (qeSetSpeedFullError) {
-      try {
-        qeClip.setSpeed(1, "", false);
-        qeReset = true;
-      } catch (qeSetSpeedShortError) {}
+    var refreshedLeftFragment = subcreator_find_track_clip_near_start(targetTrack, safeStart, sourceProjectItem);
+    if (refreshedLeftFragment) {
+      leftFragment = refreshedLeftFragment;
+      result.trackItem = refreshedLeftFragment;
     }
-  }
 
-  var endPreserved = subcreator_track_item_ends_near_seconds(trackItem, expectedEndSeconds, 0.2);
+    result.applied =
+      Boolean(leftFragment) &&
+      result.removedRightFragment &&
+      subcreator_track_item_ends_near_seconds(leftFragment, safeEnd, 0.2);
+  } catch (razorDurationError) {}
+
   subcreator_debug_push_limited(
     debugLines,
     String(debugPrefix || "") +
-      " time_remapping exposed=" +
-      (exposedDisabled ? "disabled" : "unavailable") +
-      " qe=" +
-      (qeReset ? "reset" : "unavailable") +
-      " end_preserved=" +
-      (endPreserved ? "true" : "false"),
+      " duration_razor timecode=" +
+      String(result.razorTimecode || "<unavailable>") +
+      " right_removed=" +
+      (result.removedRightFragment ? "true" : "false") +
+      " applied=" +
+      (result.applied ? "true" : "false"),
     120
   );
-  return (exposedDisabled || qeReset) && endPreserved;
+  return result;
 }
 
 function subcreator_push_unique_path(list, value) {
@@ -8900,48 +8864,6 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
   }
 
   return importResult;
-}
-
-function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) {
-  // // Trim only the timeline end so the MOGRT keeps its full source duration and remains manually extendable.
-  if (!trackItem) {
-    return false;
-  }
-
-  var safeStart = Number(startSeconds);
-  var safeEnd = Number(endSeconds);
-  if (isNaN(safeStart) || isNaN(safeEnd) || safeEnd <= safeStart) {
-    return false;
-  }
-
-  var applied = false;
-  var endTime = null;
-  try {
-    endTime = new Time();
-    endTime.seconds = safeEnd;
-  } catch (createTimeError) {
-    endTime = null;
-  }
-
-  if (endTime) {
-    try {
-      trackItem.end = endTime;
-      applied = true;
-    } catch (endAssignError) {}
-
-    try {
-      if (trackItem.end && typeof trackItem.end.seconds !== "undefined") {
-        trackItem.end.seconds = safeEnd;
-        applied = true;
-      }
-    } catch (endSecondsError) {}
-  }
-
-  if (applied && subcreator_track_item_ends_near_seconds(trackItem, safeEnd, 0.2)) {
-    return true;
-  }
-
-  return false;
 }
 
 function subcreator_try_set_mogrt_start(trackItem, startSeconds) {
@@ -9945,7 +9867,7 @@ function subcreator_apply_captions(payloadEncoded) {
         );
         mogrtAttempted += importAttempt.attempted;
         if (importAttempt.trackItem) {
-          var durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
+          var durationApplied = false;
           if (Boolean(cue.skipTextApply)) {
             var bakedValidationDebug = cueDebugEnabled ? debugLines : debugLines.length < 120 ? debugLines : null;
             var bakedValidationPrefix = cueDebugPrefix || "cue=" + String(i);
@@ -9974,7 +9896,6 @@ function subcreator_apply_captions(payloadEncoded) {
               if (!importAttempt.trackItem) {
                 break;
               }
-              durationApplied = subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds);
               bakedTextValid = subcreator_mogrt_has_nonempty_text_property(
                 importAttempt.trackItem,
                 bakedValidationDebug,
@@ -10023,17 +9944,20 @@ function subcreator_apply_captions(payloadEncoded) {
           if (controlStats.layoutUpdates > 0) {
             updatedLayout += controlStats.layoutUpdates;
           }
-          if (!durationApplied && subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
-            durationAdjusted += 1;
-          }
-          subcreator_disable_mogrt_time_remapping(
+          var durationResult = subcreator_try_razor_mogrt_duration(
             sequence,
             importAttempt.trackItem,
             videoTrackIndex,
+            startSeconds,
             endSeconds,
             cueDebugEnabled ? debugLines : null,
             cueDebugPrefix
           );
+          if (durationResult.applied) {
+            importAttempt.trackItem = durationResult.trackItem;
+            durationApplied = true;
+            durationAdjusted += 1;
+          }
           subcreator_debug_push_limited(
             cueDebugEnabled ? debugLines : null,
             cueDebugPrefix +

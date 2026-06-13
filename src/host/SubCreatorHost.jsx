@@ -8739,7 +8739,7 @@ function subcreator_try_import_mogrt(sequence, pathCandidates, startSeconds, vid
 }
 
 function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) {
-  // // Apply cue-specific end time to imported MOGRT clip when API allows it.
+  // // Trim only the timeline end so the MOGRT keeps its full source duration and remains manually extendable.
   if (!trackItem) {
     return false;
   }
@@ -8777,16 +8777,7 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
     return true;
   }
 
-  try {
-    if (typeof trackItem.outPoint !== "undefined") {
-      var outPointTime = new Time();
-      outPointTime.seconds = Math.max(safeEnd - safeStart, 0.01);
-      trackItem.outPoint = outPointTime;
-      applied = true;
-    }
-  } catch (outPointError) {}
-
-  return applied;
+  return false;
 }
 
 function subcreator_try_set_mogrt_start(trackItem, startSeconds) {

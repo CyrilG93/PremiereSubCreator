@@ -8629,6 +8629,68 @@ function subcreator_track_item_ends_near_seconds(trackItem, endSeconds, toleranc
   return Math.abs(candidateEnd - requestedEnd) <= tolerance;
 }
 
+function subcreator_is_time_remapping_component(component) {
+  // // Match only Premiere's intrinsic time-remapping component without touching MOGRT animation controls.
+  var identifiers = [
+    component && component.matchName,
+    component && component.displayName,
+    component && component.name
+  ];
+
+  for (var identifierIndex = 0; identifierIndex < identifiers.length; identifierIndex += 1) {
+    var identifier = subcreator_trim_string(String(identifiers[identifierIndex] || "")).toLowerCase();
+    if (
+      identifier.indexOf("time remap") !== -1 ||
+      identifier.indexOf("time-remap") !== -1 ||
+      identifier.indexOf("remappage temporel") !== -1
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function subcreator_disable_mogrt_time_remapping(trackItem) {
+  // // Keep generated AE MOGRT clips trim-only so Premiere lets users extend their timeline edge manually.
+  if (!trackItem || !trackItem.components || typeof trackItem.components.numItems !== "number") {
+    return false;
+  }
+
+  var foundTimeRemapping = false;
+  var disabledTimeVaryingProperty = false;
+
+  for (var componentIndex = 0; componentIndex < trackItem.components.numItems; componentIndex += 1) {
+    var component = trackItem.components[componentIndex];
+    if (!subcreator_is_time_remapping_component(component) || !component.properties) {
+      continue;
+    }
+
+    foundTimeRemapping = true;
+    for (var propertyIndex = 0; propertyIndex < component.properties.numItems; propertyIndex += 1) {
+      var property = component.properties[propertyIndex];
+      if (!property || typeof property.setTimeVarying !== "function") {
+        continue;
+      }
+
+      try {
+        if (typeof property.areKeyframesSupported === "function" && !property.areKeyframesSupported()) {
+          continue;
+        }
+      } catch (keyframeSupportError) {}
+
+      try {
+        property.setTimeVarying(false);
+        if (typeof property.isTimeVarying !== "function" || !property.isTimeVarying()) {
+          disabledTimeVaryingProperty = true;
+        }
+      } catch (disableTimeRemappingError) {}
+    }
+  }
+
+  return foundTimeRemapping && disabledTimeVaryingProperty;
+}
+
 function subcreator_push_unique_path(list, value) {
   // // Keep only distinct non-empty candidate paths for import attempts.
   if (!value) {
@@ -8772,6 +8834,8 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
       }
     } catch (endSecondsError) {}
   }
+
+  subcreator_disable_mogrt_time_remapping(trackItem);
 
   if (applied && subcreator_track_item_ends_near_seconds(trackItem, safeEnd, 0.2)) {
     return true;

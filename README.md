@@ -156,7 +156,7 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 - Use `Visual editor` to copy visual settings between MOGRT clips.
 - `Live update` is enabled by default on new installations and can be turned off in `Visual editor`.
 - Use `Text editor` to correct, move, split, or merge generated subtitles.
-- After Effects MOGRT clips keep the template's available source duration, so their right edge can be extended manually when subtitle timing needs correction.
+- After Effects MOGRT clips keep the template's available source duration and leave Time Remapping disabled, so their right edge can be extended manually when subtitle timing needs correction.
 - Add your own `.mogrt` files from `Open MOGRT folder`, then click `Refresh gallery`.
 
 ## Limitations

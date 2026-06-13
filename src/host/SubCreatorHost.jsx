@@ -6062,6 +6062,14 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
         }
       }
 
+      subcreator_disable_mogrt_time_remapping(
+        sequence,
+        insertedTrackItem,
+        targetTrackIndex,
+        endSeconds,
+        debugLines,
+        "text_apply index=" + String(editedIndex)
+      );
       selectedTrackItems.push(insertedTrackItem);
       rebuiltCount += 1;
     }
@@ -8651,8 +8659,8 @@ function subcreator_is_time_remapping_component(component) {
   return false;
 }
 
-function subcreator_disable_mogrt_time_remapping(trackItem) {
-  // // Keep generated AE MOGRT clips trim-only so Premiere lets users extend their timeline edge manually.
+function subcreator_disable_exposed_mogrt_time_remapping(trackItem) {
+  // // Disable exposed time-remapping streams after removing their generated speed keys.
   if (!trackItem || !trackItem.components || typeof trackItem.components.numItems !== "number") {
     return false;
   }
@@ -8680,6 +8688,16 @@ function subcreator_disable_mogrt_time_remapping(trackItem) {
       } catch (keyframeSupportError) {}
 
       try {
+        if (typeof property.getKeys === "function" && typeof property.removeKey === "function") {
+          var keys = property.getKeys();
+          if (keys && typeof keys.length === "number") {
+            for (var keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) {
+              try {
+                property.removeKey(keys[keyIndex]);
+              } catch (removeTimeRemappingKeyError) {}
+            }
+          }
+        }
         property.setTimeVarying(false);
         if (typeof property.isTimeVarying !== "function" || !property.isTimeVarying()) {
           disabledTimeVaryingProperty = true;
@@ -8689,6 +8707,90 @@ function subcreator_disable_mogrt_time_remapping(trackItem) {
   }
 
   return foundTimeRemapping && disabledTimeVaryingProperty;
+}
+
+function subcreator_find_qe_video_clip(sequence, trackItem, videoTrackIndex) {
+  // // Resolve the QE clip by track and exact start ticks because QE includes transition items in its indices.
+  if (!sequence || !trackItem || isNaN(Number(videoTrackIndex))) {
+    return null;
+  }
+
+  try {
+    if (typeof app.enableQE === "function") {
+      app.enableQE();
+    }
+    if (typeof qe === "undefined" || !qe.project || typeof qe.project.getActiveSequence !== "function") {
+      return null;
+    }
+
+    var qeSequence = qe.project.getActiveSequence();
+    var qeTrack = qeSequence && typeof qeSequence.getVideoTrackAt === "function"
+      ? qeSequence.getVideoTrackAt(Number(videoTrackIndex))
+      : null;
+    if (!qeTrack || typeof qeTrack.getItemAt !== "function") {
+      return null;
+    }
+
+    var targetStartTicks = String(trackItem.start && trackItem.start.ticks ? trackItem.start.ticks : "");
+    var targetStartSeconds = subcreator_to_seconds(trackItem.start || trackItem.startTime);
+    for (var itemIndex = 0; itemIndex < Number(qeTrack.numItems || 0); itemIndex += 1) {
+      var qeItem = qeTrack.getItemAt(itemIndex);
+      if (!qeItem || (qeItem.type && String(qeItem.type) !== "Clip")) {
+        continue;
+      }
+
+      var qeStartTicks = "";
+      try {
+        qeStartTicks = String(qeItem.start && qeItem.start.ticks ? qeItem.start.ticks : "");
+      } catch (qeTicksError) {}
+      if (targetStartTicks && qeStartTicks === targetStartTicks) {
+        return qeItem;
+      }
+
+      var qeStartSeconds = NaN;
+      try {
+        qeStartSeconds = Number(qeItem.start && typeof qeItem.start.secs !== "undefined" ? qeItem.start.secs : NaN);
+      } catch (qeSecondsError) {}
+      if (!isNaN(targetStartSeconds) && !isNaN(qeStartSeconds) && Math.abs(qeStartSeconds - targetStartSeconds) <= 0.01) {
+        return qeItem;
+      }
+    }
+  } catch (findQeClipError) {}
+
+  return null;
+}
+
+function subcreator_disable_mogrt_time_remapping(sequence, trackItem, videoTrackIndex, expectedEndSeconds, debugLines, debugPrefix) {
+  // // Reset QE clip speed after MOGRT initialization because the public DOM can hide the Time Remapping component.
+  var exposedDisabled = subcreator_disable_exposed_mogrt_time_remapping(trackItem);
+  var qeReset = false;
+  var qeClip = subcreator_find_qe_video_clip(sequence, trackItem, videoTrackIndex);
+
+  if (qeClip && typeof qeClip.setSpeed === "function") {
+    try {
+      qeClip.setSpeed(1, "", false, false, false);
+      qeReset = true;
+    } catch (qeSetSpeedFullError) {
+      try {
+        qeClip.setSpeed(1, "", false);
+        qeReset = true;
+      } catch (qeSetSpeedShortError) {}
+    }
+  }
+
+  var endPreserved = subcreator_track_item_ends_near_seconds(trackItem, expectedEndSeconds, 0.2);
+  subcreator_debug_push_limited(
+    debugLines,
+    String(debugPrefix || "") +
+      " time_remapping exposed=" +
+      (exposedDisabled ? "disabled" : "unavailable") +
+      " qe=" +
+      (qeReset ? "reset" : "unavailable") +
+      " end_preserved=" +
+      (endPreserved ? "true" : "false"),
+    120
+  );
+  return (exposedDisabled || qeReset) && endPreserved;
 }
 
 function subcreator_push_unique_path(list, value) {
@@ -8834,8 +8936,6 @@ function subcreator_try_set_mogrt_duration(trackItem, startSeconds, endSeconds) 
       }
     } catch (endSecondsError) {}
   }
-
-  subcreator_disable_mogrt_time_remapping(trackItem);
 
   if (applied && subcreator_track_item_ends_near_seconds(trackItem, safeEnd, 0.2)) {
     return true;
@@ -9926,6 +10026,14 @@ function subcreator_apply_captions(payloadEncoded) {
           if (!durationApplied && subcreator_try_set_mogrt_duration(importAttempt.trackItem, startSeconds, endSeconds)) {
             durationAdjusted += 1;
           }
+          subcreator_disable_mogrt_time_remapping(
+            sequence,
+            importAttempt.trackItem,
+            videoTrackIndex,
+            endSeconds,
+            cueDebugEnabled ? debugLines : null,
+            cueDebugPrefix
+          );
           subcreator_debug_push_limited(
             cueDebugEnabled ? debugLines : null,
             cueDebugPrefix +

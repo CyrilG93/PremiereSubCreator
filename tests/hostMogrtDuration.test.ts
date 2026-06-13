@@ -22,8 +22,8 @@ describe("MOGRT duration trimming", () => {
     expect(helperSource).not.toMatch(/trackItem\.outPoint\s*=/);
   });
 
-  it("disables only the intrinsic time-remapping keyframes after trimming", () => {
-    // // Generated clips should remain extendable without disabling animation controls exposed by the MOGRT itself.
+  it("resets hidden QE time remapping after MOGRT controls are initialized", () => {
+    // // Premiere can hide Time Remapping from the public DOM, so the exact QE clip must be reset after all control writes.
     const helperMatch = hostSource.match(
       /function subcreator_disable_mogrt_time_remapping[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_push_unique_path/
     );
@@ -31,8 +31,10 @@ describe("MOGRT duration trimming", () => {
     const durationSource = readDurationHelperSource();
 
     expect(helperMatch).not.toBeNull();
-    expect(helperSource).toContain("subcreator_is_time_remapping_component(component)");
-    expect(helperSource).toContain("property.setTimeVarying(false)");
-    expect(durationSource).toContain("subcreator_disable_mogrt_time_remapping(trackItem)");
+    expect(helperSource).toContain("subcreator_find_qe_video_clip(sequence, trackItem, videoTrackIndex)");
+    expect(helperSource).toContain('qeClip.setSpeed(1, "", false, false, false)');
+    expect(helperSource).toContain("subcreator_disable_exposed_mogrt_time_remapping(trackItem)");
+    expect(durationSource).not.toContain("subcreator_disable_mogrt_time_remapping");
+    expect(hostSource).toMatch(/subcreator_try_set_mogrt_controls[\s\S]*?subcreator_disable_mogrt_time_remapping\(/);
   });
 });

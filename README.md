@@ -17,7 +17,7 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 
 Sub Creator works without extra dependencies if you only use `SRT` mode.
 
-On Windows, use the full `.exe` for a first installation or the light `.exe` for a smaller connected installation. On macOS, use the unified `.pkg` installer. These installers configure the private Python, FFmpeg, and Whisper tools automatically.
+On Windows, use the full `.exe` for a first installation or the light `.exe` for a smaller connected installation. On macOS, use the unified `.pkg` installer. These installers configure the private Python, FFmpeg, Whisper tools and all dependencies automatically.
 
 If you use the manual `.zip` installer, `Whisper`, `WhisperX`, and `Whisper + SRT` also need:
 

@@ -140,34 +140,58 @@ subcreator_enable_cep_debug_mode() {
 }
 
 subcreator_install_fonts() {
-  # // Install bundled fonts in the user's Library without modifying system font directories.
+  # // Install changed bundled fonts while leaving identical user font files untouched.
   fonts_dir="${SUBCREATOR_PAYLOAD_ROOT}/Fonts"
   target_dir="${SUBCREATOR_HOME}/Library/Fonts"
   installed=0
+  skipped=0
+  failed=0
   if [ ! -d "${fonts_dir}" ]; then
     return 0
   fi
 
   mkdir -p "${target_dir}"
-  find "${fonts_dir}" -type f \( -iname "*.ttf" -o -iname "*.otf" -o -iname "*.ttc" -o -iname "*.dfont" \) -print0 |
-    while IFS= read -r -d '' font_path; do
-      cp -f "${font_path}" "${target_dir}/$(basename "${font_path}")"
-    done
-  installed="$(find "${fonts_dir}" -type f \( -iname "*.ttf" -o -iname "*.otf" -o -iname "*.ttc" -o -iname "*.dfont" \) | wc -l | tr -d ' ')"
-  chown -R "${SUBCREATOR_UID}:${SUBCREATOR_GID}" "${target_dir}"
+  while IFS= read -r -d '' font_path; do
+    target_path="${target_dir}/$(basename "${font_path}")"
+    if [ -f "${target_path}" ]; then
+      source_hash="$(shasum -a 256 "${font_path}" | awk '{print tolower($1)}')"
+      target_hash="$(shasum -a 256 "${target_path}" | awk '{print tolower($1)}')"
+      if [ "${source_hash}" = "${target_hash}" ]; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+    fi
+
+    if cp -f "${font_path}" "${target_path}"; then
+      chown "${SUBCREATOR_UID}:${SUBCREATOR_GID}" "${target_path}"
+      installed=$((installed + 1))
+    else
+      # // Keep the extension and runtime installation usable if one existing font cannot be replaced.
+      failed=$((failed + 1))
+      echo "WARNING: unable to update bundled font ${target_path}." >&2
+    fi
+  done < <(find "${fonts_dir}" -type f \( -iname "*.ttf" -o -iname "*.otf" -o -iname "*.ttc" -o -iname "*.dfont" \) -print0)
   if [ "${installed}" -gt 0 ]; then
     echo "Installed ${installed} bundled font(s) for ${SUBCREATOR_USER}."
+  fi
+  if [ "${skipped}" -gt 0 ]; then
+    echo "Kept ${skipped} identical bundled font(s) already installed."
+  fi
+  if [ "${failed}" -gt 0 ]; then
+    echo "WARNING: kept ${failed} existing font file(s) that could not be updated." >&2
   fi
 }
 
 subcreator_runtime_is_current() {
-  # // Reuse an already validated runtime when its version and required executables match this installer.
+  # // Reuse the installed runtime only after its version, imports, and FFmpeg executable all validate.
   runtime_dir="$1"
   version_file="${runtime_dir}/.subcreator-runtime-version"
   [ -f "${version_file}" ] || return 1
   [ "$(tr -d '\r\n' <"${version_file}")" = "${SUBCREATOR_RUNTIME_VERSION}" ] || return 1
   [ -x "${runtime_dir}/python/bin/python3" ] || return 1
   [ -x "${runtime_dir}/ffmpeg/bin/ffmpeg" ] || return 1
+  subcreator_run_as_user "${runtime_dir}/python/bin/python3" -c "import whisper; import whisperx" >/dev/null 2>&1 || return 1
+  subcreator_run_as_user "${runtime_dir}/ffmpeg/bin/ffmpeg" -version >/dev/null 2>&1 || return 1
   return 0
 }
 

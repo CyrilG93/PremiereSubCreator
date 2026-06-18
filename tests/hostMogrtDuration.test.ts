@@ -33,3 +33,23 @@ describe("MOGRT duration trimming", () => {
     expect(hostSource).not.toContain("qeClip.setSpeed");
   });
 });
+
+describe("Whisper sequence audio export", () => {
+  it("uses Adobe Media Encoder before the legacy direct export path", () => {
+    // // AME avoids Premiere 26.x direct-export failures that can abort CEP evalScript before JSON is returned.
+    const exportSource = hostSource.match(
+      /function subcreator_export_active_sequence_audio[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_runtime_push_unique/
+    );
+
+    expect(exportSource).not.toBeNull();
+    expect(exportSource?.[0]).toMatch(
+      /subcreator_try_encoder_sequence_export\(sequence,[\s\S]*?subcreator_try_direct_sequence_export\(sequence,/
+    );
+  });
+
+  it("skips exportAsMediaDirect on Premiere 26 and newer", () => {
+    // // The direct exporter remains available only for older hosts where it is less likely to break evalScript.
+    expect(hostSource).toMatch(/premiereMajorVersion >= 26/);
+    expect(hostSource).toContain("exportAsMediaDirect skipped on Premiere");
+  });
+});

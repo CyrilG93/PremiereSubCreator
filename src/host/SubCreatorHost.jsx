@@ -429,6 +429,78 @@ function subcreator_wait_for_file_stable(filePath, timeoutMs, stablePasses) {
   return finalFile.exists && Number(finalFile.length) > 0;
 }
 
+function subcreator_get_premiere_major_version() {
+  // // Read Premiere's major version so fragile host APIs can be gated by tested host families.
+  var versionText = "";
+  try {
+    versionText = String(app && app.version ? app.version : "");
+  } catch (error) {
+    versionText = "";
+  }
+
+  var match = versionText.match(/^(\d+)/);
+  return match ? Number(match[1]) : NaN;
+}
+
+function subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors) {
+  // // Queue the sequence through Adobe Media Encoder, which avoids direct-export EvalScript failures seen in Premiere 26.x.
+  if (!app.encoder || typeof app.encoder.encodeSequence !== "function") {
+    exportErrors.push("encodeSequence unavailable");
+    return false;
+  }
+
+  try {
+    if (typeof app.encoder.launchEncoder === "function") {
+      app.encoder.launchEncoder();
+    }
+  } catch (launchError) {
+    exportErrors.push("launchEncoder: " + launchError);
+  }
+
+  try {
+    var jobId = app.encoder.encodeSequence(sequence, outputPath, presetPath, workAreaType, 0);
+    if (jobId && String(jobId) !== "0") {
+      if (typeof app.encoder.startBatch === "function") {
+        app.encoder.startBatch();
+      }
+      return true;
+    }
+
+    exportErrors.push("encodeSequence returned no job id");
+  } catch (encoderError) {
+    exportErrors.push("encodeSequence: " + encoderError);
+  }
+
+  return false;
+}
+
+function subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors) {
+  // // Keep direct export only as a legacy fallback because Premiere 26.x can abort evalScript before catch handlers run.
+  var premiereMajorVersion = subcreator_get_premiere_major_version();
+  if (isFinite(premiereMajorVersion) && premiereMajorVersion >= 26) {
+    exportErrors.push("exportAsMediaDirect skipped on Premiere " + premiereMajorVersion + ".x");
+    return false;
+  }
+
+  if (typeof sequence.exportAsMediaDirect !== "function") {
+    exportErrors.push("exportAsMediaDirect unavailable");
+    return false;
+  }
+
+  try {
+    var directResult = sequence.exportAsMediaDirect(outputPath, presetPath, workAreaType);
+    if (directResult) {
+      return true;
+    }
+
+    exportErrors.push("exportAsMediaDirect returned false");
+  } catch (directExportError) {
+    exportErrors.push("exportAsMediaDirect: " + directExportError);
+  }
+
+  return false;
+}
+
 function subcreator_export_active_sequence_audio(payloadEncoded) {
   // // Render the active-sequence audible mix to a temporary WAV file for Whisper transcription.
   try {
@@ -473,29 +545,9 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
     }
 
     var exportErrors = [];
-    var exportTriggered = false;
-
-    if (typeof sequence.exportAsMediaDirect === "function") {
-      try {
-        sequence.exportAsMediaDirect(outputPath, presetPath, workAreaType);
-        exportTriggered = true;
-      } catch (directExportError) {
-        exportErrors.push("exportAsMediaDirect: " + directExportError);
-      }
-    }
-
-    if (!exportTriggered && app.encoder && typeof app.encoder.encodeSequence === "function") {
-      try {
-        var jobId = app.encoder.encodeSequence(sequence, outputPath, presetPath, workAreaType, 0);
-        if (jobId) {
-          app.encoder.startBatch();
-          exportTriggered = true;
-        } else {
-          exportErrors.push("encodeSequence returned no job id");
-        }
-      } catch (encoderError) {
-        exportErrors.push("encodeSequence: " + encoderError);
-      }
+    var exportTriggered = subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
+    if (!exportTriggered) {
+      exportTriggered = subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
     }
 
     if (!exportTriggered) {

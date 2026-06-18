@@ -178,6 +178,10 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.25 - 2026-06-18
+
+- Fixed Whisper generation from the active sequence on Premiere Pro 26.x.
+
 ### 1.1.19 - 2026-06-12
 
 - Whisper sequence export now includes its own WAV preset and no longer depends on localized Adobe preset names.

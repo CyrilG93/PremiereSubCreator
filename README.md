@@ -58,7 +58,7 @@ After clicking `Install`, Setup can appear frozen for a few seconds while Window
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user.
+The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user. Close Adobe applications before installation, then restart Premiere Pro so its font list is rebuilt from the updated Windows font session.
 
 ### Repair or update Windows dependencies
 

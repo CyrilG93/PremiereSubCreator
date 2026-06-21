@@ -218,22 +218,11 @@ goto :eof
 :subcreator_install_bundled_fonts
 REM // Install bundled fonts for the current Windows user so the included MOGRT templates can resolve their typography without admin rights.
 if not exist "%SUBCREATOR_BUNDLED_FONTS_DIR%" goto :eof
-set "SUBCREATOR_FONTS_INSTALLED=0"
-set "SUBCREATOR_FONTS_SKIPPED=0"
-set "SUBCREATOR_FONTS_FAILED=0"
-for /f "tokens=1,2 delims==" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $source = [IO.Path]::GetFullPath($env:SUBCREATOR_BUNDLED_FONTS_DIR); $target = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'; $registryPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'; $installed = 0; $skipped = 0; $failed = 0; if (Test-Path -LiteralPath $source) { New-Item -ItemType Directory -Path $target -Force | Out-Null; New-Item -Path $registryPath -Force | Out-Null; Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object { $_.Extension -match '^\.(ttf|otf|ttc)$' } | ForEach-Object { $destination = Join-Path $target $_.Name; $copyNeeded = $true; if (Test-Path -LiteralPath $destination) { try { if ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) { $copyNeeded = $false; $skipped++ } } catch {} }; try { if ($copyNeeded) { Copy-Item -LiteralPath $_.FullName -Destination $destination -Force -ErrorAction Stop; $installed++ }; $fontKind = if ($_.Extension -ieq '.otf') { 'OpenType' } else { 'TrueType' }; $displayName = [IO.Path]::GetFileNameWithoutExtension($_.Name) -replace '[-_]+',' '; New-ItemProperty -Path $registryPath -Name ($displayName + ' (' + $fontKind + ')') -Value $destination -PropertyType String -Force -ErrorAction Stop | Out-Null } catch { $failed++ } } }; Write-Output ('SUBCREATOR_FONTS_INSTALLED=' + $installed); Write-Output ('SUBCREATOR_FONTS_SKIPPED=' + $skipped); Write-Output ('SUBCREATOR_FONTS_FAILED=' + $failed)"') do (
-  if /I "%%A"=="SUBCREATOR_FONTS_INSTALLED" set "SUBCREATOR_FONTS_INSTALLED=%%B"
-  if /I "%%A"=="SUBCREATOR_FONTS_SKIPPED" set "SUBCREATOR_FONTS_SKIPPED=%%B"
-  if /I "%%A"=="SUBCREATOR_FONTS_FAILED" set "SUBCREATOR_FONTS_FAILED=%%B"
-)
-if !SUBCREATOR_FONTS_INSTALLED! GTR 0 (
-  echo Installed !SUBCREATOR_FONTS_INSTALLED! bundled font^(s^) for the current Windows user.
-)
-if !SUBCREATOR_FONTS_SKIPPED! GTR 0 (
-  echo !SUBCREATOR_FONTS_SKIPPED! bundled font^(s^) already available for the current Windows user.
-)
-if !SUBCREATOR_FONTS_FAILED! GTR 0 (
-  echo WARNING: !SUBCREATOR_FONTS_FAILED! bundled font^(s^) could not be updated because Windows is using the file. Close Adobe apps and run the installer again if a template font is missing.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0subcreator_install_windows_fonts.ps1" -FontsDir "%SUBCREATOR_BUNDLED_FONTS_DIR%"
+if errorlevel 1 (
+  echo ERROR: bundled fonts could not be registered correctly. Close Adobe apps and run the installer again.
+) else (
+  echo Bundled fonts are registered for the current Windows user.
 )
 goto :eof
 

@@ -107,6 +107,8 @@ The Windows `.exe` and macOS `.pkg` offer `tiny`, `base`, `small`, `medium`, and
 
 The `.zip` installers include the `base` model. It is enough for testing and many simple projects.
 
+Sub Creator renders the temporary transcription audio directly in Premiere Pro for faster generation. Adobe Media Encoder is used automatically only if Premiere cannot complete the direct export.
+
 To add other models, download a `.pt` file and place it in the Whisper cache folder:
 
 - macOS: `~/.cache/whisper/`

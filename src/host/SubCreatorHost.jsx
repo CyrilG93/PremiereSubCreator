@@ -429,21 +429,8 @@ function subcreator_wait_for_file_stable(filePath, timeoutMs, stablePasses) {
   return finalFile.exists && Number(finalFile.length) > 0;
 }
 
-function subcreator_get_premiere_major_version() {
-  // // Read Premiere's major version so fragile host APIs can be gated by tested host families.
-  var versionText = "";
-  try {
-    versionText = String(app && app.version ? app.version : "");
-  } catch (error) {
-    versionText = "";
-  }
-
-  var match = versionText.match(/^(\d+)/);
-  return match ? Number(match[1]) : NaN;
-}
-
 function subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors) {
-  // // Queue the sequence through Adobe Media Encoder, which avoids direct-export EvalScript failures seen in Premiere 26.x.
+  // // Queue the sequence through Adobe Media Encoder only when the isolated Premiere export has failed.
   if (!app.encoder || typeof app.encoder.encodeSequence !== "function") {
     exportErrors.push("encodeSequence unavailable");
     return false;
@@ -475,13 +462,7 @@ function subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath
 }
 
 function subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors) {
-  // // Keep direct export only as a legacy fallback because Premiere 26.x can abort evalScript before catch handlers run.
-  var premiereMajorVersion = subcreator_get_premiere_major_version();
-  if (isFinite(premiereMajorVersion) && premiereMajorVersion >= 26) {
-    exportErrors.push("exportAsMediaDirect skipped on Premiere " + premiereMajorVersion + ".x");
-    return false;
-  }
-
+  // // Render inside Premiere; the CEP panel isolates this call because Premiere 26.x can return an opaque evalScript error.
   if (typeof sequence.exportAsMediaDirect !== "function") {
     exportErrors.push("exportAsMediaDirect unavailable");
     return false;
@@ -519,7 +500,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
 
     var presetPath = subcreator_find_audio_export_preset(payload.presetPath || "");
     if (!presetPath) {
-      return subcreator_error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
+      return subcreator_error("Unable to locate the WAV preset for Whisper sequence export.");
     }
 
     var requestedInOut = String(payload.rangeMode || "") === "in_out";
@@ -544,11 +525,13 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       outputFolder.create();
     }
 
+    var exportMode = String(payload.exportMode || "premiere_direct");
     var exportErrors = [];
-    var exportTriggered = subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
-    if (!exportTriggered) {
-      exportTriggered = subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
-    }
+    // // Keep each exporter in a separate evalScript call so a Premiere direct-export failure cannot prevent the AME fallback.
+    var exportTriggered =
+      exportMode === "media_encoder"
+        ? subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors)
+        : subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
 
     if (!exportTriggered) {
       return subcreator_error("Unable to start active-sequence audio export. " + exportErrors.join(" | "));
@@ -561,6 +544,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
     return subcreator_ok({
       audioPath: outputFile.fsName,
       presetPath: presetPath,
+      exportMethod: exportMode,
       sequenceName: String(sequence.name || ""),
       rangeStartSeconds: activeRange.rangeStartSeconds,
       rangeEndSeconds: activeRange.rangeEndSeconds

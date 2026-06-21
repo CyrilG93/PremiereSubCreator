@@ -87,6 +87,7 @@ export interface WhisperProgressUpdate {
 interface WhisperSequenceExportResult {
   audioPath: string;
   presetPath: string;
+  exportMethod?: "premiere_direct" | "media_encoder";
   sequenceName?: string;
   rangeStartSeconds?: number;
   rangeEndSeconds?: number;
@@ -3398,23 +3399,58 @@ export async function exportActiveSequenceAudioForWhisper(
 
   const presetPath = detectWhisperSequencePresetPathViaCepNode(modules, extensionRootPath);
   if (!presetPath) {
-    throw new Error("Unable to locate Adobe Media Encoder WAV preset for Whisper sequence export.");
+    throw new Error("Unable to locate the WAV preset for Whisper sequence export.");
   }
 
   const outputDir = modules.path.join(modules.os.tmpdir(), "SubCreatorWhisperSequence");
   modules.fs.mkdirSync(outputDir, { recursive: true });
 
   const outputPath = modules.path.join(outputDir, `subcreator-sequence-${Date.now()}.wav`);
-  const encodedPayload = encodeURIComponent(
-    JSON.stringify({
-      outputPath,
-      presetPath,
-      rangeMode
-    })
-  );
-  const response = await evalHostJson<WhisperSequenceExportResult>(
-    `subcreator_export_active_sequence_audio("${escapeForJsx(encodedPayload)}")`
-  );
+  const runExport = async (
+    exportMethod: "premiere_direct" | "media_encoder"
+  ): Promise<HostJsonResponse<WhisperSequenceExportResult>> => {
+    // // Invoke each exporter independently so Premiere cannot abort the fallback with the direct evalScript call.
+    const encodedPayload = encodeURIComponent(
+      JSON.stringify({
+        outputPath,
+        presetPath,
+        rangeMode,
+        exportMode: exportMethod
+      })
+    );
+    return evalHostJson<WhisperSequenceExportResult>(
+      `subcreator_export_active_sequence_audio("${escapeForJsx(encodedPayload)}")`
+    );
+  };
+
+  let response = await runExport("premiere_direct");
+  if (!response.ok && (await waitForStableCepFile(modules, outputPath, 5000, 3))) {
+    // // Premiere 26 can finish the WAV while still returning "EvalScript error"; recover that valid direct export.
+    const activeRange = await getActiveSequenceRange().catch((): ActiveSequenceRangeResult => ({}));
+    response = {
+      ok: true,
+      data: {
+        audioPath: outputPath,
+        presetPath,
+        exportMethod: "premiere_direct",
+        sequenceName: String(activeRange.sequenceName ?? ""),
+        rangeStartSeconds: rangeMode === "in_out" ? activeRange.rangeStartSeconds : undefined,
+        rangeEndSeconds: rangeMode === "in_out" ? activeRange.rangeEndSeconds : undefined
+      }
+    };
+  }
+
+  if (!response.ok) {
+    // // Remove a failed direct export before AME writes the fallback to the same temporary path.
+    try {
+      if (modules.fs.existsSync(outputPath)) {
+        modules.fs.unlinkSync(outputPath);
+      }
+    } catch {
+      // // Let AME report an actionable export error if Premiere still owns an incomplete file.
+    }
+    response = await runExport("media_encoder");
+  }
 
   if (!response.ok) {
     throw new Error(response.error ?? "Unable to export active sequence audio for Whisper.");
@@ -3423,6 +3459,7 @@ export async function exportActiveSequenceAudioForWhisper(
   return {
     audioPath: String(response.data?.audioPath ?? outputPath),
     presetPath: String(response.data?.presetPath ?? presetPath),
+    exportMethod: response.data?.exportMethod ?? "premiere_direct",
     sequenceName: String(response.data?.sequenceName ?? ""),
     rangeStartSeconds: Number.isFinite(Number(response.data?.rangeStartSeconds))
       ? Number(response.data?.rangeStartSeconds)
@@ -3433,6 +3470,41 @@ export async function exportActiveSequenceAudioForWhisper(
         ? Number(response.data?.audioDurationSeconds)
         : readWavDurationSeconds(modules, String(response.data?.audioPath ?? outputPath))
   };
+}
+
+async function waitForStableCepFile(
+  modules: CepNodeModules,
+  filePath: string,
+  timeoutMs: number,
+  stablePasses: number
+): Promise<boolean> {
+  // // Confirm a non-empty export has stopped growing before accepting a WAV whose host response was lost.
+  const deadline = Date.now() + Math.max(1000, timeoutMs);
+  let lastSize = -1;
+  let stableCount = 0;
+
+  while (Date.now() < deadline) {
+    try {
+      if (modules.fs.existsSync(filePath)) {
+        const currentSize = Number(modules.fs.statSync(filePath).size || 0);
+        if (currentSize > 0 && currentSize === lastSize) {
+          stableCount += 1;
+          if (stableCount >= Math.max(2, stablePasses)) {
+            return true;
+          }
+        } else {
+          lastSize = currentSize;
+          stableCount = 0;
+        }
+      }
+    } catch {
+      // // Retry transient file locks while Premiere finalizes its direct WAV export.
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }
+
+  return false;
 }
 
 export async function readPremiereTemplateTextPayloads(mogrtPath: string): Promise<PremiereTemplateTextPayload[]> {

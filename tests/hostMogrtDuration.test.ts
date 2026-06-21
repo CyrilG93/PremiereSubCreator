@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const hostSourcePath = fileURLToPath(new URL("../src/host/SubCreatorHost.jsx", import.meta.url));
 const hostSource = readFileSync(hostSourcePath, "utf8");
+const panelSourcePath = fileURLToPath(new URL("../src/panel/cepBridge.ts", import.meta.url));
+const panelSource = readFileSync(panelSourcePath, "utf8");
 
 function readDurationHelperSource(): string {
   // // Isolate the razor helper so the regression check ignores unrelated timeline edits elsewhere in the host.
@@ -103,21 +105,31 @@ describe("MOGRT duration trimming", () => {
 });
 
 describe("Whisper sequence audio export", () => {
-  it("uses Adobe Media Encoder before the legacy direct export path", () => {
-    // // AME avoids Premiere 26.x direct-export failures that can abort CEP evalScript before JSON is returned.
+  it("selects exactly one exporter per isolated host call", () => {
+    // // Separate calls let the panel recover from Premiere 26.x aborting the direct evalScript response.
     const exportSource = hostSource.match(
       /function subcreator_export_active_sequence_audio[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_runtime_push_unique/
     );
 
     expect(exportSource).not.toBeNull();
-    expect(exportSource?.[0]).toMatch(
-      /subcreator_try_encoder_sequence_export\(sequence,[\s\S]*?subcreator_try_direct_sequence_export\(sequence,/
-    );
+    expect(exportSource?.[0]).toContain('exportMode === "media_encoder"');
+    expect(exportSource?.[0]).toMatch(/\? subcreator_try_encoder_sequence_export\([\s\S]*?: subcreator_try_direct_sequence_export\(/);
   });
 
-  it("skips exportAsMediaDirect on Premiere 26 and newer", () => {
-    // // The direct exporter remains available only for older hosts where it is less likely to break evalScript.
-    expect(hostSource).toMatch(/premiereMajorVersion >= 26/);
-    expect(hostSource).toContain("exportAsMediaDirect skipped on Premiere");
+  it("allows Premiere direct export on current host versions", () => {
+    // // CEP now owns the AME fallback, so Premiere 26 is no longer excluded from the faster direct path.
+    expect(hostSource).not.toMatch(/premiereMajorVersion >= 26/);
+    expect(hostSource).toContain("sequence.exportAsMediaDirect(outputPath, presetPath, workAreaType)");
+  });
+
+  it("tries Premiere before falling back to Media Encoder in a separate call", () => {
+    // // The direct-first order keeps normal exports inside Premiere while preserving a recoverable AME path.
+    const exportSource = panelSource.match(
+      /export async function exportActiveSequenceAudioForWhisper[\s\S]*?\r?\n}\r?\n\r?\nasync function waitForStableCepFile/
+    );
+
+    expect(exportSource).not.toBeNull();
+    expect(exportSource?.[0]).toMatch(/runExport\("premiere_direct"\)[\s\S]*?runExport\("media_encoder"\)/);
+    expect(exportSource?.[0]).toContain("waitForStableCepFile(modules, outputPath, 5000, 3)");
   });
 });

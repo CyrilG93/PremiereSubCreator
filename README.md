@@ -60,6 +60,15 @@ After clicking `Install`, Setup can appear frozen for a few seconds while Window
 
 The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user.
 
+### Repair or update Windows dependencies
+
+1. Close Premiere Pro.
+2. Run `subcreator_update_windows_dependencies.bat`.
+3. Wait for the download, integrity check, and validation to finish.
+4. Reopen Premiere Pro.
+
+This tool reinstalls the tested private Python, WhisperX, and FFmpeg runtime used by Sub Creator. It preserves downloaded Whisper models and does not modify the system Python installation. An internet connection is required for the approximately 333 MB download.
+
 ### Install on macOS with the `.pkg`
 
 1. Download `SubCreator-v...-macOS-Installer-arm64.pkg` for Apple Silicon or `SubCreator-v...-macOS-Installer-x86_64.pkg` for an Intel Mac.

@@ -3,8 +3,8 @@
 The `Build Windows Installer` workflow creates the Windows `.exe` files on a temporary GitHub-hosted Windows machine.
 
 - `Windows-Light-Installer.exe` contains the extension and downloads the private runtime only when it is missing.
-- `Windows-Full-Installer.exe` contains the extension and private runtime for a first installation without a separate runtime file.
-- Both installers offer the same optional Whisper model downloads.
+- `Windows-Full-Installer.exe` contains the extension, private runtime, and verified `base` model for a fully offline first installation.
+- Both installers offer the same Whisper model choices; the Full installer does not download its included `base` model.
 - The extension can recover the standard private runtime directly if its generated configuration file is missing or unreadable.
 - The extension includes its own WAV export preset, so Whisper sequence export does not depend on localized Adobe preset names.
 

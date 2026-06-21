@@ -35,7 +35,7 @@ Quick tips:
 
 ### Install on Windows with the `.exe`
 
-1. Download `SubCreator-v...-Windows-Installer.exe`.
+1. Download `SubCreator-v...-Windows-Full-Installer.exe` for a first installation, or the smaller `Light` installer if the computer is online.
 2. Close Premiere Pro.
 3. Run the installer.
 4. Choose the Whisper models you want to keep available offline.
@@ -43,7 +43,7 @@ Quick tips:
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The full installer embeds the private runtime and does not need a separate runtime file beside it. The light installer downloads the private runtime when it is missing, so it needs an internet connection and a published runtime asset for a first installation. Later updates keep a compatible runtime and existing Whisper models. The private Python and LGPL FFmpeg runtime stays inside the current Windows user profile and does not modify the system Python installation.
+The full installer embeds the private runtime and the recommended `base` model, so a first installation works without Python, FFmpeg, or an internet connection. The light installer downloads the private runtime and selected models when they are missing, so it needs an internet connection for a first installation. Later updates keep a compatible runtime and existing Whisper models. The private Python and LGPL FFmpeg runtime stays inside the current Windows user profile and does not modify the system Python installation.
 
 After clicking `Install`, Setup can appear frozen for a few seconds while Windows checks the files. During installation, leave any Command Prompt or PowerShell windows open until Setup finishes.
 
@@ -93,7 +93,7 @@ The manual ZIP installer uses compatible Python and FFmpeg installations already
 
 ## Whisper
 
-The Windows `.exe` and macOS `.pkg` offer `tiny`, `base`, `small`, `medium`, and `large-v3` during installation. They download only selected models that are missing or damaged and never remove models already installed.
+The Windows `.exe` and macOS `.pkg` offer `tiny`, `base`, `small`, `medium`, and `large-v3` during installation. The Windows Full installer already includes `base`; other selected models are downloaded only when missing or damaged. Existing models are never removed.
 
 The `.zip` installers include the `base` model. It is enough for testing and many simple projects.
 

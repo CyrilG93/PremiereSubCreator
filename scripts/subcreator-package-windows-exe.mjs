@@ -1,6 +1,6 @@
 // // Build light and full Windows installers plus a separately downloadable private runtime.
-import { createReadStream } from "node:fs";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ const downloadsDir = path.join(stagingRoot, "downloads");
 const payloadRoot = path.join(stagingRoot, "payload");
 const runtimeRoot = path.join(payloadRoot, "runtime");
 const installerRoot = path.join(stagingRoot, "installer");
+const bundledModelsRoot = path.join(stagingRoot, "bundled-models");
 const releasesDir = path.join(projectRoot, "Releases");
 const runtimeManifestPath = path.join(projectRoot, "installers", "windows-runtime.json");
 const pythonVersion = process.env.SUBCREATOR_PRIVATE_PYTHON_VERSION || "3.11.9";
@@ -126,6 +127,51 @@ async function hashFile(targetPath) {
   });
 }
 
+async function prepareBundledBaseModel() {
+  // // Assemble and validate the repository's split base model for the offline Full installer.
+  const modelsRoot = path.join(projectRoot, "Models");
+  const directModelPath = path.join(modelsRoot, "base.pt");
+  const targetPath = path.join(bundledModelsRoot, "base.pt");
+  await mkdir(bundledModelsRoot, { recursive: true });
+
+  if (await pathExists(directModelPath)) {
+    await cp(directModelPath, targetPath);
+  } else {
+    const parts = (await readdir(modelsRoot))
+      .filter((name) => /^base\.pt\.part-\d+$/i.test(name))
+      .sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
+    if (parts.length === 0) {
+      throw new Error("The Full installer requires Models/base.pt or its split base.pt.part-* files.");
+    }
+
+    const output = createWriteStream(targetPath);
+    try {
+      for (const part of parts) {
+        // // Stream each part in order so the 142 MB model is never buffered fully in Node.js memory.
+        for await (const chunk of createReadStream(path.join(modelsRoot, part))) {
+          if (!output.write(chunk)) {
+            await new Promise((resolve) => output.once("drain", resolve));
+          }
+        }
+      }
+      await new Promise((resolve, reject) => {
+        output.once("error", reject);
+        output.end(resolve);
+      });
+    } catch (error) {
+      output.destroy();
+      throw error;
+    }
+  }
+
+  const baseModel = whisperModels.find((model) => model.id === "base");
+  const actualHash = await hashFile(targetPath);
+  if (!baseModel || actualHash !== baseModel.sha256) {
+    throw new Error(`Bundled base model SHA-256 mismatch: ${actualHash}`);
+  }
+  return targetPath;
+}
+
 async function downloadFile(url, targetPath) {
   // // Download third-party runtime archives only when the local cache does not already contain them.
   if (await pathExists(targetPath)) {
@@ -228,11 +274,12 @@ async function preparePythonRuntime() {
     "--upgrade",
     "--no-cache-dir",
     "--no-warn-script-location",
-    "openai-whisper",
-    "whisperx",
-    "requests",
-    "nltk",
-    "certifi",
+    "openai-whisper==20250625",
+    "whisperx==3.8.6",
+    "transformers==4.57.6",
+    "requests==2.34.2",
+    "nltk==3.9.4",
+    "certifi==2026.6.17",
     "--extra-index-url",
     "https://download.pytorch.org/whl/cpu"
   ], {
@@ -422,18 +469,18 @@ async function writeRuntimeManifest(manifest) {
 async function createRuntimeInstaller(compilerPath, runtimeManifest) {
   // // Package the large private runtime separately so normal extension updates stay small.
   const outputPath = path.join(releasesDir, runtimeManifest.assetName);
+  if (!rebuildRuntime && runtimeManifest.sha256 && skipRuntimeAssetDownload) {
+    // // CI can compile from verified immutable metadata even if an unrelated local runtime artifact is stale.
+    process.stdout.write(`Reusing published Windows runtime metadata for ${runtimeManifest.assetName}.\n`);
+    return runtimeManifest;
+  }
+
   if (!rebuildRuntime && runtimeManifest.sha256 && (await pathExists(outputPath))) {
     const localHash = await hashFile(outputPath);
     if (localHash === runtimeManifest.sha256) {
       return runtimeManifest;
     }
     throw new Error(`Local runtime asset hash does not match ${runtimeManifestPath}.`);
-  }
-
-  if (!rebuildRuntime && runtimeManifest.sha256 && skipRuntimeAssetDownload) {
-    // // Let CI compile only the connected installer after it has confirmed the immutable GitHub asset exists.
-    process.stdout.write(`Reusing published Windows runtime metadata for ${runtimeManifest.assetName}.\n`);
-    return runtimeManifest;
   }
 
   if (!rebuildRuntime && runtimeManifest.sha256 && !(await pathExists(outputPath))) {
@@ -493,7 +540,7 @@ async function createRuntimeInstaller(compilerPath, runtimeManifest) {
   return finalizedManifest;
 }
 
-function createModelPascalDefinitions() {
+function createModelPascalDefinitions(bundledBaseModelPath) {
   // // Generate explicit model functions because Inno Setup check callbacks cannot capture dynamic arrays.
   return whisperModels.flatMap((model, index) => {
     const suffix = model.id[0].toUpperCase() + model.id.slice(1);
@@ -512,7 +559,9 @@ function createModelPascalDefinitions() {
       "begin",
       `  Download${suffix}Model := ModelPage.Values[${index}] and (not FileHasHash(${suffix}ModelPath, '${model.sha256}'));`,
       `  if Download${suffix}Model then`,
-      `    DownloadPage.Add('${escapePascalString(model.url)}', '${model.fileName}', '${model.sha256}');`,
+      ...(model.id === "base" && bundledBaseModelPath
+        ? ["    Log('The verified base model is embedded in this Full installer.');"]
+        : [`    DownloadPage.Add('${escapePascalString(model.url)}', '${model.fileName}', '${model.sha256}');`]),
       "end;",
       ""
     ];
@@ -522,6 +571,7 @@ function createModelPascalDefinitions() {
 async function createUserInstaller(compilerPath, version, runtimeManifest, mode) {
   // // Create either a connected lightweight installer or a complete installer with the runtime embedded.
   const includeRuntime = mode === "full";
+  const bundledBaseModelPath = includeRuntime ? await prepareBundledBaseModel() : "";
   const outputBaseName = `SubCreator-v${version}-Windows-${includeRuntime ? "Full" : "Light"}-Installer`;
   const outputPath = path.join(releasesDir, `${outputBaseName}.exe`);
   const scriptPath = path.join(installerRoot, `SubCreator${includeRuntime ? "Full" : "Light"}.iss`);
@@ -533,15 +583,24 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
     return `  Download${suffix}Model: Boolean;`;
   });
   const modelPageItems = whisperModels.flatMap((model, index) => [
-    `  ModelPage.Add('${escapePascalString(model.label)}');`,
+    `  ModelPage.Add('${escapePascalString(model.label)}${model.id === "base" && bundledBaseModelPath ? " - included" : ""}');`,
     `  ModelPage.Values[${index}] := ${model.defaultSelected ? "True" : `FileExists(ExpandConstant('{%USERPROFILE}\\.cache\\whisper\\${model.fileName}'))`};`
   ]);
   const prepareModelDownloads = whisperModels.map((model) => {
     const suffix = model.id[0].toUpperCase() + model.id.slice(1);
     return `    Prepare${suffix}ModelDownload;`;
   });
+  const networkDownloadConditions = [
+    ...(!includeRuntime ? ["DownloadRuntime"] : []),
+    ...whisperModels
+      .filter((model) => !(model.id === "base" && bundledBaseModelPath))
+      .map((model) => `Download${model.id[0].toUpperCase() + model.id.slice(1)}Model`)
+  ];
   const modelFileEntries = whisperModels.map((model) => {
     const suffix = model.id[0].toUpperCase() + model.id.slice(1);
+    if (model.id === "base" && bundledBaseModelPath) {
+      return `Source: "${escapeInnoString(bundledBaseModelPath)}"; DestDir: "{%USERPROFILE}\\.cache\\whisper"; Flags: ignoreversion; Check: ShouldInstall${suffix}Model`;
+    }
     return `Source: "{tmp}\\${model.fileName}"; DestDir: "{%USERPROFILE}\\.cache\\whisper"; Flags: external ignoreversion; Check: ShouldInstall${suffix}Model`;
   });
   const iss = [
@@ -569,7 +628,6 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
     "[Files]",
     `Source: "${escapeInnoString(path.join(payloadRoot, "README.md"))}"; DestDir: "{tmp}\\SubCreatorPayload"; Flags: ignoreversion`,
     `Source: "${escapeInnoString(path.join(payloadRoot, "dist", "com.cyrilplugin.subcreator", "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\dist\\com.cyrilplugin.subcreator"; Flags: recursesubdirs createallsubdirs ignoreversion`,
-    `Source: "${escapeInnoString(path.join(payloadRoot, "installers", "subcreator_install_windows_private_runtime.ps1"))}"; DestDir: "{tmp}\\SubCreatorPayload\\installers"; Flags: ignoreversion`,
     ...(await pathExists(path.join(payloadRoot, "Fonts")))
       ? [`Source: "${escapeInnoString(path.join(payloadRoot, "Fonts", "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\Fonts"; Flags: recursesubdirs createallsubdirs ignoreversion`]
       : [],
@@ -577,12 +635,7 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
       ? [`Source: "${escapeInnoString(path.join(runtimeRoot, "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\runtime"; Flags: recursesubdirs createallsubdirs ignoreversion`]
       : []),
     ...modelFileEntries,
-    "",
-    "[Run]",
-    ...(includeRuntime
-      ? []
-      : [`Filename: "{tmp}\\${runtimeManifest.assetName}"; Parameters: "/SILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER"; StatusMsg: "Preparing the private Whisper runtime. Windows security checks can take a moment..."; Flags: waituntilterminated; Check: ShouldInstallRuntime`]),
-    `Filename: "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\\SubCreatorPayload\\installers\\subcreator_install_windows_private_runtime.ps1"" -PayloadRoot ""{tmp}\\SubCreatorPayload""${includeRuntime ? "" : " -SkipRuntimeInstall"} -RuntimeVersion ""${runtimeManifest.version}"""; StatusMsg: "Installing Sub Creator..."; Flags: waituntilterminated`,
+    `Source: "${escapeInnoString(path.join(payloadRoot, "installers", "subcreator_install_windows_private_runtime.ps1"))}"; DestDir: "{tmp}\\SubCreatorPayload\\installers"; Flags: ignoreversion; AfterInstall: InstallSubCreator`,
     "",
     "[Code]",
     "var",
@@ -615,30 +668,49 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
     "begin",
     "  RuntimeRoot := ExpandConstant('{localappdata}\\SubCreator\\runtime');",
     "  VersionFile := RuntimeRoot + '\\.subcreator-runtime-version';",
-    "  if FileExists(VersionFile) then",
-    "  begin",
-    "    Result := LoadStringFromFile(VersionFile, InstalledVersion) and",
+    "  Result := FileExists(VersionFile) and",
+    "    LoadStringFromFile(VersionFile, InstalledVersion) and",
     `      (Trim(String(InstalledVersion)) = '${escapePascalString(runtimeManifest.version)}') and`,
     "      FileExists(RuntimeRoot + '\\python\\python.exe') and",
     "      FileExists(RuntimeRoot + '\\python\\Scripts\\whisper.exe') and",
     "      FileExists(RuntimeRoot + '\\ffmpeg\\bin\\ffmpeg.exe');",
-    "  end",
-    "  else",
-    "  begin",
-    "    { // Accept the compatible runtime installed by the previous all-in-one EXE. }",
-    "    Result :=",
-    "      FileExists(RuntimeRoot + '\\python\\python.exe') and",
-    "      FileExists(RuntimeRoot + '\\python\\Scripts\\whisper.exe') and",
-    "      FileExists(RuntimeRoot + '\\ffmpeg\\bin\\ffmpeg.exe');",
-    "  end;",
     "end;",
     "",
-    "function ShouldInstallRuntime: Boolean;",
+    ...createModelPascalDefinitions(bundledBaseModelPath),
+    "procedure InstallSubCreator;",
+    "var",
+    "  ResultCode: Integer;",
+    "  RuntimeInstallerPath: String;",
+    "  PowerShellPath: String;",
+    "  InstallerScriptPath: String;",
+    "  PayloadPath: String;",
+    "  Parameters: String;",
     "begin",
-    "  Result := DownloadRuntime;",
+    ...(includeRuntime
+      ? []
+      : [
+          "  if DownloadRuntime then",
+          "  begin",
+          `    RuntimeInstallerPath := ExpandConstant('{tmp}\\${escapePascalString(runtimeManifest.assetName)}');`,
+          "    WizardForm.StatusLabel.Caption := 'Preparing the private Whisper runtime. Windows security checks can take a moment...';",
+          "    if not Exec(RuntimeInstallerPath, '/SILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then",
+          "      RaiseException('Windows could not start the private runtime installer.');",
+          "    if ResultCode <> 0 then",
+          "      RaiseException(Format('The private runtime installer failed with exit code %d.', [ResultCode]));",
+          "  end;",
+          ""
+        ]),
+    "  WizardForm.StatusLabel.Caption := 'Installing Sub Creator and validating its dependencies...';",
+    "  PowerShellPath := ExpandConstant('{sys}\\WindowsPowerShell\\v1.0\\powershell.exe');",
+    "  InstallerScriptPath := ExpandConstant('{tmp}\\SubCreatorPayload\\installers\\subcreator_install_windows_private_runtime.ps1');",
+    "  PayloadPath := ExpandConstant('{tmp}\\SubCreatorPayload');",
+    `  Parameters := '-NoProfile -ExecutionPolicy Bypass -File "' + InstallerScriptPath + '" -PayloadRoot "' + PayloadPath + '"${includeRuntime ? "" : " -SkipRuntimeInstall"} -RuntimeVersion "${escapePascalString(runtimeManifest.version)}"';`,
+    "  if not Exec(PowerShellPath, Parameters, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then",
+    "    RaiseException('Windows could not start the Sub Creator installation script.');",
+    "  if ResultCode <> 0 then",
+    "    RaiseException(Format('Sub Creator dependency validation failed with exit code %d. Please keep this message for support.', [ResultCode]));",
     "end;",
     "",
-    ...createModelPascalDefinitions(),
     "procedure InitializeWizard;",
     "begin",
     "  { // Let users choose extra models without deleting models they already have. }",
@@ -704,9 +776,7 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
         ]),
     ...prepareModelDownloads,
     "",
-    "    if DownloadRuntime or " +
-      whisperModels.map((model) => `Download${model.id[0].toUpperCase() + model.id.slice(1)}Model`).join(" or ") +
-      " then",
+    `    if ${networkDownloadConditions.join(" or ")} then`,
     "    begin",
     "      DownloadPage.Show;",
     "      try",

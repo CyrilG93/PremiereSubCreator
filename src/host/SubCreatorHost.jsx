@@ -6023,14 +6023,32 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       var startSeconds = Number(editedItem.startSeconds);
       var endSeconds = Number(editedItem.endSeconds);
       var nextEditedItem = editedIndex + 1 < editedItems.length ? editedItems[editedIndex + 1] || {} : null;
+      var originalStartSeconds = startSeconds;
       var originalEndSeconds = endSeconds;
+      startSeconds = subcreator_snap_seconds_to_nearest_frame(startSeconds, textApplyFrameDurationSeconds);
+      endSeconds = subcreator_snap_seconds_to_nearest_frame(endSeconds, textApplyFrameDurationSeconds);
+      var nextEditedStartSeconds = nextEditedItem
+        ? subcreator_snap_seconds_to_nearest_frame(Number(nextEditedItem.startSeconds), textApplyFrameDurationSeconds)
+        : NaN;
       endSeconds = subcreator_snap_nearby_caption_end(
         endSeconds,
-        nextEditedItem ? Number(nextEditedItem.startSeconds) : NaN,
+        nextEditedStartSeconds,
         textApplyFrameDurationSeconds
       );
-      if (endSeconds !== originalEndSeconds) {
-        debugLines.push("text_apply closed_nearby_gap_ms=" + String(Math.round((endSeconds - originalEndSeconds) * 1000)));
+      if (endSeconds <= startSeconds) {
+        endSeconds = startSeconds + textApplyFrameDurationSeconds;
+      }
+      if (startSeconds !== originalStartSeconds || endSeconds !== originalEndSeconds) {
+        debugLines.push(
+          "text_apply frame_aligned=" +
+            String(originalStartSeconds) +
+            "-" +
+            String(originalEndSeconds) +
+            " -> " +
+            String(startSeconds) +
+            "-" +
+            String(endSeconds)
+        );
       }
       var sourceSelectionIndex = Number(editedItem.sourceSelectionIndex);
       var itemMogrtPathOverride = subcreator_trim_string(String(editedItem.mogrtPathOverride || ""));
@@ -8692,6 +8710,17 @@ function subcreator_snap_nearby_caption_end(endSeconds, nextStartSeconds, frameD
   return safeEnd;
 }
 
+function subcreator_snap_seconds_to_nearest_frame(seconds, frameDurationSeconds) {
+  // // Use one shared frame boundary for importMGT placement and QE razor cuts instead of their opposite sub-frame rounding.
+  var safeSeconds = Number(seconds);
+  var safeFrameDuration = Number(frameDurationSeconds);
+  if (isNaN(safeSeconds) || isNaN(safeFrameDuration) || safeFrameDuration <= 0) {
+    return safeSeconds;
+  }
+
+  return Math.round(safeSeconds / safeFrameDuration) * safeFrameDuration;
+}
+
 function subcreator_track_item_starts_near_seconds(trackItem, startSeconds, toleranceSeconds) {
   // // Validate imported clips against the requested insertion time so importMGT mismatches do not get accepted silently.
   var candidateStart = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
@@ -8760,7 +8789,9 @@ function subcreator_format_qe_razor_time(sequence, seconds) {
   try {
     var settings = sequence.getSettings();
     var razorTime = new Time();
-    razorTime.seconds = Number(seconds);
+    var frameDurationSeconds = subcreator_get_sequence_frame_duration_seconds(sequence);
+    // // Stay just inside the chosen frame so floating-point conversion cannot format the preceding timecode frame.
+    razorTime.seconds = Number(seconds) + frameDurationSeconds * 0.001;
     if (settings && settings.videoFrameRate && typeof razorTime.getFormatted === "function") {
       return razorTime.getFormatted(settings.videoFrameRate, settings.videoDisplayFormat);
     }
@@ -9937,13 +9968,22 @@ function subcreator_apply_captions(payloadEncoded) {
       var startSeconds = Number(cue.startSeconds);
       var endSeconds = Number(cue.endSeconds);
       var nextCue = i + 1 < cues.length ? cues[i + 1] || {} : null;
+      var requestedStartSeconds = startSeconds;
       var requestedEndSeconds = endSeconds;
       if (hasMogrt) {
+        startSeconds = subcreator_snap_seconds_to_nearest_frame(startSeconds, sequenceFrameDurationSeconds);
+        endSeconds = subcreator_snap_seconds_to_nearest_frame(endSeconds, sequenceFrameDurationSeconds);
+        var nextCueStartSeconds = nextCue
+          ? subcreator_snap_seconds_to_nearest_frame(Number(nextCue.startSeconds), sequenceFrameDurationSeconds)
+          : NaN;
         endSeconds = subcreator_snap_nearby_caption_end(
           endSeconds,
-          nextCue ? Number(nextCue.startSeconds) : NaN,
+          nextCueStartSeconds,
           sequenceFrameDurationSeconds
         );
+        if (endSeconds <= startSeconds) {
+          endSeconds = startSeconds + sequenceFrameDurationSeconds;
+        }
       }
       var text = cue.text || "";
       var cueDebugEnabled = i < 4;
@@ -9954,10 +9994,18 @@ function subcreator_apply_captions(payloadEncoded) {
       if (cueDebugEnabled && i === 0) {
         subcreator_debug_push_limited(debugLines, "template_text_payloads=" + String(templateTextPayloads.length), 120);
       }
-      if (cueDebugEnabled && endSeconds !== requestedEndSeconds) {
+      if (cueDebugEnabled && (startSeconds !== requestedStartSeconds || endSeconds !== requestedEndSeconds)) {
         subcreator_debug_push_limited(
           debugLines,
-          cueDebugPrefix + " closed_nearby_gap_ms=" + String(Math.round((endSeconds - requestedEndSeconds) * 1000)),
+          cueDebugPrefix +
+            " frame_aligned=" +
+            String(requestedStartSeconds) +
+            "-" +
+            String(requestedEndSeconds) +
+            " -> " +
+            String(startSeconds) +
+            "-" +
+            String(endSeconds),
           120
         );
       }

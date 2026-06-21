@@ -30,6 +30,20 @@ function readNearbyGapHelper(): (endSeconds: number, nextStartSeconds: number, f
   ) => number;
 }
 
+function readFrameSnapHelper(): (seconds: number, frameDurationSeconds: number) => number {
+  // // Execute the frame quantizer against timestamps observed in real Premiere host logs.
+  const match = hostSource.match(
+    /function subcreator_snap_seconds_to_nearest_frame[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_track_item_starts_near_seconds/
+  );
+
+  expect(match).not.toBeNull();
+  const helperSource = (match?.[0] ?? "").replace(/\r?\nfunction subcreator_track_item_starts_near_seconds[\s\S]*$/, "");
+  return new Function(`${helperSource}; return subcreator_snap_seconds_to_nearest_frame;`)() as (
+    seconds: number,
+    frameDurationSeconds: number
+  ) => number;
+}
+
 describe("MOGRT duration trimming", () => {
   it("uses a razor cut instead of shortening the clip or source out point", () => {
     // // A real timeline cut preserves the remaining source duration without activating Time Remapping.
@@ -70,6 +84,21 @@ describe("MOGRT duration trimming", () => {
     // // Both MOGRT creation paths must feed the same adjusted boundary to duration controls and the razor helper.
     expect(hostSource).toMatch(/nextCue[\s\S]*?subcreator_snap_nearby_caption_end[\s\S]*?subcreator_clone_style_config_with_clip_duration/);
     expect(hostSource).toMatch(/nextEditedItem[\s\S]*?subcreator_snap_nearby_caption_end[\s\S]*?rebuiltDurationStyleConfig/);
+  });
+
+  it("aligns logged 24 fps boundaries before both import and razor operations", () => {
+    // // Premiere previously rounded these starts up/nearest while QE rounded the matching ends down.
+    const snapToFrame = readFrameSnapHelper();
+    const frameDuration = 1 / 24;
+
+    expect(snapToFrame(1.4, frameDuration)).toBeCloseTo(1.41666666666667, 12);
+    expect(snapToFrame(2.44, frameDuration)).toBeCloseTo(2.45833333333333, 12);
+    expect(snapToFrame(3.14, frameDuration)).toBeCloseTo(3.125, 12);
+  });
+
+  it("biases exact QE razor boundaries away from the preceding frame", () => {
+    // // The tiny in-frame offset prevents getFormatted from flooring an exact floating-point frame boundary.
+    expect(hostSource).toContain("Number(seconds) + frameDurationSeconds * 0.001");
   });
 });
 

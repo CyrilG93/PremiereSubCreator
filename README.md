@@ -8,7 +8,7 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 ## Main Features
 
 - `Creation`: generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`, with `MOGRT` or `Premiere subtitles` output.
-- Near-contiguous MOGRT subtitles share the same frame boundary instead of leaving a one-frame visual gap.
+- MOGRT subtitle timing is aligned to sequence frames so adjacent clips share one exact boundary without one-frame visual gaps.
 - `Visual editor`: read exposed controls from a selected MOGRT and apply the same look to other selected clips.
 - `Text editor`: review, move, split, merge, and rebuild generated subtitle blocks.
 

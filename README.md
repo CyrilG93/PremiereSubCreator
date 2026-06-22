@@ -190,6 +190,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.33 - 2026-06-22
+
+- Active sequence audio export keeps Premiere direct export first and improves AME fallback recovery.
+- Export errors now include extra Premiere capability diagnostics.
+
 ### 1.1.32 - 2026-06-22
 
 - Active sequence audio export is more reliable when Premiere rejects a host response.

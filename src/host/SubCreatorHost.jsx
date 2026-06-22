@@ -543,6 +543,24 @@ function subcreator_try_direct_sequence_export(sequence, outputPath, presetPath,
   return false;
 }
 
+function subcreator_get_sequence_export_capabilities() {
+  // // Report export API availability without launching an export, keeping failure diagnostics low-risk.
+  try {
+    var sequence = app && app.project ? app.project.activeSequence : null;
+    return subcreator_ok({
+      hostOs: String($.os || ""),
+      hasActiveSequence: Boolean(sequence),
+      sequence: sequence ? subcreator_sequence_debug_snapshot(sequence) : {},
+      hasEncoder: Boolean(app && app.encoder),
+      hasLaunchEncoder: Boolean(app && app.encoder && typeof app.encoder.launchEncoder === "function"),
+      hasEncodeSequence: Boolean(app && app.encoder && typeof app.encoder.encodeSequence === "function"),
+      hasExportAsMediaDirect: Boolean(sequence && typeof sequence.exportAsMediaDirect === "function")
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_export_active_sequence_audio(payloadEncoded) {
   // // Render the active-sequence audible mix to a temporary WAV file for Whisper transcription.
   var debug = {

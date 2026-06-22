@@ -138,7 +138,8 @@ describe("Whisper sequence audio export", () => {
 
     expect(exportSource).not.toBeNull();
     expect(exportSource?.[0]).toMatch(/runExport\("premiere_direct"\)[\s\S]*?runExport\("media_encoder"\)/);
-    expect(exportSource?.[0]).toContain("waitForStableCepFile(modules, outputPath, 30000, 3)");
+    expect(exportSource?.[0]).toContain('recoverCompletedExport("premiere_direct", outputPath, 30000)');
+    expect(exportSource?.[0]).toContain("waitForStableCepFile(modules, candidatePath, timeoutMs, 3)");
     expect(exportSource?.[0]).toContain("`${outputBase}-${exportMethod}.wav`");
   });
 });

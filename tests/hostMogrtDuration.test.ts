@@ -107,6 +107,12 @@ describe("MOGRT duration trimming", () => {
 });
 
 describe("Whisper sequence audio export", () => {
+  it("does not depend on Premiere preloading JSON in ExtendScript", () => {
+    // // Fresh Premiere sessions may not expose JSON until another Adobe panel polyfills it.
+    expect(hostSource).toContain('if (typeof JSON !== "object")');
+    expect(panelSource).toContain("buildExtendScriptJsonBootstrap");
+  });
+
   it("falls back to the entire sequence when the host cannot read In/Out", () => {
     // // A malformed Premiere range response should not block Whisper generation before audio export can run.
     expect(panelSource).toContain('fallbackReason: "Unable to read active sequence In/Out range; using entire sequence."');

@@ -190,6 +190,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.34 - 2026-06-22
+
+- Fixed host calls on Premiere installations where ExtendScript does not provide `JSON`.
+- Whisper sequence export diagnostics now work before the audio export starts.
+
 ### 1.1.33 - 2026-06-22
 
 - Active sequence audio export keeps Premiere direct export first and improves AME fallback recovery.

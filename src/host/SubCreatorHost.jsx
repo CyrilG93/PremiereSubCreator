@@ -1,5 +1,79 @@
 // // Provide ExtendScript entry points used by the CEP panel.
 
+if (typeof JSON !== "object") {
+  // // Provide JSON support inside Premiere's ExtendScript engine when no Adobe panel has already loaded it.
+  JSON = {};
+}
+
+if (typeof JSON.stringify !== "function") {
+  JSON.stringify = function (value) {
+    // // Serialize panel response payloads without relying on Premiere's shared global scripting state.
+    function quoteString(input) {
+      return (
+        '"' +
+        String(input)
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"')
+          .replace(/\r/g, "\\r")
+          .replace(/\n/g, "\\n")
+          .replace(/\t/g, "\\t")
+          .replace(/\f/g, "\\f")
+          .replace(/\x08/g, "\\b") +
+        '"'
+      );
+    }
+
+    function serialize(input) {
+      var inputType = typeof input;
+      var index;
+      var items;
+      var key;
+
+      if (input === null) {
+        return "null";
+      }
+      if (inputType === "number") {
+        return isFinite(input) ? String(input) : "null";
+      }
+      if (inputType === "boolean") {
+        return input ? "true" : "false";
+      }
+      if (inputType === "string") {
+        return quoteString(input);
+      }
+      if (inputType === "undefined" || inputType === "function") {
+        return "null";
+      }
+      if (input && typeof input.length === "number" && input.constructor === Array) {
+        items = [];
+        for (index = 0; index < input.length; index += 1) {
+          items.push(serialize(input[index]));
+        }
+        return "[" + items.join(",") + "]";
+      }
+      if (inputType === "object") {
+        items = [];
+        for (key in input) {
+          if (input.hasOwnProperty(key) && typeof input[key] !== "undefined" && typeof input[key] !== "function") {
+            items.push(quoteString(key) + ":" + serialize(input[key]));
+          }
+        }
+        return "{" + items.join(",") + "}";
+      }
+      return "null";
+    }
+
+    return serialize(value);
+  };
+}
+
+if (typeof JSON.parse !== "function") {
+  JSON.parse = function (text) {
+    // // Parse CEP-generated JSON payloads in hosts where ExtendScript has no native JSON object.
+    return eval("(" + String(text || "null") + ")");
+  };
+}
+
 function subcreator_ping() {
   // // Return a deterministic host status response.
   return JSON.stringify({ ok: true, message: "Sub Creator host online" });

@@ -387,9 +387,19 @@ function previewHostResponse(value: unknown, maxLength = 800): string {
   return `${text.slice(0, maxLength)}...`;
 }
 
+function buildExtendScriptJsonBootstrap(): string {
+  // // Ensure Premiere's ExtendScript context can parse/stringify JSON even when no Adobe panel has polyfilled it.
+  return [
+    'if(typeof JSON!=="object"){JSON={};}',
+    'if(typeof JSON.stringify!=="function"){JSON.stringify=function(value){function quote(input){return"\\""+String(input).replace(/\\\\/g,"\\\\\\\\").replace(/"/g,"\\\\\\"").replace(/\\r/g,"\\\\r").replace(/\\n/g,"\\\\n").replace(/\\t/g,"\\\\t").replace(/\\f/g,"\\\\f").replace(/\\x08/g,"\\\\b")+"\\"";}function serialize(input){var inputType=typeof input;var index;var items;var key;if(input===null){return"null";}if(inputType==="number"){return isFinite(input)?String(input):"null";}if(inputType==="boolean"){return input?"true":"false";}if(inputType==="string"){return quote(input);}if(inputType==="undefined"||inputType==="function"){return"null";}if(input&&typeof input.length==="number"&&input.constructor===Array){items=[];for(index=0;index<input.length;index+=1){items.push(serialize(input[index]));}return"["+items.join(",")+"]";}if(inputType==="object"){items=[];for(key in input){if(input.hasOwnProperty(key)&&typeof input[key]!=="undefined"&&typeof input[key]!=="function"){items.push(quote(key)+":"+serialize(input[key]));}}return"{"+items.join(",")+"}";}return"null";}return serialize(value);};}',
+    'if(typeof JSON.parse!=="function"){JSON.parse=function(text){return eval("("+String(text||"null")+")");};}'
+  ].join("");
+}
+
 function buildGuardedHostJsonScript(script: string): string {
   // // Wrap JSON-returning ExtendScript calls so missing host functions return actionable JSON instead of raw "EvalScript error".
   const hostFunctionName = getHostFunctionName(script);
+  const jsonBootstrap = buildExtendScriptJsonBootstrap();
   const missingError = JSON.stringify(
     `Premiere host function is missing: ${hostFunctionName}. Restart Premiere Pro, then reinstall Sub Creator with Premiere closed.`
   );
@@ -400,7 +410,7 @@ function buildGuardedHostJsonScript(script: string): string {
       ? `if (typeof ${hostFunctionName} !== "function") { return JSON.stringify({ ok: false, error: ${missingError} }); }`
       : "";
 
-  return `(function(){try{${missingGuard}return ${script};}catch(error){var message=String(error);var details={hostFunction:${quotedHostFunctionName},name:"",message:message,line:"",fileName:""};try{details.name=String(error&&error.name?error.name:"");details.message=String(error&&error.message?error.message:message);details.line=String(error&&error.line?error.line:"");details.fileName=String(error&&error.fileName?error.fileName:"");}catch(detailError){}return JSON.stringify({ ok: false, error: ${exceptionPrefix} + details.message, debug: details });}})()`;
+  return `(function(){try{${jsonBootstrap}${missingGuard}return ${script};}catch(error){var message=String(error);var details={hostFunction:${quotedHostFunctionName},name:"",message:message,line:"",fileName:""};try{details.name=String(error&&error.name?error.name:"");details.message=String(error&&error.message?error.message:message);details.line=String(error&&error.line?error.line:"");details.fileName=String(error&&error.fileName?error.fileName:"");}catch(detailError){}return JSON.stringify({ ok: false, error: ${exceptionPrefix} + details.message, debug: details });}})()`;
 }
 
 function buildInvalidHostJsonResponse<T>(

@@ -5010,7 +5010,14 @@ function assertHostApplySucceeded(rawResult: string): ApplyCaptionPlanHostResult
 
 async function resolveRequestedSequenceRange(
   options: CaptionBuildOptions
-): Promise<{ rangeStartSeconds?: number; rangeEndSeconds?: number }> {
+): Promise<{
+  rangeStartSeconds?: number;
+  rangeEndSeconds?: number;
+  sequenceName?: string;
+  fallbackReason?: string;
+  hostError?: string;
+  debug?: unknown;
+}> {
   // // Read the active sequence In/Out only when the user explicitly selected range-limited generation.
   // // Fall back to the full sequence when Premiere has no valid In/Out range set yet.
   if (options.whisperSequenceRange !== "in_out") {
@@ -5018,15 +5025,27 @@ async function resolveRequestedSequenceRange(
   }
 
   const range = await getActiveSequenceRange();
+  if (range.fallbackReason || range.hostError) {
+    return {
+      fallbackReason: range.fallbackReason,
+      hostError: range.hostError,
+      debug: range.debug
+    };
+  }
+
   const rangeStartSeconds = Number(range.rangeStartSeconds);
   const rangeEndSeconds = Number(range.rangeEndSeconds);
   if (!Number.isFinite(rangeStartSeconds) || !Number.isFinite(rangeEndSeconds) || rangeEndSeconds <= rangeStartSeconds) {
-    return {};
+    return {
+      fallbackReason: "No valid In/Out range is set; using entire sequence.",
+      sequenceName: range.sequenceName
+    };
   }
 
   return {
     rangeStartSeconds,
-    rangeEndSeconds
+    rangeEndSeconds,
+    sequenceName: range.sequenceName
   };
 }
 

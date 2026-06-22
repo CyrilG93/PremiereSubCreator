@@ -190,6 +190,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.32 - 2026-06-22
+
+- Active sequence audio export is more reliable when Premiere rejects a host response.
+- Export failures now include a detailed debug payload for troubleshooting.
+
 ### 1.1.25 - 2026-06-18
 
 - Fixed Whisper generation from the active sequence on Premiere Pro 26.x.

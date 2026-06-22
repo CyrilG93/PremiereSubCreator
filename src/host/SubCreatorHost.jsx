@@ -54,9 +54,13 @@ function subcreator_ok(data) {
   return JSON.stringify({ ok: true, data: data });
 }
 
-function subcreator_error(message) {
+function subcreator_error(message, debug) {
   // // Normalize failure responses for panel-side parsing.
-  return JSON.stringify({ ok: false, error: String(message) });
+  var payload = { ok: false, error: String(message) };
+  if (debug !== undefined) {
+    payload.debug = debug;
+  }
+  return JSON.stringify(payload);
 }
 
 function subcreator_is_windows() {
@@ -429,6 +433,63 @@ function subcreator_wait_for_file_stable(filePath, timeoutMs, stablePasses) {
   return finalFile.exists && Number(finalFile.length) > 0;
 }
 
+function subcreator_file_debug_snapshot(filePath) {
+  // // Capture file state from ExtendScript so failed exports show whether Premiere touched the WAV.
+  try {
+    var normalizedPath = subcreator_normalize_system_path(filePath || "");
+    if (!normalizedPath) {
+      return { path: "", exists: false };
+    }
+
+    var fileRef = new File(normalizedPath);
+    if (!fileRef.exists) {
+      return { path: normalizedPath, exists: false };
+    }
+
+    return {
+      path: fileRef.fsName,
+      exists: true,
+      length: Number(fileRef.length || 0),
+      modified: String(fileRef.modified || "")
+    };
+  } catch (error) {
+    return { path: String(filePath || ""), exists: "unknown", error: String(error) };
+  }
+}
+
+function subcreator_sequence_debug_snapshot(sequence) {
+  // // Capture stable sequence facts without depending on optional Premiere APIs.
+  var debug = {
+    name: "",
+    sequenceID: "",
+    videoTracks: "",
+    audioTracks: "",
+    frameSize: "",
+    timebase: ""
+  };
+
+  try {
+    debug.name = String(sequence && sequence.name ? sequence.name : "");
+  } catch (nameError) {}
+  try {
+    debug.sequenceID = String(sequence && sequence.sequenceID ? sequence.sequenceID : "");
+  } catch (idError) {}
+  try {
+    debug.videoTracks = String(sequence && sequence.videoTracks ? sequence.videoTracks.numTracks : "");
+  } catch (videoTrackError) {}
+  try {
+    debug.audioTracks = String(sequence && sequence.audioTracks ? sequence.audioTracks.numTracks : "");
+  } catch (audioTrackError) {}
+  try {
+    debug.frameSize = String(sequence.frameSizeHorizontal || "") + "x" + String(sequence.frameSizeVertical || "");
+  } catch (frameSizeError) {}
+  try {
+    debug.timebase = String(sequence.timebase || "");
+  } catch (timebaseError) {}
+
+  return debug;
+}
+
 function subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors) {
   // // Queue the sequence through Adobe Media Encoder only when the isolated Premiere export has failed.
   if (!app.encoder || typeof app.encoder.encodeSequence !== "function") {
@@ -484,27 +545,53 @@ function subcreator_try_direct_sequence_export(sequence, outputPath, presetPath,
 
 function subcreator_export_active_sequence_audio(payloadEncoded) {
   // // Render the active-sequence audible mix to a temporary WAV file for Whisper transcription.
+  var debug = {
+    hostOs: String($.os || ""),
+    payloadDecoded: false,
+    exportMode: "",
+    rangeMode: "",
+    workAreaType: "",
+    requestedOutputPath: "",
+    normalizedOutputPath: "",
+    requestedPresetPath: "",
+    resolvedPresetPath: "",
+    sequence: {},
+    activeRange: {},
+    exportErrors: [],
+    fileBefore: {},
+    fileAfter: {}
+  };
+
   try {
     var payloadText = subcreator_decode_payload(payloadEncoded || "");
     var payload = payloadText ? JSON.parse(payloadText) : {};
+    debug.payloadDecoded = true;
+    debug.rangeMode = String(payload.rangeMode || "");
+    debug.exportMode = String(payload.exportMode || "premiere_direct");
+    debug.requestedOutputPath = String(payload.outputPath || "");
+    debug.requestedPresetPath = String(payload.presetPath || "");
 
     if (!app || !app.project || !app.project.activeSequence) {
-      return subcreator_error("No active sequence available for Whisper export.");
+      return subcreator_error("No active sequence available for Whisper export.", debug);
     }
 
     var sequence = app.project.activeSequence;
+    debug.sequence = subcreator_sequence_debug_snapshot(sequence);
     var outputPath = subcreator_normalize_system_path(payload.outputPath || "");
+    debug.normalizedOutputPath = outputPath;
     if (!outputPath) {
-      return subcreator_error("Missing output path for Whisper sequence export.");
+      return subcreator_error("Missing output path for Whisper sequence export.", debug);
     }
 
     var presetPath = subcreator_find_audio_export_preset(payload.presetPath || "");
+    debug.resolvedPresetPath = presetPath;
     if (!presetPath) {
-      return subcreator_error("Unable to locate the WAV preset for Whisper sequence export.");
+      return subcreator_error("Unable to locate the WAV preset for Whisper sequence export.", debug);
     }
 
     var requestedInOut = String(payload.rangeMode || "") === "in_out";
     var activeRange = requestedInOut ? subcreator_read_sequence_in_out_range(sequence) : { rangeStartSeconds: null, rangeEndSeconds: null };
+    debug.activeRange = activeRange;
     var hasValidRange =
       requestedInOut &&
       activeRange &&
@@ -515,6 +602,7 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       activeRange.rangeEndSeconds > activeRange.rangeStartSeconds;
     // // Fall back to the full sequence when the panel requested In/Out but the active sequence has no valid range.
     var workAreaType = hasValidRange ? 1 : 0;
+    debug.workAreaType = String(workAreaType);
     if (!hasValidRange) {
       activeRange = { rangeStartSeconds: null, rangeEndSeconds: null };
     }
@@ -527,19 +615,24 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
 
     var exportMode = String(payload.exportMode || "premiere_direct");
     var exportErrors = [];
+    debug.fileBefore = subcreator_file_debug_snapshot(outputPath);
     // // Keep each exporter in a separate evalScript call so a Premiere direct-export failure cannot prevent the AME fallback.
     var exportTriggered =
       exportMode === "media_encoder"
         ? subcreator_try_encoder_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors)
         : subcreator_try_direct_sequence_export(sequence, outputPath, presetPath, workAreaType, exportErrors);
+    debug.exportErrors = exportErrors;
+    debug.fileAfter = subcreator_file_debug_snapshot(outputPath);
 
     if (!exportTriggered) {
-      return subcreator_error("Unable to start active-sequence audio export. " + exportErrors.join(" | "));
+      return subcreator_error("Unable to start active-sequence audio export. " + exportErrors.join(" | "), debug);
     }
 
     if (!subcreator_wait_for_file_stable(outputPath, 600000, 3)) {
-      return subcreator_error("Timed out waiting for exported Whisper audio file: " + outputPath);
+      debug.fileAfter = subcreator_file_debug_snapshot(outputPath);
+      return subcreator_error("Timed out waiting for exported Whisper audio file: " + outputPath, debug);
     }
+    debug.fileAfter = subcreator_file_debug_snapshot(outputPath);
 
     return subcreator_ok({
       audioPath: outputFile.fsName,
@@ -547,10 +640,12 @@ function subcreator_export_active_sequence_audio(payloadEncoded) {
       exportMethod: exportMode,
       sequenceName: String(sequence.name || ""),
       rangeStartSeconds: activeRange.rangeStartSeconds,
-      rangeEndSeconds: activeRange.rangeEndSeconds
+      rangeEndSeconds: activeRange.rangeEndSeconds,
+      debug: debug
     });
   } catch (error) {
-    return subcreator_error(error);
+    debug.exception = String(error);
+    return subcreator_error(error, debug);
   }
 }
 

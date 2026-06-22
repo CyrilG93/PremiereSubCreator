@@ -92,12 +92,16 @@ interface WhisperSequenceExportResult {
   rangeStartSeconds?: number;
   rangeEndSeconds?: number;
   audioDurationSeconds?: number;
+  debug?: unknown;
 }
 
 interface ActiveSequenceRangeResult {
   rangeStartSeconds?: number;
   rangeEndSeconds?: number;
   sequenceName?: string;
+  fallbackReason?: string;
+  hostError?: string;
+  debug?: unknown;
 }
 
 export interface WhisperRuntimeStatus {
@@ -427,6 +431,31 @@ function buildInvalidHostJsonResponse<T>(
       generatedAt: new Date().toISOString()
     }
   };
+}
+
+function readCepFileSnapshot(modules: CepNodeModules, filePath: string): Record<string, unknown> {
+  // // Capture the temporary WAV state so export failures show whether Premiere created or locked a file.
+  try {
+    if (!filePath || !modules.fs.existsSync(filePath)) {
+      return { path: filePath, exists: false };
+    }
+
+    const stats = modules.fs.statSync(filePath);
+    return {
+      path: filePath,
+      exists: true,
+      size: Number(stats.size || 0),
+      mtimeMs: Number(stats.mtimeMs || 0),
+      isFile: typeof stats.isFile === "function" ? stats.isFile() : undefined
+    };
+  } catch (error) {
+    return { path: filePath, exists: "unknown", error: String(error) };
+  }
+}
+
+function buildWhisperExportErrorMessage(message: string, debug: Record<string, unknown>): string {
+  // // Attach a compact JSON payload to user-shareable errors from machine-specific Premiere export failures.
+  return `${message}\nDebug payload:\n${JSON.stringify(debug, null, 2)}`;
 }
 
 async function evalHostJson<T>(script: string): Promise<HostJsonResponse<T>> {
@@ -3363,7 +3392,11 @@ export async function getActiveSequenceRange(): Promise<ActiveSequenceRangeResul
   // // Read the active sequence In/Out values directly from ExtendScript so non-Whisper sources can respect the same range control.
   const response = await evalHostJson<ActiveSequenceRangeResult>("subcreator_get_active_sequence_range()");
   if (!response.ok) {
-    throw new Error(response.error ?? "Unable to read active sequence range.");
+    return {
+      fallbackReason: "Unable to read active sequence In/Out range; using entire sequence.",
+      hostError: response.error ?? "Unable to read active sequence range.",
+      debug: response.debug
+    };
   }
 
   return {
@@ -3405,11 +3438,28 @@ export async function exportActiveSequenceAudioForWhisper(
   const outputDir = modules.path.join(modules.os.tmpdir(), "SubCreatorWhisperSequence");
   modules.fs.mkdirSync(outputDir, { recursive: true });
 
-  const outputPath = modules.path.join(outputDir, `subcreator-sequence-${Date.now()}.wav`);
+  const outputBase = `subcreator-sequence-${Date.now()}`;
+  const exportDebug: Record<string, unknown> = {
+    rangeMode,
+    extensionRootPath,
+    presetPath,
+    outputDir,
+    platform: typeof navigator !== "undefined" ? navigator.platform : "",
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    cepHostAvailable: Boolean(window.__adobe_cep__),
+    cepNodeAvailable: Boolean(modules),
+    attempts: []
+  };
   const runExport = async (
     exportMethod: "premiere_direct" | "media_encoder"
-  ): Promise<HostJsonResponse<WhisperSequenceExportResult>> => {
+  ): Promise<{
+    response: HostJsonResponse<WhisperSequenceExportResult>;
+    outputPath: string;
+    elapsedMs: number;
+    fileSnapshot: Record<string, unknown>;
+  }> => {
     // // Invoke each exporter independently so Premiere cannot abort the fallback with the direct evalScript call.
+    const outputPath = modules.path.join(outputDir, `${outputBase}-${exportMethod}.wav`);
     const encodedPayload = encodeURIComponent(
       JSON.stringify({
         outputPath,
@@ -3418,15 +3468,39 @@ export async function exportActiveSequenceAudioForWhisper(
         exportMode: exportMethod
       })
     );
-    return evalHostJson<WhisperSequenceExportResult>(
+    const startedAt = Date.now();
+    const response = await evalHostJson<WhisperSequenceExportResult>(
       `subcreator_export_active_sequence_audio("${escapeForJsx(encodedPayload)}")`
     );
+    const elapsedMs = Date.now() - startedAt;
+    const fileSnapshot = readCepFileSnapshot(modules, outputPath);
+    const attempts = Array.isArray(exportDebug.attempts) ? exportDebug.attempts : [];
+    attempts.push({
+      exportMethod,
+      outputPath,
+      elapsedMs,
+      ok: Boolean(response.ok),
+      error: response.error,
+      hostDebug: response.debug ?? response.data?.debug,
+      fileSnapshot
+    });
+    exportDebug.attempts = attempts;
+    return { response, outputPath, elapsedMs, fileSnapshot };
   };
 
-  let response = await runExport("premiere_direct");
-  if (!response.ok && (await waitForStableCepFile(modules, outputPath, 5000, 3))) {
+  const directAttempt = await runExport("premiere_direct");
+  let response = directAttempt.response;
+  let outputPath = directAttempt.outputPath;
+  if (!response.ok && (await waitForStableCepFile(modules, outputPath, 30000, 3))) {
     // // Premiere 26 can finish the WAV while still returning "EvalScript error"; recover that valid direct export.
     const activeRange = await getActiveSequenceRange().catch((): ActiveSequenceRangeResult => ({}));
+    const attempts = Array.isArray(exportDebug.attempts) ? exportDebug.attempts : [];
+    attempts.push({
+      exportMethod: "premiere_direct",
+      recoveredAfterInvalidHostResponse: true,
+      fileSnapshot: readCepFileSnapshot(modules, outputPath)
+    });
+    exportDebug.attempts = attempts;
     response = {
       ok: true,
       data: {
@@ -3441,23 +3515,22 @@ export async function exportActiveSequenceAudioForWhisper(
   }
 
   if (!response.ok) {
-    // // Remove a failed direct export before AME writes the fallback to the same temporary path.
-    try {
-      if (modules.fs.existsSync(outputPath)) {
-        modules.fs.unlinkSync(outputPath);
-      }
-    } catch {
-      // // Let AME report an actionable export error if Premiere still owns an incomplete file.
-    }
-    response = await runExport("media_encoder");
+    // // Use a different WAV path for AME so a late or locked Premiere direct export cannot block the fallback.
+    const mediaEncoderAttempt = await runExport("media_encoder");
+    response = mediaEncoderAttempt.response;
+    outputPath = mediaEncoderAttempt.outputPath;
   }
 
   if (!response.ok) {
-    throw new Error(response.error ?? "Unable to export active sequence audio for Whisper.");
+    exportDebug.finalFileSnapshot = readCepFileSnapshot(modules, outputPath);
+    throw new Error(
+      buildWhisperExportErrorMessage(response.error ?? "Unable to export active sequence audio for Whisper.", exportDebug)
+    );
   }
 
+  const resolvedAudioPath = String(response.data?.audioPath ?? outputPath);
   return {
-    audioPath: String(response.data?.audioPath ?? outputPath),
+    audioPath: resolvedAudioPath,
     presetPath: String(response.data?.presetPath ?? presetPath),
     exportMethod: response.data?.exportMethod ?? "premiere_direct",
     sequenceName: String(response.data?.sequenceName ?? ""),
@@ -3468,7 +3541,12 @@ export async function exportActiveSequenceAudioForWhisper(
     audioDurationSeconds:
       Number.isFinite(Number(response.data?.audioDurationSeconds)) && Number(response.data?.audioDurationSeconds) > 0
         ? Number(response.data?.audioDurationSeconds)
-        : readWavDurationSeconds(modules, String(response.data?.audioPath ?? outputPath))
+        : readWavDurationSeconds(modules, resolvedAudioPath),
+    debug: {
+      ...exportDebug,
+      hostDebug: response.data?.debug,
+      finalFileSnapshot: readCepFileSnapshot(modules, resolvedAudioPath)
+    }
   };
 }
 

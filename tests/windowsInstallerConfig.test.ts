@@ -65,6 +65,20 @@ describe("Windows bundled font installation", () => {
     expect(fontInstaller).toContain("SendMessageTimeout");
   });
 
+  it("preserves pre-existing user or system font registrations with the same internal name", () => {
+    // // Bundled fonts like Montserrat must not replace fonts the user already installed before Sub Creator.
+    const fontInstaller = readFileSync(fontInstallerPath, "utf8");
+    const lookupIndex = fontInstaller.indexOf("Get-SubCreatorExistingFontRegistration -RegistryName $registryName");
+    const preserveIndex = fontInstaller.indexOf("$existingRegistration -and -not $existingRegistration.IsManaged");
+    const writeIndex = fontInstaller.indexOf("New-ItemProperty -Path $registryPath -Name $registryName");
+
+    expect(fontInstaller).toContain("HKLM:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts");
+    expect(fontInstaller).toContain("SUBCREATOR_FONTS_PRESERVED=$preserved");
+    expect(lookupIndex).toBeGreaterThan(0);
+    expect(preserveIndex).toBeGreaterThan(lookupIndex);
+    expect(writeIndex).toBeGreaterThan(preserveIndex);
+  });
+
   it("routes batch, private-runtime, and EXE installs through the shared font installer", () => {
     // // Every Windows package format must use the same registration and notification behavior.
     const batchInstaller = readFileSync(batchInstallerPath, "utf8");

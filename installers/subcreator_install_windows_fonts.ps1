@@ -9,6 +9,8 @@ $ErrorActionPreference = "Stop"
 $sourceRoot = [System.IO.Path]::GetFullPath($FontsDir)
 $targetRoot = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
 $registryPath = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+$machineRegistryPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+$systemFontsRoot = Join-Path $env:WINDIR "Fonts"
 
 Add-Type -TypeDefinition @"
 using System;
@@ -50,6 +52,77 @@ function Get-SubCreatorFontTitle {
   return ([System.IO.Path]::GetFileNameWithoutExtension($FontFile.Name) -replace "[-_]+", " ").Trim()
 }
 
+function Resolve-SubCreatorFontRegistryValue {
+  param(
+    [string]$RegistryValue,
+    [string]$DefaultRoot
+  )
+
+  # // Normalize registry values so existing user/system fonts can be recognized without changing their registration.
+  if (-not $RegistryValue) {
+    return ""
+  }
+
+  $expandedValue = [System.Environment]::ExpandEnvironmentVariables($RegistryValue)
+  if ([System.IO.Path]::IsPathRooted($expandedValue)) {
+    return [System.IO.Path]::GetFullPath($expandedValue)
+  }
+
+  return [System.IO.Path]::GetFullPath((Join-Path $DefaultRoot $expandedValue))
+}
+
+function Test-SubCreatorManagedFontPath {
+  param([string]$FontPath)
+
+  # // Treat only content-addressed Sub Creator files as installer-owned; every other font path belongs to the user or Windows.
+  if (-not $FontPath) {
+    return $false
+  }
+
+  try {
+    $fullPath = [System.IO.Path]::GetFullPath($FontPath)
+    $root = [System.IO.Path]::GetFullPath($targetRoot).TrimEnd("\") + "\"
+    $fileName = [System.IO.Path]::GetFileName($fullPath)
+    return $fullPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) -and
+      $fileName.StartsWith("SubCreator-", [System.StringComparison]::OrdinalIgnoreCase)
+  } catch {
+    return $false
+  }
+}
+
+function Get-SubCreatorExistingFontRegistration {
+  param([string]$RegistryName)
+
+  # // Check both per-user and system-wide registrations before adding a Sub Creator copy with the same internal font name.
+  $locations = @(
+    @{ Scope = "current-user"; Path = $registryPath; DefaultRoot = $targetRoot },
+    @{ Scope = "system"; Path = $machineRegistryPath; DefaultRoot = $systemFontsRoot }
+  )
+
+  foreach ($location in $locations) {
+    $properties = Get-ItemProperty -Path $location.Path -Name $RegistryName -ErrorAction SilentlyContinue
+    if (-not $properties) {
+      continue
+    }
+
+    $value = [string]$properties.$RegistryName
+    if (-not $value) {
+      continue
+    }
+
+    $resolvedPath = Resolve-SubCreatorFontRegistryValue -RegistryValue $value -DefaultRoot $location.DefaultRoot
+    return [PSCustomObject]@{
+      Scope = $location.Scope
+      RegistryPath = $location.Path
+      Value = $value
+      ResolvedPath = $resolvedPath
+      IsManaged = Test-SubCreatorManagedFontPath -FontPath $resolvedPath
+    }
+  }
+
+  return $null
+}
+
 function Remove-SubCreatorLegacyFontRegistration {
   param(
     [System.IO.FileInfo]$SourceFile,
@@ -57,7 +130,7 @@ function Remove-SubCreatorLegacyFontRegistration {
     [string]$FontKind
   )
 
-  # // Remove only the old Sub Creator entry inferred from this exact filename; never delete font files or unrelated registrations.
+  # // Preserve legacy entries unless they clearly point to a content-addressed Sub Creator file; never touch user-owned font registrations.
   $legacyDisplayName = ([System.IO.Path]::GetFileNameWithoutExtension($SourceFile.Name) -replace "[-_]+", " ")
   $legacyRegistryName = "$legacyDisplayName ($FontKind)"
   if ($legacyRegistryName -eq $CorrectRegistryName) {
@@ -70,9 +143,8 @@ function Remove-SubCreatorLegacyFontRegistration {
   }
 
   try {
-    $legacyPath = [System.IO.Path]::GetFullPath([string]$legacyValue)
-    $expectedLegacyPath = Join-Path $targetRoot $SourceFile.Name
-    if ($legacyPath -ieq $expectedLegacyPath) {
+    $legacyPath = Resolve-SubCreatorFontRegistryValue -RegistryValue ([string]$legacyValue) -DefaultRoot $targetRoot
+    if (Test-SubCreatorManagedFontPath -FontPath $legacyPath) {
       Remove-ItemProperty -Path $registryPath -Name $legacyRegistryName -Force
     }
   } catch {}
@@ -87,6 +159,7 @@ New-Item -Path $registryPath -Force | Out-Null
 $shellApplication = New-Object -ComObject Shell.Application
 $installed = 0
 $kept = 0
+$preserved = 0
 $failed = 0
 $registeredNames = New-Object System.Collections.Generic.List[string]
 
@@ -95,7 +168,23 @@ Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
   ForEach-Object {
     $sourceFile = $_
     try {
-      # // Content-addressed filenames avoid replacing or deleting a font that is already loaded by Premiere.
+      $fontTitle = Get-SubCreatorFontTitle -FontFile $sourceFile -ShellApplication $shellApplication
+      $fontKind = if ($sourceFile.Extension -ieq ".otf") { "OpenType" } else { "TrueType" }
+      $registryName = "$fontTitle ($fontKind)"
+      $existingRegistration = Get-SubCreatorExistingFontRegistration -RegistryName $registryName
+
+      if ($existingRegistration -and -not $existingRegistration.IsManaged) {
+        # // A user or Windows font with the same internal name already exists; keep it as the authoritative registration.
+        $preserved += 1
+        if (Test-Path -LiteralPath $existingRegistration.ResolvedPath -PathType Leaf) {
+          [void][SubCreatorFontApi]::AddFontResourceEx($existingRegistration.ResolvedPath, 0, [IntPtr]::Zero)
+        }
+        [void]$registeredNames.Add($fontTitle)
+        Write-Host ("SUBCREATOR_FONT_PRESERVED=" + $fontTitle + " from " + $existingRegistration.Scope)
+        return
+      }
+
+      # // Content-addressed filenames avoid replacing or deleting a Sub Creator font that is already loaded by Premiere.
       $sourceHash = (Get-FileHash -LiteralPath $sourceFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       $safeBaseName = ([System.IO.Path]::GetFileNameWithoutExtension($sourceFile.Name) -replace "[^A-Za-z0-9._-]", "-")
       $targetName = "SubCreator-$safeBaseName-$($sourceHash.Substring(0, 12))$($sourceFile.Extension.ToLowerInvariant())"
@@ -111,9 +200,6 @@ Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
         $installed += 1
       }
 
-      $fontTitle = Get-SubCreatorFontTitle -FontFile $sourceFile -ShellApplication $shellApplication
-      $fontKind = if ($sourceFile.Extension -ieq ".otf") { "OpenType" } else { "TrueType" }
-      $registryName = "$fontTitle ($fontKind)"
       Remove-SubCreatorLegacyFontRegistration -SourceFile $sourceFile -CorrectRegistryName $registryName -FontKind $fontKind
       New-ItemProperty -Path $registryPath -Name $registryName -Value $destination -PropertyType String -Force | Out-Null
 
@@ -143,6 +229,7 @@ $broadcastResult = [IntPtr]::Zero
 
 Write-Host "SUBCREATOR_FONTS_INSTALLED=$installed"
 Write-Host "SUBCREATOR_FONTS_SKIPPED=$kept"
+Write-Host "SUBCREATOR_FONTS_PRESERVED=$preserved"
 Write-Host "SUBCREATOR_FONTS_FAILED=$failed"
 Write-Host ("SUBCREATOR_FONT_NAMES=" + (($registeredNames | Sort-Object -Unique) -join ", "))
 if ($failed -gt 0) {

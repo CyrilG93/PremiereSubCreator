@@ -190,6 +190,10 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.36 - 2026-06-24
+
+- The generation progress bar now appears immediately after clicking Generate subtitles.
+
 ### 1.1.35 - 2026-06-24
 
 - Windows installers now preserve fonts that were already installed on the user's machine.

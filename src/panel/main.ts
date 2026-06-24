@@ -763,9 +763,9 @@ function bindHostThemeListener(): void {
 }
 
 function waitForNextPaint(): Promise<void> {
-  // // Yield one frame so progress-bar/state changes paint before lengthy async work continues.
+  // // Yield past one animation frame so progress-bar/state changes can paint before lengthy async work continues.
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
   });
 }
 
@@ -5294,6 +5294,7 @@ async function generate(): Promise<void> {
   setGenerateButtonsBusy(true);
   try {
     setLog(translate("log.generateRequested"));
+    await updateGenerateProgress(1, translate("progress.prepareGeneration"), true);
     const requestedSourceMode = getSourceMode();
     if (
       requestedSourceMode === "whisper_sequence" ||

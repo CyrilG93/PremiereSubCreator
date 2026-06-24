@@ -189,6 +189,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.39 - 2026-06-24
+
+- Visual editor buttons now use the full panel width.
+- Color live updates now rebuild the Premiere selection refresh more reliably.
+
 ### 1.1.38 - 2026-06-24
 
 - Visual editor is simpler and keeps live updates always enabled.

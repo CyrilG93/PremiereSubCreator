@@ -5885,33 +5885,48 @@ function subcreator_force_sequence_visual_refresh(sequence) {
   return false;
 }
 
-function subcreator_force_selected_track_items_ui_refresh(trackItems) {
-  // // Ask Premiere to repaint selected timeline items without changing the user's current selection.
-  var refreshed = false;
-  for (var index = 0; index < trackItems.length; index += 1) {
-    var trackItem = trackItems[index];
-    if (!trackItem || typeof trackItem.setSelected !== "function") {
-      continue;
-    }
-
-    try {
-      trackItem.setSelected(true, true);
-      refreshed = true;
-      continue;
-    } catch (firstSelectError) {}
-
-    try {
-      trackItem.setSelected(1, 1);
-      refreshed = true;
-    } catch (secondSelectError) {}
+function subcreator_try_set_track_item_selected(trackItem, selected, deselectOthers) {
+  // // Normalize boolean/numeric setSelected variants used by different Premiere host versions.
+  if (!trackItem || typeof trackItem.setSelected !== "function") {
+    return false;
   }
 
-  return refreshed;
+  try {
+    trackItem.setSelected(selected === true, deselectOthers === true);
+    return true;
+  } catch (firstSelectError) {}
+
+  try {
+    trackItem.setSelected(selected === true ? 1 : 0, deselectOthers === true ? 1 : 0);
+    return true;
+  } catch (secondSelectError) {}
+
+  return false;
+}
+
+function subcreator_pulse_selected_track_items_for_refresh(trackItems) {
+  // // Temporarily clear/rebuild selection because color writes sometimes repaint only after a real selection transition.
+  var items = trackItems || [];
+  var changed = false;
+  for (var clearIndex = 0; clearIndex < items.length; clearIndex += 1) {
+    changed = subcreator_try_set_track_item_selected(items[clearIndex], false, clearIndex === 0) || changed;
+  }
+
+  try {
+    $.sleep(25);
+  } catch (sleepError) {}
+
+  for (var selectIndex = 0; selectIndex < items.length; selectIndex += 1) {
+    changed = subcreator_try_set_track_item_selected(items[selectIndex], true, selectIndex === 0) || changed;
+  }
+
+  return changed;
 }
 
 function subcreator_force_color_apply_visual_refresh(sequence, trackItems) {
-  // // Color writes can update the MOGRT value while Premiere keeps a stale Program Monitor frame until selection changes.
-  var selectionRefresh = subcreator_force_selected_track_items_ui_refresh(trackItems || []);
+  // // Color writes can update the MOGRT value while Premiere keeps a stale Program Monitor frame until selection/timeline changes.
+  var firstRefresh = subcreator_force_sequence_visual_refresh(sequence);
+  var selectionPulse = subcreator_pulse_selected_track_items_for_refresh(trackItems || []);
   var delayedRefresh = false;
   try {
     $.sleep(60);
@@ -5919,7 +5934,8 @@ function subcreator_force_color_apply_visual_refresh(sequence, trackItems) {
   } catch (refreshDelayError) {}
 
   return {
-    selectionRefresh: selectionRefresh,
+    firstRefresh: firstRefresh,
+    selectionPulse: selectionPulse,
     delayedRefresh: delayedRefresh
   };
 }
@@ -6769,8 +6785,10 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
     if (colorUpdatedCount > 0) {
       var colorRefresh = subcreator_force_color_apply_visual_refresh(sequence, mogrtItems);
       debugLines.push(
-        "color_ui_refresh selection=" +
-          (colorRefresh.selectionRefresh ? "forced" : "not_available") +
+        "color_ui_refresh first=" +
+          (colorRefresh.firstRefresh ? "forced" : "not_available") +
+          " selection_pulse=" +
+          (colorRefresh.selectionPulse ? "forced" : "not_available") +
           " delayed=" +
           (colorRefresh.delayedRefresh ? "forced" : "not_available")
       );

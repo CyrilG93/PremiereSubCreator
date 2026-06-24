@@ -31,6 +31,7 @@ import {
   buildPremiereTemplateCueMogrts,
   cancelCurrentJob,
   alignCorrectedTranscript,
+  addVisualSelectionChangedListener,
   applyVisualPropertiesToSelectedMogrts,
   deleteTemporaryWhisperAudio,
   exportActiveSequenceAudioForWhisper,
@@ -42,11 +43,13 @@ import {
   openWhisperModelsFolder,
   pickCorrectedTranscriptPath,
   pickSrtPath,
+  readSelectedMogrtVisualSignature,
   readSelectedMogrtTextItems,
   readInstalledMogrtCatalog,
   readPremiereTemplateTextPayloads,
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
+  registerVisualSelectionWatcher,
   transcribeWithWhisper,
   transcribeWithWhisperX,
   applySelectedMogrtTextItems,
@@ -313,6 +316,12 @@ let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
 let visualLiveUpdateEnabled = true;
+let visualSelectionAutoRefreshTimer: number | null = null;
+let visualSelectionPollTimer: number | null = null;
+let visualSelectionRefreshInFlight = false;
+let visualSelectionWatcherCleanup: (() => void) | null = null;
+let lastVisualSelectionSignature = "";
+let pendingVisualSelectionChangeNotice = false;
 let logPanelExpanded = true;
 let verboseLogsEnabled = false;
 const logHistory: PanelLogState[] = [];
@@ -347,6 +356,8 @@ const textEditorPendingCommitTimers = new Map<string, number>();
 const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
+const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
+const VISUAL_SELECTION_POLL_INTERVAL_MS = 1000;
 const FLOATING_SELECT_ROW_HEIGHT_PX = 28;
 const FLOATING_SELECT_MIN_ROWS = 4;
 const FLOATING_SELECT_MAX_ROWS = 10;
@@ -2179,10 +2190,15 @@ function setActiveMode(mode: PanelMode): void {
   activeMode = mode;
   if (mode !== "visual") {
     visualLiveUpdateQueued = false;
+    clearVisualSelectionAutoRefreshTimer();
+    stopVisualSelectionPolling();
     if (visualLiveUpdateTimer !== null) {
       window.clearTimeout(visualLiveUpdateTimer);
       visualLiveUpdateTimer = null;
     }
+  } else {
+    startVisualSelectionPolling();
+    scheduleVisualSelectionAutoRefresh("tab");
   }
 
   if (elements.tabGenerate) {
@@ -2372,6 +2388,9 @@ function renderVisualSelectionSummary(): void {
         props: String(Math.max(1, copiedVisualSourcePropertyCount || copiedVisualChanges.length))
       })
     );
+  }
+  if (pendingVisualSelectionChangeNotice) {
+    parts.push(translate("visual.selectionChangedPending"));
   }
 
   elements.visualSelectionSummary.textContent = parts.join(" ").trim() || translate("visual.selectionDefault");
@@ -4263,6 +4282,117 @@ function copyLoadedVisualProperties(): void {
   });
 }
 
+function clearVisualSelectionAutoRefreshTimer(): void {
+  // // Cancel a queued selection refresh when the Visual editor leaves the foreground or another refresh supersedes it.
+  if (visualSelectionAutoRefreshTimer !== null) {
+    window.clearTimeout(visualSelectionAutoRefreshTimer);
+    visualSelectionAutoRefreshTimer = null;
+  }
+}
+
+function hasBlockingVisualEditorChanges(): boolean {
+  // // Avoid replacing unsent manual edits when Live update is disabled and the timeline selection changes.
+  return !visualLiveUpdateEnabled && visualDirtyPaths.size > 0;
+}
+
+async function refreshVisualPropertiesIfSelectionChanged(reason: string): Promise<void> {
+  // // Compare a lightweight host signature before doing the expensive full Visual editor read.
+  if (activeMode !== "visual" || visualSelectionRefreshInFlight || visualReadInProgress || visualApplyInProgress) {
+    return;
+  }
+
+  visualSelectionRefreshInFlight = true;
+  try {
+    const selectionSignature = await readSelectedMogrtVisualSignature();
+    const nextSignature = String(selectionSignature.signature || "");
+    if (!nextSignature) {
+      return;
+    }
+    if (nextSignature && nextSignature === lastVisualSelectionSignature) {
+      return;
+    }
+
+    if (hasBlockingVisualEditorChanges()) {
+      pendingVisualSelectionChangeNotice = true;
+      renderVisualSelectionSummary();
+      return;
+    }
+
+    lastVisualSelectionSignature = nextSignature;
+    pendingVisualSelectionChangeNotice = false;
+    await loadVisualPropertiesFromSelection(false, false);
+  } catch (error) {
+    if (reason === "poll") {
+      return;
+    }
+    if (verboseLogsEnabled) {
+      setStructuredLog(translate("log.hostResult"), {
+        visualSelectionAutoRefreshFailed: String(error)
+      });
+    }
+  } finally {
+    visualSelectionRefreshInFlight = false;
+  }
+}
+
+function scheduleVisualSelectionAutoRefresh(reason: string): void {
+  // // Debounce noisy Premiere selection events before comparing the current selection signature.
+  if (activeMode !== "visual") {
+    return;
+  }
+
+  clearVisualSelectionAutoRefreshTimer();
+  visualSelectionAutoRefreshTimer = window.setTimeout(() => {
+    visualSelectionAutoRefreshTimer = null;
+    void refreshVisualPropertiesIfSelectionChanged(reason);
+  }, VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS);
+}
+
+function startVisualSelectionPolling(): void {
+  // // Keep a light fallback active because some CEP reloads or host versions can miss custom selection events.
+  if (visualSelectionPollTimer !== null) {
+    return;
+  }
+
+  visualSelectionPollTimer = window.setInterval(() => {
+    if (activeMode === "visual") {
+      void refreshVisualPropertiesIfSelectionChanged("poll");
+    }
+  }, VISUAL_SELECTION_POLL_INTERVAL_MS);
+}
+
+function stopVisualSelectionPolling(): void {
+  // // Stop fallback polling outside the Visual editor so other tabs stay quiet.
+  if (visualSelectionPollTimer !== null) {
+    window.clearInterval(visualSelectionPollTimer);
+    visualSelectionPollTimer = null;
+  }
+}
+
+async function initializeVisualSelectionWatcher(): Promise<void> {
+  // // Bridge Premiere timeline-selection events into the panel and keep polling as a safety net.
+  if (!visualSelectionWatcherCleanup) {
+    visualSelectionWatcherCleanup = addVisualSelectionChangedListener(() => {
+      scheduleVisualSelectionAutoRefresh("event");
+    });
+  }
+
+  try {
+    await registerVisualSelectionWatcher();
+  } catch (error) {
+    if (verboseLogsEnabled) {
+      setStructuredLog(translate("log.hostResult"), {
+        visualSelectionWatcherUnavailable: String(error)
+      });
+    }
+  }
+
+  if (activeMode === "visual") {
+    startVisualSelectionPolling();
+    scheduleVisualSelectionAutoRefresh("startup");
+  }
+}
+
 async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadingState = false): Promise<void> {
   // // Read selected MOGRT editable controls from host and refresh visual editor UI.
   if (showLoadingState) {
@@ -4277,6 +4407,8 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadin
 
   try {
     const result = await readSelectedMogrtVisualProperties();
+    pendingVisualSelectionChangeNotice = false;
+    lastVisualSelectionSignature = String(result.signature || lastVisualSelectionSignature || "");
     loadedVisualSelectionCount = Number(result.selectedCount || 0);
     loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
     renderVisualPropertyEditor(result.properties);
@@ -5683,6 +5815,8 @@ async function initialize(): Promise<void> {
 
   refreshVisualButtonsBusyState();
   setLog(translate("log.ready"));
+
+  void initializeVisualSelectionWatcher();
 
   void enforceWhisperSourceAvailability()
     .then(() => {

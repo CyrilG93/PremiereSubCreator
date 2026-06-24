@@ -1366,6 +1366,129 @@ function subcreator_build_selected_mogrt_text_signature(sequence, trackItems) {
   return parts.join("||");
 }
 
+function subcreator_build_selected_mogrt_visual_signature(sequence, trackItems) {
+  // // Encode lightweight selection details so the panel can refresh the Visual editor only when the selected MOGRTs change.
+  var sortedItems = subcreator_sort_track_items_by_time(trackItems || []);
+  var parts = [];
+
+  for (var index = 0; index < sortedItems.length; index += 1) {
+    var trackItem = sortedItems[index];
+    var videoTrackIndex = subcreator_find_track_item_video_track_index(sequence, trackItem);
+    var startSeconds = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
+    var endSeconds = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.outPoint || trackItem.endTime));
+    var clipName = subcreator_trim_string(String((trackItem && trackItem.projectItem && trackItem.projectItem.name) || (trackItem && trackItem.name) || "MOGRT"));
+    var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+    parts.push(
+      [
+        String(videoTrackIndex),
+        String(Math.round(Number(startSeconds || 0) * 1000)),
+        String(Math.round(Number(endSeconds || 0) * 1000)),
+        clipName,
+        String(components.length)
+      ].join("|")
+    );
+  }
+
+  return parts.join("||");
+}
+
+function subcreator_get_selected_mogrt_visual_signature() {
+  // // Return a cheap current-selection fingerprint for panel-side auto-refresh checks.
+  try {
+    if (!app || !app.project || !app.project.activeSequence) {
+      return subcreator_error("No active sequence in Premiere.");
+    }
+
+    var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
+    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
+    var signature =
+      String(sequenceIdentity.projectDocumentId || "") +
+      "||" +
+      String(sequenceIdentity.projectPath || "") +
+      "||" +
+      String(sequenceIdentity.sequenceID || "") +
+      "||" +
+      String(sequenceIdentity.sequenceName || "") +
+      "||" +
+      subcreator_build_selected_mogrt_visual_signature(sequence, mogrtItems);
+
+    return subcreator_ok({
+      selectedCount: mogrtItems.length,
+      signature: signature,
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
+var subcreator_visual_selection_event_type = "com.cyrilplugin.subcreator.visualSelectionChanged";
+var subcreator_visual_selection_watcher_registered = false;
+
+function subcreator_dispatch_panel_event(eventType, eventData) {
+  // // Send a custom CSXS event from Premiere ExtendScript to the CEP panel.
+  try {
+    var eoName = Folder.fs === "Macintosh" ? "PlugPlugExternalObject" : "PlugPlugExternalObject.dll";
+    var plugplugLibrary = new ExternalObject("lib:" + eoName);
+    if (!plugplugLibrary) {
+      return false;
+    }
+
+    var eventObject = new CSXSEvent();
+    eventObject.type = eventType;
+    eventObject.data = String(eventData || "");
+    eventObject.dispatch();
+    return true;
+  } catch (eventError) {}
+
+  return false;
+}
+
+function subcreator_notify_visual_selection_changed() {
+  // // Keep the event payload tiny; the panel performs the debounced read only when needed.
+  subcreator_dispatch_panel_event(subcreator_visual_selection_event_type, "selectionChanged");
+}
+
+function subcreator_register_visual_selection_watcher() {
+  // // Subscribe once per ExtendScript engine to Premiere timeline-selection changes.
+  try {
+    if (!app || typeof app.bind !== "function") {
+      return subcreator_error("Premiere event binding is unavailable.");
+    }
+
+    var boundEvents = [];
+    if (!subcreator_visual_selection_watcher_registered) {
+      try {
+        app.bind("onActiveSequenceSelectionChanged", subcreator_notify_visual_selection_changed);
+        boundEvents.push("onActiveSequenceSelectionChanged");
+      } catch (selectionBindError) {}
+
+      try {
+        app.bind("onActiveSequenceChanged", subcreator_notify_visual_selection_changed);
+        boundEvents.push("onActiveSequenceChanged");
+      } catch (sequenceBindError) {}
+
+      if (boundEvents.length < 1) {
+        return subcreator_error("Premiere selection events are unavailable.");
+      }
+
+      subcreator_visual_selection_watcher_registered = true;
+    }
+
+    return subcreator_ok({
+      registered: true,
+      boundEvents: boundEvents,
+      eventType: subcreator_visual_selection_event_type
+    });
+  } catch (error) {
+    return subcreator_error(error);
+  }
+}
+
 function subcreator_detect_visual_property_type(rawValue) {
   // // Categorize host property values so panel can render matching input controls.
   if (typeof rawValue === "number") {
@@ -5770,13 +5893,29 @@ function subcreator_list_selected_mogrt_properties() {
     }
 
     var sequence = app.project.activeSequence;
+    var sequenceIdentity = subcreator_get_sequence_identity(sequence);
     var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
+    var visualSelectionSignature =
+      String(sequenceIdentity.projectDocumentId || "") +
+      "||" +
+      String(sequenceIdentity.projectPath || "") +
+      "||" +
+      String(sequenceIdentity.sequenceID || "") +
+      "||" +
+      String(sequenceIdentity.sequenceName || "") +
+      "||" +
+      subcreator_build_selected_mogrt_visual_signature(sequence, mogrtItems);
 
     if (!mogrtItems.length) {
       return subcreator_ok({
         selectedCount: 0,
         editableCount: 0,
-        properties: []
+        properties: [],
+        signature: visualSelectionSignature,
+        projectDocumentId: sequenceIdentity.projectDocumentId,
+        projectPath: sequenceIdentity.projectPath,
+        sequenceID: sequenceIdentity.sequenceID,
+        sequenceName: sequenceIdentity.sequenceName
       });
     }
 
@@ -5920,6 +6059,11 @@ function subcreator_list_selected_mogrt_properties() {
       selectedCount: mogrtItems.length,
       editableCount: properties.length,
       properties: properties,
+      signature: visualSelectionSignature,
+      projectDocumentId: sequenceIdentity.projectDocumentId,
+      projectPath: sequenceIdentity.projectPath,
+      sequenceID: sequenceIdentity.sequenceID,
+      sequenceName: sequenceIdentity.sequenceName,
       debug: debug
     });
   } catch (error) {

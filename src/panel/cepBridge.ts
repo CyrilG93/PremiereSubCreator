@@ -172,7 +172,26 @@ export interface SelectedMogrtVisualPropertyList {
   selectedCount: number;
   editableCount: number;
   properties: SelectedMogrtVisualProperty[];
+  signature?: string;
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
   debug?: SelectedMogrtVisualDebug;
+}
+
+export interface SelectedMogrtVisualSignature {
+  selectedCount: number;
+  signature: string;
+  projectDocumentId?: string;
+  projectPath?: string;
+  sequenceID?: string;
+  sequenceName?: string;
+}
+
+export interface VisualSelectionWatcherRegistration {
+  registered: boolean;
+  eventType: string;
 }
 
 export interface ApplyVisualPropertiesResult {
@@ -337,6 +356,7 @@ let subcreatorInstalledMogrtCatalogCache:
   | undefined;
 let activeCepJob: ActiveCepJob | null = null;
 const SUBCREATOR_CANCELLED_JOB_CODE = "SUBCREATOR_JOB_CANCELLED";
+export const SUBCREATOR_VISUAL_SELECTION_CHANGED_EVENT = "com.cyrilplugin.subcreator.visualSelectionChanged";
 const SUBCREATOR_SUPPORTED_WHISPER_MODELS: WhisperModelDefinition[] = [
   { value: "tiny", filenames: ["tiny.pt"] },
   { value: "base", filenames: ["base.pt"] },
@@ -3814,7 +3834,25 @@ function normalizeVisualPropertyList(data: unknown): SelectedMogrtVisualProperty
     selectedCount: Number(payload.selectedCount || 0),
     editableCount: Number(payload.editableCount || properties.length),
     properties,
+    signature: typeof payload.signature === "string" ? payload.signature : undefined,
+    projectDocumentId: typeof payload.projectDocumentId === "string" ? payload.projectDocumentId : undefined,
+    projectPath: typeof payload.projectPath === "string" ? payload.projectPath : undefined,
+    sequenceID: typeof payload.sequenceID === "string" ? payload.sequenceID : undefined,
+    sequenceName: typeof payload.sequenceName === "string" ? payload.sequenceName : undefined,
     debug: normalizedDebug
+  };
+}
+
+function normalizeSelectedMogrtVisualSignature(data: unknown): SelectedMogrtVisualSignature {
+  // // Sanitize the cheap visual-selection fingerprint returned by the host watcher helpers.
+  const payload = (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) || {};
+  return {
+    selectedCount: Number(payload.selectedCount || 0),
+    signature: String(payload.signature || ""),
+    projectDocumentId: typeof payload.projectDocumentId === "string" ? payload.projectDocumentId : undefined,
+    projectPath: typeof payload.projectPath === "string" ? payload.projectPath : undefined,
+    sequenceID: typeof payload.sequenceID === "string" ? payload.sequenceID : undefined,
+    sequenceName: typeof payload.sequenceName === "string" ? payload.sequenceName : undefined
   };
 }
 
@@ -3863,6 +3901,46 @@ export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrt
   }
 
   return normalizeVisualPropertyList(response.data);
+}
+
+export async function readSelectedMogrtVisualSignature(): Promise<SelectedMogrtVisualSignature> {
+  // // Request a lightweight selection signature before doing a full Visual editor read.
+  const response = await evalHostJson<SelectedMogrtVisualSignature>("subcreator_get_selected_mogrt_visual_signature()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to read selected MOGRT signature.");
+  }
+
+  return normalizeSelectedMogrtVisualSignature(response.data);
+}
+
+export async function registerVisualSelectionWatcher(): Promise<VisualSelectionWatcherRegistration> {
+  // // Ask Premiere ExtendScript to forward active-sequence selection changes to this CEP panel.
+  const response = await evalHostJson<VisualSelectionWatcherRegistration>("subcreator_register_visual_selection_watcher()");
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to register visual selection watcher.");
+  }
+
+  const payload = response.data && typeof response.data === "object" ? (response.data as unknown as Record<string, unknown>) : {};
+  return {
+    registered: payload.registered === true,
+    eventType: String(payload.eventType || SUBCREATOR_VISUAL_SELECTION_CHANGED_EVENT)
+  };
+}
+
+export function addVisualSelectionChangedListener(listener: (event?: unknown) => void): () => void {
+  // // Subscribe to the custom CSXS event when CEP exposes the low-level listener bridge.
+  const addEventListener = window.__adobe_cep__?.addEventListener;
+  const removeEventListener = window.__adobe_cep__?.removeEventListener;
+  if (typeof addEventListener !== "function") {
+    return () => undefined;
+  }
+
+  addEventListener.call(window.__adobe_cep__, SUBCREATOR_VISUAL_SELECTION_CHANGED_EVENT, listener);
+  return () => {
+    if (typeof removeEventListener === "function") {
+      removeEventListener.call(window.__adobe_cep__, SUBCREATOR_VISUAL_SELECTION_CHANGED_EVENT, listener);
+    }
+  };
 }
 
 export async function readSelectedMogrtTextItems(): Promise<SelectedMogrtTextItemList> {

@@ -165,8 +165,7 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 
 ### After Generation
 
-- Use `Visual editor` to inspect the selected MOGRT automatically and copy visual settings between MOGRT clips.
-- `Live update` is enabled by default on new installations and can be turned off in `Visual editor`.
+- Use `Visual editor` to inspect the selected MOGRT automatically, edit its visual settings live, and copy styles between MOGRT clips.
 - Use `Text editor` to correct, move, split, or merge generated subtitles.
 - After Effects MOGRT clips keep the template's available source duration and leave Time Remapping disabled, so their right edge can be extended manually when subtitle timing needs correction.
 - Add your own `.mogrt` files from `Open MOGRT folder`, then click `Refresh gallery`.
@@ -189,6 +188,11 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
 
 ## Changelog
+
+### 1.1.38 - 2026-06-24
+
+- Visual editor is simpler and keeps live updates always enabled.
+- Color changes now force an extra Premiere refresh so timeline previews update faster.
 
 ### 1.1.37 - 2026-06-24
 

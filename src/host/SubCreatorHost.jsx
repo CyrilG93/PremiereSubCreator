@@ -5885,6 +5885,45 @@ function subcreator_force_sequence_visual_refresh(sequence) {
   return false;
 }
 
+function subcreator_force_selected_track_items_ui_refresh(trackItems) {
+  // // Ask Premiere to repaint selected timeline items without changing the user's current selection.
+  var refreshed = false;
+  for (var index = 0; index < trackItems.length; index += 1) {
+    var trackItem = trackItems[index];
+    if (!trackItem || typeof trackItem.setSelected !== "function") {
+      continue;
+    }
+
+    try {
+      trackItem.setSelected(true, true);
+      refreshed = true;
+      continue;
+    } catch (firstSelectError) {}
+
+    try {
+      trackItem.setSelected(1, 1);
+      refreshed = true;
+    } catch (secondSelectError) {}
+  }
+
+  return refreshed;
+}
+
+function subcreator_force_color_apply_visual_refresh(sequence, trackItems) {
+  // // Color writes can update the MOGRT value while Premiere keeps a stale Program Monitor frame until selection changes.
+  var selectionRefresh = subcreator_force_selected_track_items_ui_refresh(trackItems || []);
+  var delayedRefresh = false;
+  try {
+    $.sleep(60);
+    delayedRefresh = subcreator_force_sequence_visual_refresh(sequence);
+  } catch (refreshDelayError) {}
+
+  return {
+    selectionRefresh: selectionRefresh,
+    delayedRefresh: delayedRefresh
+  };
+}
+
 function subcreator_list_selected_mogrt_properties() {
   // // Return editable visual properties from selected MOGRT clips in active sequence.
   try {
@@ -6544,6 +6583,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
     var updatedCount = 0;
     var failedCount = 0;
+    var colorUpdatedCount = 0;
     var debugLines = [];
     var applySequenceSize = subcreator_visual_read_sequence_dimensions();
     debugLines.push("sequence=" + applySequenceSize.width + "x" + applySequenceSize.height);
@@ -6667,6 +6707,9 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         }
 
         if (applied) {
+          if (controlKind === "color") {
+            colorUpdatedCount += 1;
+          }
           if (virtualTextStyleTarget) {
             try {
               var textStyleReadbackRaw = typeof property.getValue === "function" ? property.getValue() : "";
@@ -6723,6 +6766,15 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
 
     var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);
     debugLines.push("ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
+    if (colorUpdatedCount > 0) {
+      var colorRefresh = subcreator_force_color_apply_visual_refresh(sequence, mogrtItems);
+      debugLines.push(
+        "color_ui_refresh selection=" +
+          (colorRefresh.selectionRefresh ? "forced" : "not_available") +
+          " delayed=" +
+          (colorRefresh.delayedRefresh ? "forced" : "not_available")
+      );
+    }
 
     return subcreator_ok({
       selectedCount: mogrtItems.length,
@@ -6731,6 +6783,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
       clipEndIndex: clipEndIndex,
       updatedCount: updatedCount,
       failedCount: failedCount,
+      colorUpdatedCount: colorUpdatedCount,
       debug: debugLines
     });
   } catch (error) {

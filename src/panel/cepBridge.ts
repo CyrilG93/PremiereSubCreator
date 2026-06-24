@@ -201,6 +201,7 @@ export interface ApplyVisualPropertiesResult {
   clipEndIndex?: number;
   updatedCount: number;
   failedCount: number;
+  colorUpdatedCount?: number;
   debug?: string[];
 }
 

@@ -238,10 +238,8 @@ const elements = {
   mogrtGallery: document.querySelector<HTMLElement>("#mogrtGallery"),
   mogrtSelectedLabel: document.querySelector<HTMLParagraphElement>("#mogrtSelectedLabel"),
   outputModeHint: document.querySelector<HTMLParagraphElement>("#outputModeHint"),
-  visualReadButton: document.querySelector<HTMLButtonElement>("#visualReadButton"),
   visualCopyButton: document.querySelector<HTMLButtonElement>("#visualCopyButton"),
   visualApplyButton: document.querySelector<HTMLButtonElement>("#visualApplyButton"),
-  visualLiveUpdateButton: document.querySelector<HTMLButtonElement>("#visualLiveUpdateButton"),
   visualApplyProgress: document.querySelector<HTMLElement>("#visualApplyProgress"),
   visualApplyProgressBar: document.querySelector<HTMLProgressElement>("#visualApplyProgressBar"),
   visualApplyProgressText: document.querySelector<HTMLElement>("#visualApplyProgressText"),
@@ -315,7 +313,6 @@ let visualLiveUpdateTimer: number | null = null;
 let visualLiveUpdateQueued = false;
 let visualLiveUpdateInFlight = false;
 let visualApplyInProgress = false;
-let visualLiveUpdateEnabled = true;
 let visualSelectionAutoRefreshTimer: number | null = null;
 let visualSelectionPollTimer: number | null = null;
 let visualSelectionRefreshInFlight = false;
@@ -358,6 +355,8 @@ const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
 const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
 const VISUAL_SELECTION_POLL_INTERVAL_MS = 1000;
+const VISUAL_LIVE_UPDATE_DEBOUNCE_MS = 220;
+const VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS = 40;
 const FLOATING_SELECT_ROW_HEIGHT_PX = 28;
 const FLOATING_SELECT_MIN_ROWS = 4;
 const FLOATING_SELECT_MAX_ROWS = 10;
@@ -1500,7 +1499,7 @@ function persistPanelState(): void {
     mogrtAspectFilter: outputSettingsByMode[activeOutputMode].mogrtAspectFilter,
     mogrtSearchQuery: outputSettingsByMode[activeOutputMode].mogrtSearchQuery,
     selectedMogrtId: outputSettingsByMode[activeOutputMode].selectedMogrtId,
-    visualLiveUpdate: visualLiveUpdateEnabled,
+    visualLiveUpdate: true,
     logExpanded: logPanelExpanded,
     verboseLogs: verboseLogsEnabled
   };
@@ -1520,10 +1519,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   hydrateOutputModeSettings(snapshot);
 
-  if (typeof snapshot.visualLiveUpdate === "boolean") {
-    setVisualLiveUpdateEnabled(snapshot.visualLiveUpdate, true);
-  }
-
   if (typeof snapshot.logExpanded === "boolean") {
     setLogPanelExpanded(snapshot.logExpanded, true);
   }
@@ -1536,30 +1531,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     activeMode = snapshot.activeMode;
   } else {
     activeMode = "generate";
-  }
-}
-
-function refreshLiveUpdateButtonState(): void {
-  // // Reflect live update toggle state through button color/text and ARIA state.
-  if (!elements.visualLiveUpdateButton) {
-    return;
-  }
-
-  elements.visualLiveUpdateButton.classList.toggle("is-active", visualLiveUpdateEnabled);
-  elements.visualLiveUpdateButton.classList.toggle("button--secondary", !visualLiveUpdateEnabled);
-  elements.visualLiveUpdateButton.setAttribute("aria-pressed", visualLiveUpdateEnabled ? "true" : "false");
-  elements.visualLiveUpdateButton.textContent = translate(
-    visualLiveUpdateEnabled ? "action.liveUpdateOn" : "action.liveUpdateOff"
-  );
-}
-
-function setVisualLiveUpdateEnabled(enabled: boolean, skipPersist = false): void {
-  // // Toggle live-update behavior and keep button state synchronized.
-  visualLiveUpdateEnabled = enabled === true;
-  refreshLiveUpdateButtonState();
-
-  if (!skipPersist) {
-    persistPanelState();
   }
 }
 
@@ -1934,7 +1905,6 @@ async function loadLocale(languageCode: string): Promise<void> {
   } else {
     setTextSelectionSummary(translate("text.selectionDefault"));
   }
-  refreshLiveUpdateButtonState();
   refreshLogControlsState();
   renderCurrentLog();
   refreshMogrtAspectFilterOptions();
@@ -2436,9 +2406,6 @@ function refreshVisualButtonsBusyState(): void {
   const isBusy = visualReadInProgress || visualApplyInProgress;
   if (elements.visualApplyButton) {
     elements.visualApplyButton.disabled = isBusy;
-  }
-  if (elements.visualReadButton) {
-    elements.visualReadButton.disabled = isBusy;
   }
   if (elements.visualCopyButton) {
     // // Keep `Copy properties` available even before a manual read because it now refreshes the current selection on click.
@@ -3840,7 +3807,7 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
           }
           setColorState(normalized);
           visualDirtyPaths.add(property.path);
-          scheduleLiveVisualApply();
+          scheduleLiveVisualApply(VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS);
         });
         hexInput.addEventListener("blur", () => {
           setColorState(hiddenInput.value || initialHex);
@@ -3874,12 +3841,12 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         nativeColorInput.addEventListener("input", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
           visualDirtyPaths.add(property.path);
-          scheduleLiveVisualApply();
+          scheduleLiveVisualApply(VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS);
         });
         nativeColorInput.addEventListener("change", () => {
           setColorState(nativeColorInput.value || hiddenInput.value || initialHex);
           visualDirtyPaths.add(property.path);
-          scheduleLiveVisualApply();
+          scheduleLiveVisualApply(VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS);
         });
 
         colorWrap.append(colorSwatch, hexInput, nativeColorInput);
@@ -4291,8 +4258,8 @@ function clearVisualSelectionAutoRefreshTimer(): void {
 }
 
 function hasBlockingVisualEditorChanges(): boolean {
-  // // Avoid replacing unsent manual edits when Live update is disabled and the timeline selection changes.
-  return !visualLiveUpdateEnabled && visualDirtyPaths.size > 0;
+  // // Live update is always enabled now, so selection changes can refresh the editor without preserving stale manual edits.
+  return false;
 }
 
 async function refreshVisualPropertiesIfSelectionChanged(reason: string): Promise<void> {
@@ -4438,8 +4405,8 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadin
 }
 
 function isVisualLiveUpdateEnabled(): boolean {
-  // // Read live-update toggle value with safe fallback when UI is not ready.
-  return visualLiveUpdateEnabled;
+  // // Visual editor writes are always live; the old toggle is intentionally ignored.
+  return true;
 }
 
 async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean }): Promise<void> {
@@ -4547,7 +4514,7 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
   }
 }
 
-function scheduleLiveVisualApply(): void {
+function scheduleLiveVisualApply(delayMs = VISUAL_LIVE_UPDATE_DEBOUNCE_MS): void {
   // // Debounce live updates so rapid UI edits do not flood host apply calls.
   if (!isVisualLiveUpdateEnabled() || activeMode !== "visual") {
     return;
@@ -4560,7 +4527,7 @@ function scheduleLiveVisualApply(): void {
 
   visualLiveUpdateTimer = window.setTimeout(() => {
     void runQueuedLiveVisualApply();
-  }, 220);
+  }, Math.max(0, delayMs));
 }
 
 async function runQueuedLiveVisualApply(): Promise<void> {
@@ -4577,7 +4544,7 @@ async function runQueuedLiveVisualApply(): Promise<void> {
       }
       visualLiveUpdateTimer = window.setTimeout(() => {
         void runQueuedLiveVisualApply();
-      }, 220);
+      }, VISUAL_LIVE_UPDATE_DEBOUNCE_MS);
     }
     return;
   }
@@ -5579,7 +5546,6 @@ async function initialize(): Promise<void> {
 
   await loadLocale(elements.languageSelect?.value ?? "en");
   refreshWhisperLanguageUi();
-  setVisualLiveUpdateEnabled(true, true);
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();
@@ -5711,12 +5677,6 @@ async function initialize(): Promise<void> {
     }
     persistPanelState();
   });
-  elements.visualLiveUpdateButton?.addEventListener("click", () => {
-    setVisualLiveUpdateEnabled(!visualLiveUpdateEnabled);
-    if (visualLiveUpdateEnabled) {
-      scheduleLiveVisualApply();
-    }
-  });
   elements.logToggleButton?.addEventListener("click", () => {
     setLogPanelExpanded(!logPanelExpanded);
   });
@@ -5753,17 +5713,6 @@ async function initialize(): Promise<void> {
   });
   elements.generateStopButton?.addEventListener("click", async () => {
     await stopCurrentGenerateJob();
-  });
-
-  elements.visualReadButton?.addEventListener("click", async () => {
-    try {
-      if (visualReadInProgress || visualApplyInProgress) {
-        return;
-      }
-      await loadVisualPropertiesFromSelection(true, true);
-    } catch (error) {
-      setLog(String(error), true);
-    }
   });
 
   elements.visualCopyButton?.addEventListener("click", async () => {

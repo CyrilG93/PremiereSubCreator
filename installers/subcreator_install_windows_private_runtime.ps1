@@ -20,7 +20,6 @@ $runtimeDir = Join-Path $env:LOCALAPPDATA "SubCreator\runtime"
 $runtimeConfigDir = Join-Path $env:APPDATA "SubCreator"
 $runtimeConfigFile = Join-Path $runtimeConfigDir "subcreator-runtime.json"
 $bundledModelsDir = Join-Path $PayloadRoot "Models"
-$bundledFontsDir = Join-Path $PayloadRoot "Fonts"
 $payloadRuntimeDir = Join-Path $PayloadRoot "runtime"
 $whisperCacheDir = Join-Path $env:USERPROFILE ".cache\whisper"
 $runtimeVersionFile = Join-Path $runtimeDir ".subcreator-runtime-version"
@@ -169,22 +168,6 @@ function Copy-SubCreatorBundledModels {
   }
 }
 
-function Install-SubCreatorBundledFonts {
-  # // Delegate to the shared content-addressed font installer used by both Windows package formats.
-  if (-not (Test-Path -LiteralPath $bundledFontsDir)) {
-    return
-  }
-
-  $fontInstallerPath = Join-Path $scriptDir "subcreator_install_windows_fonts.ps1"
-  if (-not (Test-Path -LiteralPath $fontInstallerPath -PathType Leaf)) {
-    throw "Shared Windows font installer is missing: $fontInstallerPath"
-  }
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $fontInstallerPath -FontsDir $bundledFontsDir | Write-Host
-  if ($LASTEXITCODE -ne 0) {
-    throw "One or more bundled fonts could not be installed correctly."
-  }
-}
-
 function Install-SubCreatorPrivateRuntime {
   # // Copy the packaged private runtime into LocalAppData so Sub Creator does not depend on system Python or system FFmpeg.
   if (-not (Test-Path -LiteralPath $payloadRuntimeDir)) {
@@ -278,7 +261,6 @@ Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContin
 Write-SubCreatorInfo "Sub Creator installed to $destDir."
 Enable-SubCreatorCepDebugMode
 Copy-SubCreatorBundledModels
-Install-SubCreatorBundledFonts
 if (-not $SkipRuntimeInstall) {
   Install-SubCreatorPrivateRuntime
 } else {

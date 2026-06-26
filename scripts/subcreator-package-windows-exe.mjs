@@ -368,7 +368,7 @@ async function validateFfmpegRuntime() {
 }
 
 async function copyConnectedPayload() {
-  // // Stage only the extension, fonts, README, and installer script inside the lightweight EXE.
+  // // Stage only the extension, README, and runtime installer script inside the lightweight EXE.
   await mkdir(path.join(payloadRoot, "dist"), { recursive: true });
   await mkdir(path.join(payloadRoot, "installers"), { recursive: true });
 
@@ -381,15 +381,6 @@ async function copyConnectedPayload() {
     path.join(projectRoot, "installers", "subcreator_install_windows_private_runtime.ps1"),
     path.join(payloadRoot, "installers", "subcreator_install_windows_private_runtime.ps1")
   );
-  await cp(
-    path.join(projectRoot, "installers", "subcreator_install_windows_fonts.ps1"),
-    path.join(payloadRoot, "installers", "subcreator_install_windows_fonts.ps1")
-  );
-
-  await rm(path.join(payloadRoot, "Fonts"), { recursive: true, force: true });
-  if (await pathExists(path.join(projectRoot, "Fonts"))) {
-    await cp(path.join(projectRoot, "Fonts"), path.join(payloadRoot, "Fonts"), { recursive: true });
-  }
 }
 
 async function findExistingInnoCompiler() {
@@ -632,14 +623,10 @@ async function createUserInstaller(compilerPath, version, runtimeManifest, mode)
     "[Files]",
     `Source: "${escapeInnoString(path.join(payloadRoot, "README.md"))}"; DestDir: "{tmp}\\SubCreatorPayload"; Flags: ignoreversion`,
     `Source: "${escapeInnoString(path.join(payloadRoot, "dist", "com.cyrilplugin.subcreator", "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\dist\\com.cyrilplugin.subcreator"; Flags: recursesubdirs createallsubdirs ignoreversion`,
-    ...(await pathExists(path.join(payloadRoot, "Fonts")))
-      ? [`Source: "${escapeInnoString(path.join(payloadRoot, "Fonts", "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\Fonts"; Flags: recursesubdirs createallsubdirs ignoreversion`]
-      : [],
     ...(includeRuntime
       ? [`Source: "${escapeInnoString(path.join(runtimeRoot, "*"))}"; DestDir: "{tmp}\\SubCreatorPayload\\runtime"; Flags: recursesubdirs createallsubdirs ignoreversion`]
       : []),
     ...modelFileEntries,
-    `Source: "${escapeInnoString(path.join(payloadRoot, "installers", "subcreator_install_windows_fonts.ps1"))}"; DestDir: "{tmp}\\SubCreatorPayload\\installers"; Flags: ignoreversion`,
     `Source: "${escapeInnoString(path.join(payloadRoot, "installers", "subcreator_install_windows_private_runtime.ps1"))}"; DestDir: "{tmp}\\SubCreatorPayload\\installers"; Flags: ignoreversion; AfterInstall: InstallSubCreator`,
     "",
     "[Code]",

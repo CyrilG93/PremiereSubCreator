@@ -58,7 +58,7 @@ After clicking `Install`, Setup can appear frozen for a few seconds while Window
 6. Reopen Premiere Pro.
 7. Open the extension from `Window > Extensions > Sub Creator`.
 
-The Windows installer automatically enables the CEP debug mode required for unsigned extensions and installs the bundled fonts for the current Windows user. Close Adobe applications before installation, then restart Premiere Pro so its font list is rebuilt from the updated Windows font session.
+The Windows installer automatically enables the CEP debug mode required for unsigned extensions. If the release includes a separate `Fonts` folder, install those fonts manually when you want the bundled templates to match their intended typography.
 
 ### Repair or update Windows dependencies
 
@@ -188,6 +188,11 @@ When `Premiere subtitles` creates an SRT source file, Sub Creator saves it in an
 If generation fails with an `EvalScript error`, open the debug log in Sub Creator and share the `Host result` details. The log now includes the Premiere host function name and response details, which helps identify whether Premiere needs a restart, the extension was installed while Premiere was open, or the host call failed inside Premiere.
 
 ## Changelog
+
+### 1.1.40 - 2026-06-26
+
+- Windows installers no longer install bundled fonts automatically.
+- Bundled fonts are kept as a separate release folder for manual installation.
 
 ### 1.1.39 - 2026-06-24
 

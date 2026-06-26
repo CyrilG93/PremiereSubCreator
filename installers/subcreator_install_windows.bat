@@ -27,7 +27,6 @@ set "SUBCREATOR_LEGACY_DEST_DIR=%APPDATA%\Adobe\CEP\extensions\com.cyrilg93.subc
 set "SUBCREATOR_RUNTIME_DIR=%APPDATA%\SubCreator"
 set "SUBCREATOR_RUNTIME_FILE=%SUBCREATOR_RUNTIME_DIR%\subcreator-runtime.json"
 set "SUBCREATOR_BUNDLED_MODELS_DIR=%SUBCREATOR_PROJECT_DIR%\Models"
-set "SUBCREATOR_BUNDLED_FONTS_DIR=%SUBCREATOR_PROJECT_DIR%\Fonts"
 set "SUBCREATOR_WHISPER_MODELS_CACHE_DIR=%USERPROFILE%\.cache\whisper"
 set "SUBCREATOR_PYTHON_CMD="
 set "SUBCREATOR_PYTHON_LABEL="
@@ -69,7 +68,6 @@ if defined SUBCREATOR_TEMPLATE_BACKUP_DIR if exist "!SUBCREATOR_TEMPLATE_BACKUP_
 echo Sub Creator installed to %SUBCREATOR_DEST_DIR%
 call :subcreator_enable_cep_debug_mode
 call :subcreator_copy_bundled_models
-call :subcreator_install_bundled_fonts
 
 REM // Detect Python launcher; if missing we skip Whisper setup as requested.
 call :subcreator_detect_python
@@ -212,17 +210,6 @@ if !SUBCREATOR_DEBUG_MODE_WRITES! GTR 0 (
   echo CEP debug mode enabled for CSXS.7 to CSXS.20
 ) else (
   echo WARNING: unable to verify CEP debug mode under HKCU\Software\Adobe\CSXS.*
-)
-goto :eof
-
-:subcreator_install_bundled_fonts
-REM // Install bundled fonts for the current Windows user so the included MOGRT templates can resolve their typography without admin rights.
-if not exist "%SUBCREATOR_BUNDLED_FONTS_DIR%" goto :eof
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0subcreator_install_windows_fonts.ps1" -FontsDir "%SUBCREATOR_BUNDLED_FONTS_DIR%"
-if errorlevel 1 (
-  echo ERROR: bundled fonts could not be registered correctly. Close Adobe apps and run the installer again.
-) else (
-  echo Bundled fonts are registered for the current Windows user.
 )
 goto :eof
 

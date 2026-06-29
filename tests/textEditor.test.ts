@@ -7,6 +7,7 @@ import {
   buildTextEditorBlocks,
   mergeTextEditorBlocks,
   moveTextEditorWord,
+  prepareTextEditorBlocksForApply,
   retimeTextEditorBlocks,
   sanitizeTextEditorBlocksForApply,
   splitTextEditorBlock,
@@ -712,6 +713,34 @@ describe("textEditor helpers", () => {
     expect(plans[0]?.selectionStartIndex).toBe(0);
     expect(plans[0]?.selectionEndIndex).toBe(3);
     expect(plans[0]?.blocks.map((block) => block.text)).toEqual(["one updated", "two", "three", "four updated"]);
+  });
+
+  it("keeps one merged Text editor block even when it exceeds Creation word limits", () => {
+    const original = buildTextEditorBlocks([
+      {
+        sourceSelectionIndex: 0,
+        clipName: "Clip A",
+        startSeconds: 0,
+        endSeconds: 2,
+        text: "one two three"
+      },
+      {
+        sourceSelectionIndex: 1,
+        clipName: "Clip B",
+        startSeconds: 2,
+        endSeconds: 4,
+        text: "four five six seven"
+      }
+    ]);
+    const merged = mergeTextEditorBlocks(original, 1, "previous");
+    const plan = buildTextEditorApplyPlan(original, merged);
+
+    expect(plan).not.toBeNull();
+    const preparedBlocks = prepareTextEditorBlocksForApply(plan?.blocks || []);
+    expect(preparedBlocks).toHaveLength(1);
+    expect(preparedBlocks[0].text).toBe("one two three four five six seven");
+    expect(preparedBlocks[0].startSeconds).toBe(0);
+    expect(preparedBlocks[0].endSeconds).toBe(4);
   });
 
   it("returns no apply plan when nothing changed", () => {

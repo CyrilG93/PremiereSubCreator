@@ -499,6 +499,19 @@ export function sanitizeTextEditorBlocksForApply(
   return retimeTextEditorBlocks(blocks, timingRange);
 }
 
+export function prepareTextEditorBlocksForApply(blocks: TextEditorBlock[]): TextEditorBlock[] {
+  // // Preserve the exact Text editor block boundaries so Creation word limits never split edited subtitles again.
+  return filterNonEmptyTextEditorBlocks(blocks).map((block) => {
+    const timedWords = areTimedWordsCompatible(block.words, block.timedWords) ? cloneTimedWords(block.timedWords || []) : undefined;
+    return {
+      ...block,
+      text: block.words.join(" "),
+      words: block.words.slice(),
+      timedWords
+    };
+  });
+}
+
 function buildTextEditorChangedRanges(
   originalBlocks: TextEditorBlock[],
   editedBlocks: TextEditorBlock[]

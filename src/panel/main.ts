@@ -7,6 +7,7 @@ import {
   buildTextEditorSafeApplyPlans,
   mergeTextEditorBlocks,
   moveTextEditorWord,
+  prepareTextEditorBlocksForApply,
   retimeTextEditorBlocks,
   splitTextEditorBlock,
   updateTextEditorBlockText,
@@ -2016,40 +2017,6 @@ function collectTextEditorBuildOptions(): CaptionBuildOptions {
   };
 }
 
-function planTextEditorBlocksForApply(blocks: TextEditorBlock[], options: CaptionBuildOptions): TextEditorBlock[] {
-  // // Re-apply Creation wrapping rules to edited text blocks before rebuilding MOGRT clips on the timeline.
-  const plannedBlocks: TextEditorBlock[] = [];
-
-  blocks.forEach((block, blockIndex) => {
-    const plannedCues = buildCaptionPlan(
-      [
-        {
-          id: `text-apply-${blockIndex}`,
-          startSeconds: block.startSeconds,
-          endSeconds: block.endSeconds,
-          text: block.text,
-          words: Array.isArray(block.timedWords) ? block.timedWords.map((word) => ({ ...word })) : []
-        }
-      ],
-      options
-    );
-
-    plannedCues.forEach((cue) => {
-      plannedBlocks.push({
-        sourceSelectionIndex: block.sourceSelectionIndex,
-        clipName: block.clipName,
-        startSeconds: cue.startSeconds,
-        endSeconds: cue.endSeconds,
-        text: cue.text,
-        words: cue.words.length > 0 ? cue.words.map((word) => String(word.text || "").trim()).filter(Boolean) : tokenizeSubtitleText(cue.text),
-        timedWords: cue.words.length > 0 ? cue.words.map((word) => ({ ...word })) : undefined
-      });
-    });
-  });
-
-  return plannedBlocks;
-}
-
 function toggleSourceFields(): void {
   // // Show only the source-related controls needed for current workflow.
   const mode = getSourceMode();
@@ -3144,7 +3111,7 @@ async function applyTextEditorChanges(): Promise<void> {
     for (const applyPlan of orderedPlans) {
       let cleanupMogrtPaths: string[] = [];
       try {
-        const plannedBlocks = planTextEditorBlocksForApply(applyPlan.blocks, options);
+        const plannedBlocks = prepareTextEditorBlocksForApply(applyPlan.blocks);
         if (plannedBlocks.length < 1) {
           throw new Error(translate("error.textEmptyBlocks"));
         }

@@ -189,6 +189,10 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.41 - 2026-06-29
+
+- Text editor merges now keep the subtitles exactly as edited, even when the text is longer than the creation word limit.
+
 ### 1.1.40 - 2026-06-26
 
 - Windows installers no longer install bundled fonts automatically.

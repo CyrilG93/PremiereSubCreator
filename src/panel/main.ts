@@ -199,7 +199,7 @@ interface CepHostEnvironment {
 
 const elements = {
   languageSelect: document.querySelector<HTMLSelectElement>("#languageSelect"),
-  appVersion: document.querySelector<HTMLSpanElement>("#appVersion"),
+  appVersion: document.querySelector<HTMLButtonElement>("#appVersion"),
   updateBanner: document.querySelector<HTMLElement>("#updateBanner"),
   updateLink: document.querySelector<HTMLAnchorElement>("#updateLink"),
   tabGenerate: document.querySelector<HTMLButtonElement>("#tabGenerate"),
@@ -283,6 +283,7 @@ const FALLBACK_PANEL_META: PanelMeta = {
   releaseApiUrl: "https://api.github.com/repos/CyrilG93/PremiereSubCreator/releases/latest",
   releasePageUrl: "https://github.com/CyrilG93/PremiereSubCreator/releases/latest"
 };
+const PRODUCT_PAGE_URL = "https://www.cyrilplugin.com/subcreator";
 let panelMeta: PanelMeta = { ...FALLBACK_PANEL_META };
 const updateState: UpdateState = {
   visible: false,
@@ -1747,6 +1748,12 @@ function refreshVersionLabel(): void {
   const normalized = normalizeVersion(panelMeta.version);
   const displayVersion = normalized || String(panelMeta.version || "0.0.0");
   elements.appVersion.textContent = `v${displayVersion}`;
+  elements.appVersion.setAttribute("aria-label", `Open Sub Creator page for version ${displayVersion}`);
+}
+
+async function openProductPage(): Promise<void> {
+  // // Route version-badge clicks through the same CEP-safe external URL opener as update links.
+  await openExternalUrl(PRODUCT_PAGE_URL);
 }
 
 function refreshUpdateBanner(): void {
@@ -5649,6 +5656,11 @@ async function initialize(): Promise<void> {
   });
   elements.logVerbosityButton?.addEventListener("click", () => {
     setVerboseLogsEnabled(!verboseLogsEnabled);
+  });
+  elements.appVersion?.addEventListener("click", () => {
+    void openProductPage().catch((error) => {
+      setLog(String(error), true);
+    });
   });
   elements.updateBanner?.addEventListener("click", (event) => {
     const targetNode = event.target as HTMLElement | null;

@@ -69,6 +69,16 @@ The Windows installer automatically enables the CEP debug mode required for unsi
 
 This tool reinstalls the tested private Python, WhisperX, and FFmpeg runtime used by Sub Creator. It preserves downloaded Whisper models and does not modify the system Python installation. An internet connection is required for the approximately 333 MB download.
 
+### Quick local Windows update for testing
+
+To test panel changes without rebuilding the `.exe`, run:
+
+```powershell
+npm.cmd run subcreator:update:local:windows
+```
+
+You can also double-click `UPDATE_LOCAL_WINDOWS.bat`. Restart Premiere Pro after the copy.
+
 ### Install on macOS with the `.pkg`
 
 1. Download `SubCreator-v...-macOS-Installer-arm64.pkg` for Apple Silicon or `SubCreator-v...-macOS-Installer-x86_64.pkg` for an Intel Mac.

@@ -47,7 +47,9 @@ describe("applyPremierePanelTheme", () => {
     applyPremierePanelTheme();
 
     expect(document.documentElement.dataset.themeVariant).toBe("light");
-    expect(variables.get("--bg-primary")).toBe("rgb(207, 207, 207)");
+    expect(variables.get("--bg-primary")).toBe("rgb(236, 236, 236)");
+    expect(variables.get("--bg-surface")).toBe("rgb(229, 229, 229)");
+    expect(variables.get("--bg-soft")).toBe("rgb(234, 234, 234)");
     expect(variables.get("--text-primary")).toBe("rgb(36, 36, 36)");
     expect(variables.get("--text")).toBe("rgb(36, 36, 36)");
     expect(variables.get("--ui-font-family")).toContain("Adobe Clean");

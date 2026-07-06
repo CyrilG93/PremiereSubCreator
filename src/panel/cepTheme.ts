@@ -119,10 +119,10 @@ function normalizeHostPanelBackground(color: RgbColor): RgbColor {
     return mixRgbColor(color, { red: 58, green: 58, blue: 58 }, 0.42);
   }
   if (luminance >= 0.7) {
-    return mixRgbColor(color, { red: 198, green: 198, blue: 198 }, 0.24);
+    return mixRgbColor(color, { red: 246, green: 246, blue: 246 }, 0.72);
   }
   if (luminance >= 0.55) {
-    return mixRgbColor(color, { red: 184, green: 184, blue: 184 }, 0.12);
+    return mixRgbColor(color, { red: 242, green: 242, blue: 242 }, 0.5);
   }
 
   return color;
@@ -179,10 +179,10 @@ export function applyPremierePanelTheme(): void {
     : { red: 236, green: 236, blue: 236 };
   const textDim = mixRgbColor(textPrimary, normalizedPanelBackground, isLightTheme ? 0.48 : 0.38);
   const bgPrimary = normalizedPanelBackground;
-  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 8 : isDarkestTheme ? 8 : 6);
-  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 13 : isDarkestTheme ? 12 : 10);
-  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -3 : isDarkestTheme ? -2 : -1);
-  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 5 : isDarkestTheme ? 5 : 4);
+  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -7 : isDarkestTheme ? 8 : 6);
+  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -2 : isDarkestTheme ? 12 : 10);
+  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -14 : isDarkestTheme ? -2 : -1);
+  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -5 : isDarkestTheme ? 5 : 4);
   const accent = buildHostAccentColor(highlightColor, normalizedPanelBackground, isLightTheme);
   const accentSoft = isLightTheme ? offsetRgbColor(accent, -4) : offsetRgbColor(accent, 18);
   const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -28 : 16);

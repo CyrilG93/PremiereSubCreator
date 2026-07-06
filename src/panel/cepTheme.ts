@@ -112,7 +112,8 @@ function normalizeHostPanelBackground(color: RgbColor): RgbColor {
   // // Keep Premiere skin variants readable while still following host light/dark/darkest appearance changes.
   const luminance = rgbColorLuminance(color);
   if (luminance <= 0.16) {
-    return mixRgbColor(color, { red: 52, green: 52, blue: 52 }, 0.9);
+    // // Preserve Premiere's Darkest mode instead of lifting it toward the normal Dark gray.
+    return mixRgbColor(color, { red: 24, green: 24, blue: 24 }, luminance <= 0.04 ? 0.65 : 0.12);
   }
   if (luminance <= 0.32) {
     return mixRgbColor(color, { red: 58, green: 58, blue: 58 }, 0.42);

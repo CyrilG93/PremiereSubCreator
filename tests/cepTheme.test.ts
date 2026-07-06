@@ -66,7 +66,7 @@ describe("applyPremierePanelTheme", () => {
     applyPremierePanelTheme();
 
     expect(document.documentElement.dataset.themeVariant).toBe("darkest");
-    expect(variables.get("--bg-primary")).toBe("rgb(50, 50, 50)");
+    expect(variables.get("--bg-primary")).toBe("rgb(28, 28, 28)");
   });
 });
 

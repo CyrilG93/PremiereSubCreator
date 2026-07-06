@@ -11,6 +11,7 @@ Compatible with Premiere Pro `2025+` on Windows and macOS. It's not compatible w
 - MOGRT subtitle timing is aligned to sequence frames so adjacent clips share one exact boundary without one-frame visual gaps.
 - `Visual editor`: read exposed controls from a selected MOGRT and apply the same look to other selected clips.
 - `Text editor`: review, move, split, merge, and rebuild generated subtitle blocks.
+- The panel follows Premiere Pro's Light, Dark, and Darkest appearance settings.
 
 ## Installation
 

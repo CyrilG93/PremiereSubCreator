@@ -56,6 +56,7 @@ import {
   applySelectedMogrtTextItems,
   isCancelledJobError
 } from "./cepBridge";
+import { applyPremierePanelTheme, bindPremiereThemeListener } from "./cepTheme";
 import type {
   ApplySelectedMogrtTextResult,
   InstalledMogrtCatalog,
@@ -178,23 +179,6 @@ interface ApplyCaptionPlanHostResult {
   projectPath?: string;
   sequenceID?: string;
   sequenceName?: string;
-}
-
-interface RgbColor {
-  red: number;
-  green: number;
-  blue: number;
-}
-
-interface CepHostSkinInfo {
-  baseFontFamily?: string;
-  panelBackgroundColor?: Partial<RgbColor>;
-  panelBackgroundColorSRGB?: Partial<RgbColor>;
-  systemHighlightColor?: Partial<RgbColor>;
-}
-
-interface CepHostEnvironment {
-  appSkinInfo?: CepHostSkinInfo;
 }
 
 const elements = {
@@ -332,7 +316,6 @@ let generateCancelRequested = false;
 let visualReadInProgress = false;
 let textApplyInProgress = false;
 let textReadInProgress = false;
-let hostThemeListenerBound = false;
 let availableWhisperModels: string[] = [];
 let whisperModelCachePaths: string[] = [];
 let whisperRuntimeAvailable = false;
@@ -352,7 +335,6 @@ let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
 const textEditorPendingCommitTimers = new Map<string, number>();
 
-const CEP_THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
 const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
@@ -595,183 +577,6 @@ function assertDomBindings(): void {
   if (missing.length > 0) {
     throw new Error(`Missing DOM elements: ${missing.join(", ")}`);
   }
-}
-
-function clampColorChannel(value: unknown): number {
-  // // Normalize unknown numeric channel values into valid RGB integer channels.
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(255, Math.round(numericValue)));
-}
-
-function readRgbColor(value: unknown): RgbColor | null {
-  // // Parse CEP skin color payloads which expose `{ red, green, blue }` channel objects.
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const payload = value as Record<string, unknown>;
-  return {
-    red: clampColorChannel(payload.red),
-    green: clampColorChannel(payload.green),
-    blue: clampColorChannel(payload.blue)
-  };
-}
-
-function mixRgbColor(left: RgbColor, right: RgbColor, rightWeight: number): RgbColor {
-  // // Blend two colors so panel surfaces can stay close to Premiere base shades.
-  const clampedWeight = Math.max(0, Math.min(1, rightWeight));
-  const leftWeight = 1 - clampedWeight;
-  return {
-    red: clampColorChannel(left.red * leftWeight + right.red * clampedWeight),
-    green: clampColorChannel(left.green * leftWeight + right.green * clampedWeight),
-    blue: clampColorChannel(left.blue * leftWeight + right.blue * clampedWeight)
-  };
-}
-
-function offsetRgbColor(color: RgbColor, delta: number): RgbColor {
-  // // Brighten or darken one color uniformly while keeping channels inside RGB bounds.
-  return {
-    red: clampColorChannel(color.red + delta),
-    green: clampColorChannel(color.green + delta),
-    blue: clampColorChannel(color.blue + delta)
-  };
-}
-
-function buildHostAccentColor(baseColor: RgbColor, backgroundColor: RgbColor, isLightTheme: boolean): RgbColor {
-  // // Anchor the accent around Adobe's brighter UI blue while still reacting to the host skin highlight color.
-  const adobeBlue = { red: 0, green: 100, blue: 203 };
-  const accentSeed = mixRgbColor(baseColor, adobeBlue, 0.72);
-  const mixedColor = mixRgbColor(accentSeed, backgroundColor, isLightTheme ? 0.04 : 0.01);
-  return isLightTheme ? offsetRgbColor(mixedColor, -6) : offsetRgbColor(mixedColor, 10);
-}
-
-function normalizeHostPanelBackground(color: RgbColor): RgbColor {
-  // // Keep Premiere skin variants readable while still following host light/dark/darkest appearance changes.
-  const luminance = rgbColorLuminance(color);
-  if (luminance <= 0.16) {
-    return mixRgbColor(color, { red: 52, green: 52, blue: 52 }, 0.9);
-  }
-  if (luminance <= 0.32) {
-    return mixRgbColor(color, { red: 58, green: 58, blue: 58 }, 0.42);
-  }
-  if (luminance >= 0.7) {
-    return mixRgbColor(color, { red: 198, green: 198, blue: 198 }, 0.24);
-  }
-  if (luminance >= 0.55) {
-    return mixRgbColor(color, { red: 184, green: 184, blue: 184 }, 0.12);
-  }
-
-  return color;
-}
-
-function rgbColorLuminance(color: RgbColor): number {
-  // // Estimate perceived brightness to switch between light/dark Premiere skin variants.
-  return (0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue) / 255;
-}
-
-function setRootRgbVariable(variableName: string, color: RgbColor): void {
-  // // Publish one RGB color both as `rgb(...)` and raw `r, g, b` triplet for CSS reuse.
-  const root = document.documentElement;
-  root.style.setProperty(variableName, `rgb(${color.red}, ${color.green}, ${color.blue})`);
-  root.style.setProperty(`${variableName}-rgb`, `${color.red}, ${color.green}, ${color.blue}`);
-}
-
-function readHostEnvironmentSkin(): CepHostEnvironment | null {
-  // // Read Premiere CEP host skin information without depending on an external CSInterface bundle.
-  const rawEnvironment = window.__adobe_cep__?.getHostEnvironment?.();
-  if (!rawEnvironment) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(rawEnvironment) as CepHostEnvironment;
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function applyHostPanelTheme(): void {
-  // // Derive neutral Premiere-like surfaces from the current CEP skin and react to host theme changes.
-  const hostEnvironment = readHostEnvironmentSkin();
-  if (!hostEnvironment?.appSkinInfo) {
-    return;
-  }
-
-  const skinInfo = hostEnvironment.appSkinInfo;
-  const panelBackground =
-    readRgbColor(skinInfo.panelBackgroundColorSRGB) ||
-    readRgbColor(skinInfo.panelBackgroundColor) || {
-      red: 48,
-      green: 48,
-      blue: 48
-    };
-  const highlightColor = readRgbColor(skinInfo.systemHighlightColor) || {
-    red: 70,
-    green: 137,
-    blue: 255
-  };
-  const hostLuminance = rgbColorLuminance(panelBackground);
-  const normalizedPanelBackground = normalizeHostPanelBackground(panelBackground);
-  const isLightTheme = hostLuminance >= 0.55;
-  const isDarkestTheme = hostLuminance <= 0.18;
-  const textPrimary = isLightTheme
-    ? { red: 36, green: 36, blue: 36 }
-    : { red: 236, green: 236, blue: 236 };
-  const textDim = mixRgbColor(textPrimary, normalizedPanelBackground, isLightTheme ? 0.48 : 0.38);
-  const bgPrimary = normalizedPanelBackground;
-  const bgSurface = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 8 : isDarkestTheme ? 8 : 6);
-  const bgSoft = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 13 : isDarkestTheme ? 12 : 10);
-  const bgInput = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -3 : isDarkestTheme ? -2 : -1);
-  const bgCard = offsetRgbColor(normalizedPanelBackground, isLightTheme ? 5 : isDarkestTheme ? 5 : 4);
-  const accent = buildHostAccentColor(highlightColor, normalizedPanelBackground, isLightTheme);
-  const accentSoft = isLightTheme ? offsetRgbColor(accent, -4) : offsetRgbColor(accent, 18);
-  const border = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -28 : 16);
-  const borderStrong = offsetRgbColor(normalizedPanelBackground, isLightTheme ? -42 : 24);
-  const buttonPrimary = mixRgbColor(accent, bgSurface, 0.28);
-  const buttonPrimaryAlt = mixRgbColor(accent, bgPrimary, 0.2);
-  const buttonPrimaryText = rgbColorLuminance(buttonPrimary) >= 0.5
-    ? { red: 16, green: 16, blue: 16 }
-    : { red: 246, green: 246, blue: 246 };
-  const root = document.documentElement;
-
-  root.dataset.themeVariant = isLightTheme ? "light" : isDarkestTheme ? "darkest" : "dark";
-  setRootRgbVariable("--bg-primary", bgPrimary);
-  setRootRgbVariable("--bg-surface", bgSurface);
-  setRootRgbVariable("--bg-soft", bgSoft);
-  setRootRgbVariable("--bg-input", bgInput);
-  setRootRgbVariable("--bg-card", bgCard);
-  setRootRgbVariable("--text-primary", textPrimary);
-  setRootRgbVariable("--text-dim", textDim);
-  setRootRgbVariable("--accent", accent);
-  setRootRgbVariable("--accent-soft", accentSoft);
-  setRootRgbVariable("--border", border);
-  setRootRgbVariable("--border-strong", borderStrong);
-  setRootRgbVariable("--button-primary-bg", buttonPrimary);
-  setRootRgbVariable("--button-primary-bg-alt", buttonPrimaryAlt);
-  setRootRgbVariable("--button-primary-text", buttonPrimaryText);
-  root.style.setProperty("--shadow", isLightTheme ? "0 6px 18px rgba(0, 0, 0, 0.08)" : "0 6px 18px rgba(0, 0, 0, 0.24)");
-
-  const baseFontFamily = String(skinInfo.baseFontFamily || "").trim();
-  if (baseFontFamily) {
-    root.style.setProperty("--ui-font-family", `"${baseFontFamily}", "Avenir Next", "Helvetica Neue", sans-serif`);
-  }
-}
-
-function bindHostThemeListener(): void {
-  // // Subscribe once to CEP theme changes so the panel follows Premiere appearance switches live.
-  if (hostThemeListenerBound || typeof window.__adobe_cep__?.addEventListener !== "function") {
-    return;
-  }
-
-  hostThemeListenerBound = true;
-  window.__adobe_cep__.addEventListener(CEP_THEME_COLOR_CHANGED_EVENT, () => {
-    applyHostPanelTheme();
-  });
 }
 
 function waitForNextPaint(): Promise<void> {
@@ -5502,8 +5307,8 @@ async function initialize(): Promise<void> {
     // // Bind the durable floating dropdown fallback once for all static panel selects, including Whisper language.
     bindFloatingPanelSelect(select);
   });
-  applyHostPanelTheme();
-  bindHostThemeListener();
+  applyPremierePanelTheme();
+  bindPremiereThemeListener();
   await loadPanelMeta();
   refreshVersionLabel();
   const persistedState = readPersistedPanelState();

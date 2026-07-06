@@ -12,8 +12,12 @@
   --bg-card-rgb: 51, 51, 51;
   --text-primary: rgb(236, 236, 236);
   --text-primary-rgb: 236, 236, 236;
+  --text: rgb(236, 236, 236);
+  --text-rgb: 236, 236, 236;
   --text-dim: rgb(164, 164, 164);
   --text-dim-rgb: 164, 164, 164;
+  --text-muted: rgb(164, 164, 164);
+  --text-muted-rgb: 164, 164, 164;
   --accent: rgb(74, 146, 222);
   --accent-rgb: 74, 146, 222;
   --accent-soft: rgb(136, 186, 241);
@@ -106,7 +110,7 @@ body {
 .app-version:focus {
   background: rgba(var(--accent-rgb), 0.14);
   border-color: rgba(var(--accent-rgb), 0.72);
-  color: var(--text);
+  color: var(--text-primary);
   outline: none;
 }
 

@@ -80,6 +80,16 @@ npm.cmd run subcreator:update:local:windows
 
 You can also double-click `UPDATE_LOCAL_WINDOWS.bat`. Restart Premiere Pro after the copy.
 
+### Quick local macOS update for testing
+
+To test panel changes without rebuilding the `.pkg`, run:
+
+```bash
+npm run subcreator:update:local:macos
+```
+
+You can also run `UPDATE_LOCAL_MACOS.sh` from Terminal. Restart Premiere Pro after the copy.
+
 ### Install on macOS with the `.pkg`
 
 1. Download `SubCreator-v...-macOS-Installer-arm64.pkg` for Apple Silicon or `SubCreator-v...-macOS-Installer-x86_64.pkg` for an Intel Mac.

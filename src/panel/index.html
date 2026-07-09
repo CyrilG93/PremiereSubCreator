@@ -153,6 +153,25 @@
             </div>
           </section>
 
+          <section class="field field--full" id="mixedLanguageField">
+            <label class="checkbox-label">
+              <input id="preserveMixedLanguages" type="checkbox" />
+              <span data-i18n="field.preserveMixedLanguages">Preserve mixed languages</span>
+            </label>
+            <label class="subfield" id="mixedLanguagePromptField">
+              <span data-i18n="field.mixedLanguagePrompt">Words to preserve</span>
+              <textarea
+                id="mixedLanguagePrompt"
+                data-i18n-placeholder="placeholder.mixedLanguagePrompt"
+                placeholder="Premiere, timeline, subscribe..."
+                rows="2"
+              ></textarea>
+            </label>
+            <p class="hint" data-i18n="help.mixedLanguages">
+              Experimental: asks Whisper to transcribe without translating and to keep foreign words in their spoken language.
+            </p>
+          </section>
+
           <label class="field" id="animationField">
             <span data-i18n="field.animation">Mode animation</span>
             <select id="animationMode">

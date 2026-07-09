@@ -281,6 +281,7 @@ body {
 
 select,
 input,
+textarea,
 button {
   width: 100%;
   border-radius: 8px;
@@ -297,6 +298,25 @@ button {
 
 input[type="checkbox"] {
   width: auto;
+}
+
+textarea {
+  min-height: 48px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.checkbox-label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.checkbox-label span {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 650;
 }
 
 .button {

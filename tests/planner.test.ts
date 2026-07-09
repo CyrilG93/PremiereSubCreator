@@ -20,6 +20,8 @@ const baseOptions: CaptionBuildOptions = {
   mogrtTemplateRelativePath: "",
   whisperModel: "base",
   whisperSequenceRange: "entire_sequence",
+  preserveMixedLanguages: false,
+  mixedLanguagePrompt: "",
   videoTrackIndex: 0,
   audioTrackIndex: 0
 };

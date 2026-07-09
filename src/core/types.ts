@@ -55,6 +55,8 @@ export interface CaptionBuildOptions {
   correctedTranscriptPath?: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  preserveMixedLanguages: boolean;
+  mixedLanguagePrompt: string;
   premiereTemplateTextPayloads?: PremiereTemplateTextPayload[];
   videoTrackIndex: number;
   audioTrackIndex: number;

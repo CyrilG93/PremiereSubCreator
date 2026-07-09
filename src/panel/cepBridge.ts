@@ -40,6 +40,7 @@ interface WhisperTranscriptionRequest {
   audioPath: string;
   languageCode: string;
   model: string;
+  initialPrompt?: string;
 }
 
 interface CorrectedAlignmentRequest {
@@ -787,6 +788,8 @@ function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: strin
     "all",
     "--output_dir",
     outputDir,
+    "--task",
+    "transcribe",
     "--fp16",
     "False",
     "--word_timestamps",
@@ -796,6 +799,11 @@ function buildWhisperArgs(request: WhisperTranscriptionRequest, outputDir: strin
   const language = request.languageCode?.trim();
   if (language && language.toLowerCase() !== "auto") {
     args.push("--language", language);
+  }
+
+  const initialPrompt = request.initialPrompt?.trim();
+  if (initialPrompt) {
+    args.push("--initial_prompt", initialPrompt);
   }
 
   return args;
@@ -4269,6 +4277,9 @@ async function transcribeWithWhisperXViaCepNodeAsync(
       "--transcribe-model",
       request.model
     ];
+    if (request.initialPrompt?.trim()) {
+      args.push("--initial-prompt", request.initialPrompt.trim());
+    }
 
     const attemptResult = await new Promise<{ code: number | null; error?: { message?: string; code?: string } }>((resolve) => {
       // // Stream helper progress markers and keep cancellation routed through the existing CEP job registry.

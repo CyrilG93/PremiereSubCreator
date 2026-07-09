@@ -916,7 +916,7 @@ function subcreator_build_runtime_env_prefix(runtimeConfig) {
   return "PATH=" + subcreator_quote_posix(hints.join(":")) + ":$PATH ";
 }
 
-function subcreator_build_whisper_command(audioPath, outputDir, model, languageCode) {
+function subcreator_build_whisper_command(audioPath, outputDir, model, languageCode, initialPrompt) {
   // // Build CLI command string for local Whisper execution.
   var runtimeConfig = subcreator_read_runtime_config();
   var pathPrefix = subcreator_build_runtime_env_prefix(runtimeConfig);
@@ -940,6 +940,7 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
   }
   var modelArg = model && model.length > 0 ? model : "base";
   var languageArg = languageCode && languageCode.length > 0 ? languageCode : "";
+  var initialPromptArg = initialPrompt && initialPrompt.length > 0 ? initialPrompt : "";
 
   if (subcreator_is_windows()) {
     var launcherPrefix = "";
@@ -959,10 +960,15 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
       subcreator_quote_cmd(modelArg) +
       " --output_format all --output_dir " +
       subcreator_quote_cmd(outputDir) +
+      " --task transcribe" +
       " --fp16 False --word_timestamps True";
 
     if (languageArg && languageArg.toLowerCase() !== "auto") {
       cmd += " --language " + subcreator_quote_cmd(languageArg);
+    }
+
+    if (initialPromptArg) {
+      cmd += " --initial_prompt " + subcreator_quote_cmd(initialPromptArg);
     }
 
     return cmd;
@@ -985,10 +991,15 @@ function subcreator_build_whisper_command(audioPath, outputDir, model, languageC
     subcreator_quote_posix(modelArg) +
     " --output_format all --output_dir " +
     subcreator_quote_posix(outputDir) +
+    " --task transcribe" +
     " --fp16 False --word_timestamps True";
 
   if (languageArg && languageArg.toLowerCase() !== "auto") {
     shellCmd += " --language " + subcreator_quote_posix(languageArg);
+  }
+
+  if (initialPromptArg) {
+    shellCmd += " --initial_prompt " + subcreator_quote_posix(initialPromptArg);
   }
 
   return shellCmd;
@@ -1059,7 +1070,8 @@ function subcreator_transcribe_whisper(payloadEncoded) {
 
     var model = String(payload.model || "base");
     var languageCode = String(payload.languageCode || "");
-    var command = subcreator_build_whisper_command(audioFile.fsName, tempFolder.fsName, model, languageCode);
+    var initialPrompt = String(payload.initialPrompt || "");
+    var command = subcreator_build_whisper_command(audioFile.fsName, tempFolder.fsName, model, languageCode, initialPrompt);
     if (typeof system === "undefined" || !system || typeof system.callSystem !== "function") {
       return subcreator_error("Host system.callSystem indisponible. Active le mode Node CEP pour Whisper.");
     }

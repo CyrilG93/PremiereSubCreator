@@ -362,6 +362,7 @@ def subcreator_transcribe_audio_with_local_whisper(
     model_name: str,
     device: str,
     language_code: str,
+    initial_prompt: str,
 ) -> Dict[str, Any]:
     # // Use the locally cached openai-whisper model as the transcript seed so WhisperX mode does not download faster-whisper models.
     try:
@@ -373,11 +374,14 @@ def subcreator_transcribe_audio_with_local_whisper(
     language_arg = None if not normalized_language or normalized_language == "auto" else normalized_language
     transcribe_kwargs: Dict[str, Any] = {
         "fp16": str(device or "").lower() == "cuda",
+        "task": "transcribe",
         "word_timestamps": False,
         "verbose": False,
     }
     if language_arg:
         transcribe_kwargs["language"] = language_arg
+    if subcreator_normalize_text(initial_prompt):
+        transcribe_kwargs["initial_prompt"] = subcreator_normalize_text(initial_prompt)
 
     model = whisper.load_model(model_name, device=device)
     result = model.transcribe(audio_path, **transcribe_kwargs)
@@ -423,6 +427,7 @@ def main() -> int:
     parser.add_argument("--language", required=True, help="Language code used to load the alignment model")
     parser.add_argument("--output", required=True, help="Path to the output JSON file")
     parser.add_argument("--transcribe-model", default="", help="Optional WhisperX model name used to transcribe before alignment")
+    parser.add_argument("--initial-prompt", default="", help="Optional Whisper initial prompt for mixed-language transcription")
     parser.add_argument("--range-start-seconds", type=float, default=None, help="Optional sequence in-point for corrected SRT rebasing")
     parser.add_argument("--range-end-seconds", type=float, default=None, help="Optional sequence out-point for corrected SRT rebasing")
     args = parser.parse_args()
@@ -464,6 +469,7 @@ def main() -> int:
                 transcribe_model,
                 device,
                 language_code,
+                args.initial_prompt,
             )
             transcript_segments = transcribed_result.get("segments") if isinstance(transcribed_result, dict) else []
             if not isinstance(transcript_segments, list) or not transcript_segments:

@@ -101,6 +101,8 @@ interface OutputModeGenerationSettings {
   whisperModel: string;
   whisperLanguageCode: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  preserveMixedLanguages: boolean;
+  mixedLanguagePrompt: string;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
   maxWordsPerLine: number;
@@ -151,6 +153,8 @@ interface PanelStateSnapshot {
   correctedTranscriptPath: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  preserveMixedLanguages?: boolean;
+  mixedLanguagePrompt?: string;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
   maxWordsPerLine: number;
@@ -210,6 +214,10 @@ const elements = {
   whisperLanguageField: document.querySelector<HTMLElement>("#whisperLanguageField"),
   whisperLanguage: document.querySelector<HTMLSelectElement>("#whisperLanguage"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
+  mixedLanguageField: document.querySelector<HTMLElement>("#mixedLanguageField"),
+  preserveMixedLanguages: document.querySelector<HTMLInputElement>("#preserveMixedLanguages"),
+  mixedLanguagePromptField: document.querySelector<HTMLElement>("#mixedLanguagePromptField"),
+  mixedLanguagePrompt: document.querySelector<HTMLTextAreaElement>("#mixedLanguagePrompt"),
   animationField: document.querySelector<HTMLElement>("#animationField"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
@@ -338,6 +346,7 @@ const textEditorPendingCommitTimers = new Map<string, number>();
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
 const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
+const MIXED_LANGUAGE_PROMPT_MAX_LENGTH = 420;
 const VISUAL_SELECTION_POLL_INTERVAL_MS = 1000;
 const VISUAL_LIVE_UPDATE_DEBOUNCE_MS = 220;
 const VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS = 40;
@@ -984,6 +993,30 @@ function getSelectedWhisperLanguageCode(): string {
   return String(elements.whisperLanguage?.value || pendingWhisperLanguageValue || "auto").trim() || "auto";
 }
 
+function sanitizeMixedLanguagePrompt(value: string): string {
+  // // Keep the user glossary compact because Whisper only considers a small prompt context.
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MIXED_LANGUAGE_PROMPT_MAX_LENGTH);
+}
+
+function buildWhisperInitialPrompt(options: CaptionBuildOptions): string {
+  // // Build one concise Whisper initial prompt for the experimental mixed-language preservation mode.
+  if (!options.preserveMixedLanguages) {
+    return "";
+  }
+
+  const glossary = sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt);
+  const basePrompt =
+    "Mixed-language transcript. Transcribe the audio; do not translate. Keep English words in English Latin spelling and keep other language words in the language/script spoken.";
+  if (!glossary) {
+    return basePrompt;
+  }
+
+  return `${basePrompt} Preserve these words/terms exactly when heard: ${glossary}`;
+}
+
 function resolveSpellcheckLanguageCode(): string {
   // // Prefer the explicit subtitle language when available, otherwise fall back to the current UI locale.
   const subtitleLanguageCode = getSelectedWhisperLanguageCode();
@@ -1074,6 +1107,8 @@ function createDefaultOutputModeSettings(mode: OutputMode): OutputModeGeneration
     whisperModel: "base",
     whisperLanguageCode: "auto",
     whisperSequenceRange: "entire_sequence",
+    preserveMixedLanguages: false,
+    mixedLanguagePrompt: "",
     animationMode: mode === "premiere_subtitles" ? "none" : "line",
     maxCharsPerLine: 28,
     maxWordsPerLine: 12,
@@ -1103,6 +1138,12 @@ function normalizeOutputModeSettings(
     whisperSequenceRange: isWhisperSequenceRangeValue(raw.whisperSequenceRange)
       ? raw.whisperSequenceRange
       : fallback.whisperSequenceRange,
+    preserveMixedLanguages:
+      typeof raw.preserveMixedLanguages === "boolean" ? raw.preserveMixedLanguages : fallback.preserveMixedLanguages,
+    mixedLanguagePrompt:
+      typeof raw.mixedLanguagePrompt === "string"
+        ? raw.mixedLanguagePrompt.slice(0, MIXED_LANGUAGE_PROMPT_MAX_LENGTH)
+        : fallback.mixedLanguagePrompt,
     animationMode: isAnimationModeValue(raw.animationMode) ? raw.animationMode : fallback.animationMode,
     maxCharsPerLine: sanitizePersistedNumber(raw.maxCharsPerLine, fallback.maxCharsPerLine),
     maxWordsPerLine: sanitizePersistedNumber(raw.maxWordsPerLine, fallback.maxWordsPerLine),
@@ -1124,6 +1165,8 @@ function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMo
       whisperModel: elements.whisperModel?.value || pendingWhisperModelValue || fallback.whisperModel,
       whisperLanguageCode: getSelectedWhisperLanguageCode(),
       whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
+      preserveMixedLanguages: Boolean(elements.preserveMixedLanguages?.checked),
+      mixedLanguagePrompt: sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt?.value || ""),
       animationMode: (elements.animationMode?.value as AnimationMode) || fallback.animationMode,
       maxCharsPerLine: Number(elements.maxChars?.value),
       maxWordsPerLine: Number(elements.maxWords?.value),
@@ -1166,6 +1209,12 @@ function applyOutputModeSettingsToControls(mode: OutputMode): void {
 
   if (elements.whisperSequenceRange && hasSelectOption(elements.whisperSequenceRange, settings.whisperSequenceRange)) {
     elements.whisperSequenceRange.value = settings.whisperSequenceRange;
+  }
+  if (elements.preserveMixedLanguages) {
+    elements.preserveMixedLanguages.checked = Boolean(settings.preserveMixedLanguages);
+  }
+  if (elements.mixedLanguagePrompt) {
+    elements.mixedLanguagePrompt.value = settings.mixedLanguagePrompt || "";
   }
   if (elements.animationMode && hasSelectOption(elements.animationMode, settings.animationMode)) {
     elements.animationMode.value = settings.animationMode;
@@ -1212,6 +1261,8 @@ function buildLegacyOutputSettings(snapshot: Partial<PanelStateSnapshot>, fallba
       whisperModel: snapshot.whisperModel,
       whisperLanguageCode: snapshot.whisperLanguageCode,
       whisperSequenceRange: snapshot.whisperSequenceRange,
+      preserveMixedLanguages: snapshot.preserveMixedLanguages,
+      mixedLanguagePrompt: snapshot.mixedLanguagePrompt,
       animationMode: snapshot.animationMode,
       maxCharsPerLine: snapshot.maxCharsPerLine,
       maxWordsPerLine: snapshot.maxWordsPerLine,
@@ -1274,6 +1325,8 @@ function persistPanelState(): void {
     !elements.whisperModel ||
     !elements.whisperLanguage ||
     !elements.whisperSequenceRange ||
+    !elements.preserveMixedLanguages ||
+    !elements.mixedLanguagePrompt ||
     !elements.animationMode ||
     !elements.maxChars ||
     !elements.maxWords ||
@@ -1299,6 +1352,8 @@ function persistPanelState(): void {
     correctedTranscriptPath: outputSettingsByMode[activeOutputMode].correctedTranscriptPath,
     whisperModel: outputSettingsByMode[activeOutputMode].whisperModel,
     whisperSequenceRange: outputSettingsByMode[activeOutputMode].whisperSequenceRange,
+    preserveMixedLanguages: outputSettingsByMode[activeOutputMode].preserveMixedLanguages,
+    mixedLanguagePrompt: outputSettingsByMode[activeOutputMode].mixedLanguagePrompt,
     animationMode: outputSettingsByMode[activeOutputMode].animationMode,
     maxCharsPerLine: outputSettingsByMode[activeOutputMode].maxCharsPerLine,
     maxWordsPerLine: outputSettingsByMode[activeOutputMode].maxWordsPerLine,
@@ -1854,6 +1909,14 @@ function toggleSourceFields(): void {
     elements.sequenceAudioField.style.display = sequenceRangeModeActive ? "grid" : "none";
   }
 
+  if (elements.mixedLanguageField) {
+    elements.mixedLanguageField.style.display = whisperModeActive || whisperxModeActive ? "grid" : "none";
+  }
+
+  if (elements.mixedLanguagePromptField) {
+    elements.mixedLanguagePromptField.style.display = elements.preserveMixedLanguages?.checked ? "grid" : "none";
+  }
+
   if (elements.whisperLanguageField) {
     elements.whisperLanguageField.style.display = whisperModeActive || whisperxModeActive || correctedAlignModeActive ? "grid" : "none";
   }
@@ -2240,6 +2303,16 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
     elements.whisperLanguage.disabled =
       isBusy ||
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence" && getSourceMode() !== "corrected_align");
+  }
+  if (elements.preserveMixedLanguages) {
+    elements.preserveMixedLanguages.disabled =
+      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
+  }
+  if (elements.mixedLanguagePrompt) {
+    elements.mixedLanguagePrompt.disabled =
+      isBusy ||
+      !elements.preserveMixedLanguages?.checked ||
+      (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
   }
   if (elements.animationMode) {
     elements.animationMode.disabled = isBusy || isNativeSubtitleOutputMode();
@@ -4718,7 +4791,9 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.animationMode ||
     !elements.correctedTranscriptPath ||
     !elements.whisperModel ||
-    !elements.whisperSequenceRange
+    !elements.whisperSequenceRange ||
+    !elements.preserveMixedLanguages ||
+    !elements.mixedLanguagePrompt
   ) {
     throw new Error("Panel bindings not initialized.");
   }
@@ -4770,6 +4845,8 @@ function collectBuildOptions(): CaptionBuildOptions {
     correctedTranscriptPath: String(elements.correctedTranscriptPath.value || "").trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
+    preserveMixedLanguages: Boolean(elements.preserveMixedLanguages.checked),
+    mixedLanguagePrompt: sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt.value),
     videoTrackIndex: 0,
     audioTrackIndex: 0
   };
@@ -5100,12 +5177,15 @@ async function loadCuesFromSelectedSource(
         audioPath: whisperAudioPath,
         languageCode: options.languageCode,
         model: options.whisperModel,
+        initialPrompt: buildWhisperInitialPrompt(options),
         extensionRootPath: options.extensionRootPath
       };
       setStructuredLog(translate("log.whisperStarted"), {
         mode: options.sourceMode,
         model: options.whisperModel,
         languageCode: options.languageCode,
+        preserveMixedLanguages: options.preserveMixedLanguages,
+        mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
         audioPath: whisperAudioPath
       });
       whisperResult = await (whisperxModeActive
@@ -5189,6 +5269,8 @@ async function generate(): Promise<void> {
       languageCode: options.languageCode,
       whisperModel: options.whisperModel,
       whisperSequenceRange: options.whisperSequenceRange,
+      preserveMixedLanguages: options.preserveMixedLanguages,
+      mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
       mogrtTemplateRelativePath: options.mogrtTemplateRelativePath
     });
     setLog(translate("log.processing"));
@@ -5454,6 +5536,14 @@ async function initialize(): Promise<void> {
     if (textEditorBlocks.length > 0) {
       renderTextEditor();
     }
+    persistPanelState();
+  });
+  elements.preserveMixedLanguages?.addEventListener("change", () => {
+    toggleSourceFields();
+    setGenerateButtonsBusy(generateInProgress);
+    persistPanelState();
+  });
+  elements.mixedLanguagePrompt?.addEventListener("input", () => {
     persistPanelState();
   });
   elements.logToggleButton?.addEventListener("click", () => {

@@ -1008,13 +1008,11 @@ function buildWhisperInitialPrompt(options: CaptionBuildOptions): string {
   }
 
   const glossary = sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt);
-  const basePrompt =
-    "Mixed-language transcript. Transcribe the audio; do not translate. Keep English words in English Latin spelling and keep other language words in the language/script spoken.";
   if (!glossary) {
-    return basePrompt;
+    return "";
   }
 
-  return `${basePrompt} Preserve these words/terms exactly when heard: ${glossary}`;
+  return `Transcribe the audio without translating. Preserve these words/terms exactly when heard: ${glossary}`;
 }
 
 function resolveSpellcheckLanguageCode(): string {
@@ -5173,11 +5171,12 @@ async function loadCuesFromSelectedSource(
           }, 1000);
     let whisperResult;
     try {
+      const initialPrompt = buildWhisperInitialPrompt(options);
       const transcriptionRequest = {
         audioPath: whisperAudioPath,
         languageCode: options.languageCode,
         model: options.whisperModel,
-        initialPrompt: buildWhisperInitialPrompt(options),
+        initialPrompt,
         extensionRootPath: options.extensionRootPath
       };
       setStructuredLog(translate("log.whisperStarted"), {
@@ -5185,6 +5184,7 @@ async function loadCuesFromSelectedSource(
         model: options.whisperModel,
         languageCode: options.languageCode,
         preserveMixedLanguages: options.preserveMixedLanguages,
+        initialPromptUsed: Boolean(initialPrompt),
         mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
         audioPath: whisperAudioPath
       });
@@ -5270,6 +5270,7 @@ async function generate(): Promise<void> {
       whisperModel: options.whisperModel,
       whisperSequenceRange: options.whisperSequenceRange,
       preserveMixedLanguages: options.preserveMixedLanguages,
+      mixedLanguageInitialPromptUsed: Boolean(buildWhisperInitialPrompt(options)),
       mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
       mogrtTemplateRelativePath: options.mogrtTemplateRelativePath
     });

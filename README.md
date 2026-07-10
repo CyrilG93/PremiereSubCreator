@@ -154,7 +154,7 @@ Which model to choose:
 
 If transcription is unstable, manually select the language in `Whisper language` instead of using `Auto detect`.
 
-For audio that mixes languages, enable `Preserve mixed languages` in Whisper or WhisperX mode. This experimental option asks Whisper to transcribe instead of translating and lets you add recurring English words, names, brands, or technical terms that should keep their original spelling.
+For audio that mixes languages, enable `Preserve mixed languages` in Whisper or WhisperX mode and add recurring English words, names, brands, or technical terms that should keep their original spelling. This experimental option uses the list as a Whisper prompt. If the list is empty, Sub Creator avoids the extra prompt so Whisper stays stable.
 
 The log panel keeps a timestamped history of generation stages. If `Generate` cannot start in a Whisper mode, it also shows the detected runtime, installed models, and cache paths. Share this diagnostic block when requesting support.
 

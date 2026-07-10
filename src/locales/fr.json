@@ -62,7 +62,7 @@
   "help.whisperModelsMissing": "Aucun modele Whisper n'a ete trouve localement. Lis le README pour en installer ou en copier un dans le cache Whisper.",
   "help.whisperxMissing": "Le mode WhisperX requiert Python `whisperx`. Lis le README pour l'installer.",
   "help.correctedAlignMissing": "Le mode Whisper + SRT requiert Python `whisperx`. Lis le README pour l'installer.",
-  "help.mixedLanguages": "Experimental : demande a Whisper de transcrire sans traduire et de garder les mots etrangers dans leur langue prononcee.",
+  "help.mixedLanguages": "Experimental : ajoute les mots anglais, noms, marques ou termes connus a conserver. Si la liste est vide, Sub Creator evite le prompt supplementaire pour garder Whisper stable.",
   "help.mogrtTracks": "Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.",
   "help.nativeTracks": "Les sous-titres Premiere sont importes comme une piste native depuis un SRT temporaire.",
   "progress.prepareGeneration": "Preparation de la generation...",

@@ -34,4 +34,12 @@ describe("Whisper mixed-language preservation", () => {
     expect(source).toContain('"initial_prompt"');
     expect(source).toContain('"--initial-prompt"');
   });
+
+  it("does not send a generic mixed-language prompt when no glossary terms are provided", () => {
+    // // A generic prompt without concrete terms caused missing subtitle segments in Hindi/English tests.
+    const source = readFileSync(fileURLToPath(new URL("../src/panel/main.ts", import.meta.url)), "utf8");
+
+    expect(source).toContain("if (!glossary) {\n    return \"\";\n  }");
+    expect(source).not.toContain("Keep English words in English Latin spelling");
+  });
 });

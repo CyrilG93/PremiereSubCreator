@@ -346,6 +346,7 @@ const textEditorPendingCommitTimers = new Map<string, number>();
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
 const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
+const MIXED_LANGUAGE_FEATURE_ENABLED = false;
 const MIXED_LANGUAGE_PROMPT_MAX_LENGTH = 420;
 const VISUAL_SELECTION_POLL_INTERVAL_MS = 1000;
 const VISUAL_LIVE_UPDATE_DEBOUNCE_MS = 220;
@@ -1003,7 +1004,7 @@ function sanitizeMixedLanguagePrompt(value: string): string {
 
 function buildWhisperInitialPrompt(options: CaptionBuildOptions): string {
   // // Build one concise Whisper initial prompt for the experimental mixed-language preservation mode.
-  if (!options.preserveMixedLanguages) {
+  if (!MIXED_LANGUAGE_FEATURE_ENABLED || !options.preserveMixedLanguages) {
     return "";
   }
 
@@ -1163,8 +1164,8 @@ function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMo
       whisperModel: elements.whisperModel?.value || pendingWhisperModelValue || fallback.whisperModel,
       whisperLanguageCode: getSelectedWhisperLanguageCode(),
       whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
-      preserveMixedLanguages: Boolean(elements.preserveMixedLanguages?.checked),
-      mixedLanguagePrompt: sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt?.value || ""),
+      preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages?.checked),
+      mixedLanguagePrompt: MIXED_LANGUAGE_FEATURE_ENABLED ? sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt?.value || "") : "",
       animationMode: (elements.animationMode?.value as AnimationMode) || fallback.animationMode,
       maxCharsPerLine: Number(elements.maxChars?.value),
       maxWordsPerLine: Number(elements.maxWords?.value),
@@ -1908,11 +1909,12 @@ function toggleSourceFields(): void {
   }
 
   if (elements.mixedLanguageField) {
-    elements.mixedLanguageField.style.display = whisperModeActive || whisperxModeActive ? "grid" : "none";
+    elements.mixedLanguageField.style.display = MIXED_LANGUAGE_FEATURE_ENABLED && (whisperModeActive || whisperxModeActive) ? "grid" : "none";
   }
 
   if (elements.mixedLanguagePromptField) {
-    elements.mixedLanguagePromptField.style.display = elements.preserveMixedLanguages?.checked ? "grid" : "none";
+    elements.mixedLanguagePromptField.style.display =
+      MIXED_LANGUAGE_FEATURE_ENABLED && elements.preserveMixedLanguages?.checked ? "grid" : "none";
   }
 
   if (elements.whisperLanguageField) {
@@ -2304,10 +2306,13 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   }
   if (elements.preserveMixedLanguages) {
     elements.preserveMixedLanguages.disabled =
-      isBusy || (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
+      !MIXED_LANGUAGE_FEATURE_ENABLED ||
+      isBusy ||
+      (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
   }
   if (elements.mixedLanguagePrompt) {
     elements.mixedLanguagePrompt.disabled =
+      !MIXED_LANGUAGE_FEATURE_ENABLED ||
       isBusy ||
       !elements.preserveMixedLanguages?.checked ||
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
@@ -4843,8 +4848,8 @@ function collectBuildOptions(): CaptionBuildOptions {
     correctedTranscriptPath: String(elements.correctedTranscriptPath.value || "").trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
-    preserveMixedLanguages: Boolean(elements.preserveMixedLanguages.checked),
-    mixedLanguagePrompt: sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt.value),
+    preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages.checked),
+    mixedLanguagePrompt: MIXED_LANGUAGE_FEATURE_ENABLED ? sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt.value) : "",
     videoTrackIndex: 0,
     audioTrackIndex: 0
   };

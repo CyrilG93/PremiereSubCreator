@@ -7,6 +7,7 @@ const installerScriptPath = fileURLToPath(
 );
 const packagingSourcePath = fileURLToPath(new URL("../scripts/subcreator-package-macos-pkg.mjs", import.meta.url));
 const runtimeManifestPath = fileURLToPath(new URL("../installers/macos-runtime.json", import.meta.url));
+const workflowPath = fileURLToPath(new URL("../.github/workflows/build-macos-installer.yml", import.meta.url));
 
 describe("macOS installer runtime recovery", () => {
   it("validates Whisper imports and FFmpeg before keeping an installed runtime", () => {
@@ -33,6 +34,17 @@ describe("macOS Full package architecture", () => {
     expect(packagingSource).toContain("macOS PKG packaging requires an Apple Silicon arm64 Mac.");
     expect(packagingSource).not.toMatch(/x86_64|SUBCREATOR_MAC_CONNECTED_ONLY|createConnectedPackage/);
     expect(Object.keys(runtimeManifest.assets ?? {})).toEqual(["arm64"]);
+  });
+
+  it("builds only the Full ARM64 PKG in GitHub Actions", () => {
+    // // Keep the CI entry point aligned with the supported Apple Silicon-only public package.
+    const workflow = readFileSync(workflowPath, "utf8");
+
+    expect(workflow).toContain("runs-on: macos-15");
+    expect(workflow).toContain('test "$(uname -m)" = "arm64"');
+    expect(workflow).toContain("SUBCREATOR_REBUILD_RUNTIME: \"1\"");
+    expect(workflow).toContain("SubCreator-v${{ steps.release.outputs.version }}-macOS-Installer-arm64");
+    expect(workflow).not.toMatch(/Light|x86_64-Installer|Intel-Installer|Updater|\.zip/);
   });
 });
 

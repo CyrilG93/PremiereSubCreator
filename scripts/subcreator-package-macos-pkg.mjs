@@ -1,4 +1,4 @@
-// // Build a connected macOS Installer package plus one private runtime archive per Mac architecture.
+// // Build the complete Apple Silicon macOS Installer with its private runtime embedded.
 import { createReadStream } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -20,8 +20,7 @@ const pythonVersion = process.env.SUBCREATOR_PRIVATE_PYTHON_VERSION || "3.11.9";
 const ffmpegVersion = process.env.SUBCREATOR_FFMPEG_VERSION || "8.0.2";
 const ffmpegSourceUrl =
   process.env.SUBCREATOR_FFMPEG_SOURCE_URL || `https://ffmpeg.org/releases/ffmpeg-${ffmpegVersion}.tar.xz`;
-const requestedArch = process.env.SUBCREATOR_MAC_ARCH || process.arch;
-const macArch = requestedArch === "x64" ? "x86_64" : requestedArch;
+const macArch = "arm64";
 const rebuildRuntime = process.env.SUBCREATOR_REBUILD_RUNTIME === "1";
 const reuseStaging = process.env.SUBCREATOR_REUSE_STAGING === "1";
 const npmCommand = "npm";
@@ -159,7 +158,7 @@ async function readPackageVersion() {
 }
 
 async function readRuntimeManifest() {
-  // // Read architecture-specific immutable runtime metadata used by connected installers.
+  // // Read the Apple Silicon runtime metadata used to assemble the Full installer.
   const raw = await readFile(runtimeManifestPath, "utf8");
   const parsed = JSON.parse(raw);
   return {
@@ -170,7 +169,7 @@ async function readRuntimeManifest() {
 }
 
 async function writeRuntimeManifest(manifest) {
-  // // Persist the generated runtime hash so later plugin-only installers reuse the exact published asset.
+  // // Persist the generated runtime hash so later Full builds can reuse the exact archive.
   await writeFile(runtimeManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
@@ -229,32 +228,16 @@ async function preparePrivatePython() {
   // // Preserve the distribution's relative executable symlinks instead of converting them to staging paths.
   await runCommand("ditto", [sourcePythonDir, targetPythonDir]);
   const pythonPath = path.join(targetPythonDir, "bin", "python3");
-  const runtimePackages =
-    macArch === "x86_64"
-      ? [
-          "numpy<1.27",
-          "numba==0.59.1",
-          "llvmlite==0.42.0",
-          "torch==2.2.2",
-          "torchaudio==2.2.2",
-          "torchvision==0.17.2",
-          "openai-whisper",
-          "whisperx==3.3.1",
-          "transformers<5",
-          "requests",
-          "nltk",
-          "certifi"
-        ]
-      : [
-          "torch==2.8.0",
-          "torchaudio==2.8.0",
-          "torchvision==0.23.0",
-          "openai-whisper",
-          "whisperx",
-          "requests",
-          "nltk",
-          "certifi"
-        ];
+  const runtimePackages = [
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "torchvision==0.23.0",
+    "openai-whisper",
+    "whisperx",
+    "requests",
+    "nltk",
+    "certifi"
+  ];
 
   await runCommand(
     uvPath,
@@ -343,10 +326,6 @@ async function preparePrivateFfmpeg() {
       "--disable-gpl",
       "--disable-nonfree"
     ];
-  if (macArch === "x86_64") {
-    // // Keep Intel cross-builds independent from an additional NASM installation.
-    configureArgs.push("--disable-x86asm");
-  }
   await runCommand(path.join(sourceDir, "configure"), configureArgs, { cwd: sourceDir });
   await runCommand("make", [`-j${cpuCount}`], { cwd: sourceDir });
   await runCommand("make", ["install"], { cwd: sourceDir });
@@ -432,8 +411,8 @@ async function createRuntimeArchive(runtimeManifest) {
     return runtimeManifest;
   }
 
-  if (macArch !== process.arch && !(macArch === "x86_64" && process.arch === "x64")) {
-    throw new Error(`Build the ${macArch} runtime on a matching Mac architecture.`);
+  if (process.arch !== macArch) {
+    throw new Error("Build the Apple Silicon runtime on an arm64 Mac.");
   }
 
   await prepareRuntimePayload(runtimeManifest.version);
@@ -471,8 +450,8 @@ function xmlEscape(value) {
     .replace(/'/g, "&apos;");
 }
 
-async function copyConnectedPayload(runtimeManifest, version) {
-  // // Stage the extension, fonts, installer script, private runtime, and architecture metadata inside the core package.
+async function stageFullPayload(runtimeManifest, version) {
+  // // Stage the extension, fonts, installer script, private runtime, and ARM64 metadata inside the core package.
   await rm(coreScriptsDir, { recursive: true, force: true });
   await mkdir(path.join(coreScriptsDir, "payload", "dist"), { recursive: true });
   await cp(
@@ -498,15 +477,10 @@ async function copyConnectedPayload(runtimeManifest, version) {
   if (!(await pathExists(runtimeAssetPath))) {
     throw new Error(`Runtime asset is missing before PKG creation: ${runtimeAssetPath}`);
   }
-  if (process.env.SUBCREATOR_MAC_CONNECTED_ONLY !== "1") {
-    // // Make the default PKG offline-capable so installation never depends on a GitHub release being published first.
-    const bundledRuntimeDir = path.join(coreScriptsDir, "runtime");
-    await mkdir(bundledRuntimeDir, { recursive: true });
-    await cp(runtimeAssetPath, path.join(bundledRuntimeDir, asset.assetName));
-  }
-  const runtimeUrl =
-    process.env.SUBCREATOR_RUNTIME_DOWNLOAD_URL ||
-    `https://github.com/CyrilG93/PremiereSubCreator/releases/download/${runtimeManifest.releaseTag}/${asset.assetName}`;
+  // // Always embed the verified runtime so the public package never acts as a connected updater.
+  const bundledRuntimeDir = path.join(coreScriptsDir, "runtime");
+  await mkdir(bundledRuntimeDir, { recursive: true });
+  await cp(runtimeAssetPath, path.join(bundledRuntimeDir, asset.assetName));
   const runtimeEnv = [
     "# // Generated by subcreator-package-macos-pkg.mjs.",
     `SUBCREATOR_EXTENSION_VERSION=${shellQuote(version)}`,
@@ -514,7 +488,6 @@ async function copyConnectedPayload(runtimeManifest, version) {
     `SUBCREATOR_RUNTIME_ARCH=${shellQuote(macArch)}`,
     `SUBCREATOR_RUNTIME_ASSET_NAME=${shellQuote(asset.assetName)}`,
     `SUBCREATOR_RUNTIME_SHA256=${shellQuote(String(asset.sha256 || "").toLowerCase())}`,
-    `SUBCREATOR_RUNTIME_URL=${shellQuote(runtimeUrl)}`,
     ""
   ].join("\n");
   await writeFile(path.join(coreScriptsDir, "runtime.env"), runtimeEnv, "utf8");
@@ -666,9 +639,9 @@ ${packageRefs}
   return distributionPath;
 }
 
-async function createConnectedPackage(version, runtimeManifest) {
-  // // Build the lightweight user-facing product package and optionally sign and notarize it.
-  await copyConnectedPayload(runtimeManifest, version);
+async function createFullPackage(version, runtimeManifest) {
+  // // Build the complete Apple Silicon product package and optionally sign and notarize it.
+  await stageFullPayload(runtimeManifest, version);
   await createComponentPackages(version);
   const distributionPath = await createDistribution(version);
   const outputPath = path.join(releasesDir, `SubCreator-v${version}-macOS-Installer-${macArch}.pkg`);
@@ -718,16 +691,16 @@ async function createConnectedPackage(version, runtimeManifest) {
     await runCommand("pkgutil", ["--expand", outputPath, validationDir]);
     await rm(validationDir, { recursive: true, force: true });
   }
-  process.stdout.write(`Connected macOS installer created at ${outputPath}\n`);
+  process.stdout.write(`Full Apple Silicon macOS installer created at ${outputPath}\n`);
 }
 
 async function main() {
-  // // Build the extension, immutable runtime asset, and connected macOS Installer package for one architecture.
+  // // Build the extension, Apple Silicon runtime asset, and Full macOS Installer package.
   if (process.platform !== "darwin") {
     throw new Error("macOS PKG packaging must run on macOS.");
   }
-  if (!["arm64", "x86_64"].includes(macArch)) {
-    throw new Error(`Unsupported macOS architecture: ${macArch}`);
+  if (process.arch !== macArch) {
+    throw new Error("macOS PKG packaging requires an Apple Silicon arm64 Mac.");
   }
 
   const version = await readPackageVersion();
@@ -742,7 +715,7 @@ async function main() {
   await mkdir(downloadsDir, { recursive: true });
   await mkdir(releasesDir, { recursive: true });
   if (process.env.SUBCREATOR_SKIP_EXTENSION_BUILD !== "1") {
-    // // Build the architecture-independent CEP payload unless a Rosetta cross-build reuses a verified dist folder.
+    // // Build the architecture-independent CEP payload unless a verified dist folder is reused.
     await runCommand(npmCommand, ["run", "subcreator:build"]);
   } else if (!(await pathExists(path.join(projectRoot, "dist", "com.cyrilplugin.subcreator")))) {
     throw new Error("SUBCREATOR_SKIP_EXTENSION_BUILD=1 requires an existing dist/com.cyrilplugin.subcreator build.");
@@ -753,7 +726,7 @@ async function main() {
   if (!finalizedAsset?.sha256) {
     throw new Error(`Runtime SHA-256 is missing for ${macArch}.`);
   }
-  await createConnectedPackage(version, finalizedRuntimeManifest);
+  await createFullPackage(version, finalizedRuntimeManifest);
 }
 
 main().catch((error) => {

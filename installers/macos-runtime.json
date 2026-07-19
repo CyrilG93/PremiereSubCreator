@@ -5,10 +5,6 @@
     "arm64": {
       "assetName": "SubCreator-macOS-Runtime-v1-arm64.tar.gz",
       "sha256": "55d43ca676784add71711353fa3400cfc8762db860132c92ac1c819a07ea07c9"
-    },
-    "x86_64": {
-      "assetName": "SubCreator-macOS-Runtime-v1-x86_64.tar.gz",
-      "sha256": "6c7728c2cd7467c07f3ac0681fc4d175fe386ac16c22b457ba081a9bec5d53a0"
     }
   }
 }

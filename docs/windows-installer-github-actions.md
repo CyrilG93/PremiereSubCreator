@@ -1,12 +1,11 @@
-# Windows installer with GitHub Actions
+# Windows Full installer with GitHub Actions
 
-The `Build Windows Installer` workflow creates the Windows `.exe` files on a temporary GitHub-hosted Windows machine.
+The `Build Windows Installer` workflow creates one complete Windows installer on a temporary GitHub-hosted Windows machine:
 
-- `Windows-Light-Installer.exe` contains the extension and downloads the private runtime only when it is missing.
-- `Windows-Full-Installer.exe` contains the extension, private runtime, and verified `base` model for a fully offline first installation.
-- Both installers offer the same Whisper model choices; the Full installer does not download its included `base` model.
-- The extension can recover the standard private runtime directly if its generated configuration file is missing or unreadable.
-- The extension includes its own WAV export preset, so Whisper sequence export does not depend on localized Adobe preset names.
+- `SubCreator-vX.Y.Z-Windows-Full-Installer.exe` contains the extension, private Python runtime, LGPL FFmpeg runtime, and the verified Whisper `base` model.
+- The installer offers `tiny`, `base`, `small`, `medium`, and `large-v3`; `base` is already embedded and other selected models are downloaded only when missing or damaged.
+- The installed private runtime stays inside the current Windows user profile and does not modify the system Python installation.
+- The workflow does not build or publish Light installers, dependency updaters, or standalone runtime assets.
 
 ## Run the workflow
 
@@ -14,25 +13,22 @@ The `Build Windows Installer` workflow creates the Windows `.exe` files on a tem
 2. Open `Actions`.
 3. Select `Build Windows Installer`.
 4. Click `Run workflow`.
-5. Leave `Publish the generated EXE files` disabled for a test build, or enable it to add the files to the stable release matching `package.json`.
+5. Leave `Publish the Full EXE` disabled for a test build, or enable it to publish the installer to the stable release matching `package.json`.
 
-The generated installer remains downloadable from the workflow run for 14 days.
+The generated Full installer remains downloadable from the workflow run for 14 days.
 
-## First build
+## Build behavior
 
-The first run can take much longer because the workflow checks the private Windows runtime referenced by `installers/windows-runtime.json`.
+Each clean GitHub runner:
 
-If that runtime is missing from GitHub, the workflow:
+1. Installs the exact Node.js dependencies from `package-lock.json`.
+2. Runs lint, typecheck, tests, and the extension build.
+3. Builds and validates the private Python and LGPL FFmpeg runtime.
+4. Verifies and embeds the Whisper `base` model.
+5. Compiles the Full installer with Inno Setup and verifies its product version and SHA-256.
 
-1. Builds the private Python and LGPL FFmpeg runtime.
-2. Builds the lightweight connected installer and the complete installer.
-3. Uploads the user installers to the matching product release and the reusable runtime to the dedicated `windows-runtime-v1` dependency release when publication is enabled.
-4. Commits the generated runtime tag and SHA-256 back to the selected branch.
-
-Later runs reuse the published runtime and normally rebuild only the lightweight installer.
-
-For a local Windows build that must generate only the connected installer, set `SUBCREATOR_LIGHT_ONLY=1` before running `npm run subcreator:package:windows-exe`.
+When publication is enabled, lower semantic prereleases and their tags are removed before the stable release is created. Technical non-semantic tags are left untouched for compatibility with previously distributed installers.
 
 ## Signing
 
-The workflow currently creates unsigned `.exe` files. They work, but Windows may display a stronger SmartScreen warning. Code signing can be added later after a Windows signing certificate is available.
+The workflow currently creates an unsigned `.exe`, which is intentional for this release. Windows may display a SmartScreen warning before installation.

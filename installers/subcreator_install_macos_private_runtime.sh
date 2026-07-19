@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 
-# // Install the connected macOS payload into the active user's profile even though Installer runs this script as root.
+# // Install the complete Apple Silicon payload into the active user's profile even though Installer runs this script as root.
 SUBCREATOR_SCRIPT_DIR="${SUBCREATOR_INSTALLER_SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 SUBCREATOR_PAYLOAD_ROOT="${SUBCREATOR_PAYLOAD_ROOT:-${SUBCREATOR_SCRIPT_DIR}/payload}"
 SUBCREATOR_RUNTIME_ENV="${SUBCREATOR_RUNTIME_ENV:-${SUBCREATOR_SCRIPT_DIR}/runtime.env}"
@@ -195,8 +195,8 @@ subcreator_runtime_is_current() {
   return 0
 }
 
-subcreator_download_runtime() {
-  # // Prefer the bundled runtime archive and download it only for explicitly connected-only packages.
+subcreator_install_bundled_runtime() {
+  # // Install the runtime archive embedded in every supported public macOS package.
   runtime_dir="$1"
   temp_root="$(mktemp -d "${TMPDIR:-/tmp}/subcreator-runtime.XXXXXX")"
   bundled_archive_path="${SUBCREATOR_SCRIPT_DIR}/runtime/${SUBCREATOR_RUNTIME_ASSET_NAME}"
@@ -204,14 +204,12 @@ subcreator_download_runtime() {
   extracted_root="${temp_root}/extracted"
   mkdir -p "${extracted_root}"
 
-  if [ -f "${bundled_archive_path}" ]; then
-    echo "Using the bundled private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
-  else
-    archive_path="${temp_root}/${SUBCREATOR_RUNTIME_ASSET_NAME}"
-    echo "Downloading the private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
-    curl --fail --location --retry 3 --connect-timeout 30 \
-      "${SUBCREATOR_RUNTIME_URL}" --output "${archive_path}"
+  if [ ! -f "${bundled_archive_path}" ]; then
+    rm -rf "${temp_root}"
+    echo "Bundled private runtime is missing: ${bundled_archive_path}" >&2
+    exit 1
   fi
+  echo "Using the bundled private Whisper runtime for ${SUBCREATOR_RUNTIME_ARCH}..."
   actual_hash="$(shasum -a 256 "${archive_path}" | awk '{print tolower($1)}')"
   if [ "${actual_hash}" != "${SUBCREATOR_RUNTIME_SHA256}" ]; then
     rm -rf "${temp_root}"
@@ -223,7 +221,7 @@ subcreator_download_runtime() {
   new_runtime="${extracted_root}/runtime"
   if [ ! -x "${new_runtime}/python/bin/python3" ] || [ ! -x "${new_runtime}/ffmpeg/bin/ffmpeg" ]; then
     rm -rf "${temp_root}"
-    echo "The downloaded runtime archive is incomplete." >&2
+    echo "The bundled runtime archive is incomplete." >&2
     exit 1
   fi
 
@@ -297,17 +295,15 @@ if [ "${SUBCREATOR_SKIP_CEP_DEBUG:-0}" != "1" ]; then
 fi
 subcreator_install_fonts
 
-if subcreator_runtime_is_current "${SUBCREATOR_RUNTIME_DIR}"; then
+if [ "${SUBCREATOR_SKIP_RUNTIME_INSTALL:-0}" = "1" ]; then
+  echo "Runtime installation skipped by test configuration."
+elif subcreator_runtime_is_current "${SUBCREATOR_RUNTIME_DIR}"; then
   echo "Keeping the compatible private runtime already installed."
 else
-  if [ "${SUBCREATOR_SKIP_RUNTIME_DOWNLOAD:-0}" = "1" ]; then
-    echo "Runtime download skipped by test configuration."
-  else
-    subcreator_download_runtime "${SUBCREATOR_RUNTIME_DIR}"
-  fi
+  subcreator_install_bundled_runtime "${SUBCREATOR_RUNTIME_DIR}"
 fi
 
-if [ "${SUBCREATOR_SKIP_RUNTIME_DOWNLOAD:-0}" != "1" ]; then
+if [ "${SUBCREATOR_SKIP_RUNTIME_INSTALL:-0}" != "1" ]; then
   subcreator_validate_runtime "${SUBCREATOR_RUNTIME_DIR}"
   printf "%s\n" "${SUBCREATOR_RUNTIME_VERSION}" >"${SUBCREATOR_RUNTIME_DIR}/.subcreator-runtime-version"
   chown "${SUBCREATOR_UID}:${SUBCREATOR_GID}" "${SUBCREATOR_RUNTIME_DIR}/.subcreator-runtime-version"

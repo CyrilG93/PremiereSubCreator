@@ -1,6 +1,5 @@
 param(
   [string]$PayloadRoot = "",
-  [switch]$SkipRuntimeInstall,
   [string]$RuntimeVersion = "1"
 )
 
@@ -234,7 +233,7 @@ function Test-SubCreatorPrivateRuntime {
 }
 
 function Write-SubCreatorRuntimeVersion {
-  # // Mark the validated runtime so future connected installers can skip the large runtime download.
+  # // Mark the validated runtime so future Full installations can verify its version.
   Set-Content -LiteralPath $runtimeVersionFile -Value $RuntimeVersion -Encoding ASCII
   Write-SubCreatorInfo "Private runtime version $RuntimeVersion is ready."
 }
@@ -261,11 +260,7 @@ Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContin
 Write-SubCreatorInfo "Sub Creator installed to $destDir."
 Enable-SubCreatorCepDebugMode
 Copy-SubCreatorBundledModels
-if (-not $SkipRuntimeInstall) {
-  Install-SubCreatorPrivateRuntime
-} else {
-  Write-SubCreatorInfo "Keeping the compatible private runtime already installed."
-}
+Install-SubCreatorPrivateRuntime
 Write-SubCreatorRuntimeConfig
 Test-SubCreatorPrivateRuntime
 Write-SubCreatorRuntimeVersion

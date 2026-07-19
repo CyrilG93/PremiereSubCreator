@@ -4,17 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish the generated EXE files to the matching stable GitHub release
-        required: true
-        type: boolean
-        default: false
-      force_rebuild_runtime:
-        description: Rebuild the large private Windows runtime even when its published asset exists
+        description: Publish the Full EXE to the matching stable GitHub release
         required: true
         type: boolean
         default: false
 
-# // The workflow needs write access only when the manual publication option is enabled.
+# // The manual workflow publishes only the complete Windows installer.
 permissions:
   contents: write
 
@@ -24,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build Windows EXE
+    name: Build Windows Full EXE
     runs-on: windows-latest
     timeout-minutes: 180
 
@@ -46,123 +41,72 @@ jobs:
       - name: Verify the project
         run: npm run subcreator:verify
 
-      - name: Resolve release and runtime state
+      - name: Resolve release version
         id: release
         shell: pwsh
-        env:
-          FORCE_REBUILD_RUNTIME: ${{ inputs.force_rebuild_runtime }}
-          GH_TOKEN: ${{ github.token }}
         run: |
-          # // Derive the GitHub release tag from package.json so artifacts and source metadata cannot drift.
+          # // Derive the artifact and release names from the single package version source.
           $package = Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json
           $version = [string]$package.version
-          $releaseTag = "v$version"
-          $manifestPath = "installers/windows-runtime.json"
-          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-
-          # // Check whether the immutable runtime referenced by the repository is already downloadable.
-          $runtimeAssetExists = $false
-          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$($manifest.releaseTag)" 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $runtimeRelease = $releaseJson | ConvertFrom-Json
-            $runtimeAssetExists = $null -ne (
-              $runtimeRelease.assets |
-                Where-Object { $_.name -eq $manifest.assetName } |
-                Select-Object -First 1
-            )
-          }
-          # // A missing release is an expected first-build state, not a workflow failure.
-          $global:LASTEXITCODE = 0
-
-          $rebuildRuntime = ($env:FORCE_REBUILD_RUNTIME -eq "true") -or (-not $runtimeAssetExists)
-          if ($rebuildRuntime) {
-            # // Rebuild the runtime under its dedicated stable dependency tag and calculate its final hash.
-            $manifest.sha256 = ""
-            $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
-            "SUBCREATOR_REBUILD_RUNTIME=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            # // The connected installer needs only the immutable runtime URL and hash, not a local runtime copy.
-            "SUBCREATOR_SKIP_RUNTIME_ASSET_DOWNLOAD=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "package.json contains an invalid release version: $version"
           }
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "runtime_release_tag=$($manifest.releaseTag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "runtime_asset_name=$($manifest.assetName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "runtime_rebuilt=$($rebuildRuntime.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Build the Windows installer
+      - name: Build the Windows Full installer
         run: npm run subcreator:package:windows-exe
 
-      - name: Validate generated EXE files
-        id: artifacts
+      - name: Validate the generated Full EXE
+        id: artifact
         shell: pwsh
         env:
           VERSION: ${{ steps.release.outputs.version }}
-          RUNTIME_ASSET_NAME: ${{ steps.release.outputs.runtime_asset_name }}
-          RUNTIME_REBUILT: ${{ steps.release.outputs.runtime_rebuilt }}
         run: |
-          # // Fail before upload when Inno Setup did not create the expected lightweight installer.
-          $lightInstallerPath = "Releases/SubCreator-v$env:VERSION-Windows-Light-Installer.exe"
-          if (-not (Test-Path -LiteralPath $lightInstallerPath)) {
-            throw "Light Windows installer is missing: $lightInstallerPath"
+          # // Fail before upload when the complete installer or its embedded version is wrong.
+          $installerPath = "Releases/SubCreator-v$env:VERSION-Windows-Full-Installer.exe"
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+            throw "Full Windows installer is missing: $installerPath"
           }
 
-          if ($env:RUNTIME_REBUILT -eq "true") {
-            $runtimePath = "Releases/$env:RUNTIME_ASSET_NAME"
-            if (-not (Test-Path -LiteralPath $runtimePath)) {
-              throw "Windows runtime installer is missing: $runtimePath"
-            }
-            $fullInstallerPath = "Releases/SubCreator-v$env:VERSION-Windows-Full-Installer.exe"
-            if (-not (Test-Path -LiteralPath $fullInstallerPath)) {
-              throw "Full Windows installer is missing: $fullInstallerPath"
-            }
-            "full_installer_path=$fullInstallerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $productVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($installerPath).ProductVersion).Trim()
+          if ($productVersion -ne $env:VERSION) {
+            throw "Full installer version mismatch: expected $env:VERSION, got $productVersion"
           }
 
-          Get-FileHash -Algorithm SHA256 -LiteralPath $lightInstallerPath
-          "light_installer_path=$lightInstallerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Get-FileHash -Algorithm SHA256 -LiteralPath $installerPath
+          "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Upload the light installer artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: SubCreator-v${{ steps.release.outputs.version }}-Windows-Light-Installer
-          path: ${{ steps.artifacts.outputs.light_installer_path }}
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload the full installer artifact
-        if: steps.release.outputs.runtime_rebuilt == 'true'
+      - name: Upload the Full installer artifact
         uses: actions/upload-artifact@v7
         with:
           name: SubCreator-v${{ steps.release.outputs.version }}-Windows-Full-Installer
-          path: ${{ steps.artifacts.outputs.full_installer_path }}
+          path: ${{ steps.artifact.outputs.installer_path }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload the rebuilt runtime artifact
-        if: steps.release.outputs.runtime_rebuilt == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: SubCreator-Windows-Runtime-v1
-          path: Releases/${{ steps.release.outputs.runtime_asset_name }}
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish files to the GitHub release
+      - name: Publish the Full installer
         if: inputs.publish_release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-          RUNTIME_RELEASE_TAG: ${{ steps.release.outputs.runtime_release_tag }}
           VERSION: ${{ steps.release.outputs.version }}
-          LIGHT_INSTALLER_PATH: ${{ steps.artifacts.outputs.light_installer_path }}
-          FULL_INSTALLER_PATH: ${{ steps.artifacts.outputs.full_installer_path }}
-          RUNTIME_ASSET_NAME: ${{ steps.release.outputs.runtime_asset_name }}
-          RUNTIME_REBUILT: ${{ steps.release.outputs.runtime_rebuilt }}
+          INSTALLER_PATH: ${{ steps.artifact.outputs.installer_path }}
         run: |
-          # // Create the stable release only when the requested version does not already have one.
+          # // Remove lower semantic prereleases and their tags before publishing the stable release.
+          $currentVersion = [version]$env:VERSION
+          $prereleases = gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" `
+            --jq '.[] | select(.prerelease == true) | [.tag_name] | @tsv'
+          foreach ($tag in @($prereleases)) {
+            $candidate = [string]$tag
+            if ($candidate -match '^[vV](\d+\.\d+\.\d+)$' -and [version]$Matches[1] -lt $currentVersion) {
+              gh release delete $candidate --cleanup-tag --yes
+            }
+          }
+
+          # // Create the stable release when needed, then upload only the Full Windows asset.
           gh release view $env:RELEASE_TAG 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:RELEASE_TAG `
@@ -170,34 +114,4 @@ jobs:
               --title "Sub Creator $env:VERSION" `
               --generate-notes
           }
-
-          # // Replace only matching Windows assets while leaving macOS assets on the same release untouched.
-          gh release upload $env:RELEASE_TAG $env:LIGHT_INSTALLER_PATH --clobber
-          if ($env:RUNTIME_REBUILT -eq "true") {
-            gh release upload $env:RELEASE_TAG $env:FULL_INSTALLER_PATH --clobber
-            gh release view $env:RUNTIME_RELEASE_TAG 2>$null
-            if ($LASTEXITCODE -ne 0) {
-              gh release create $env:RUNTIME_RELEASE_TAG `
-                --target $env:GITHUB_SHA `
-                --title "Sub Creator Windows Runtime v1" `
-                --notes "Private Python, WhisperX, and LGPL FFmpeg runtime used by the lightweight Windows installer." `
-                --prerelease
-            }
-            gh release upload $env:RUNTIME_RELEASE_TAG "Releases/$env:RUNTIME_ASSET_NAME" --clobber
-          }
-
-      - name: Persist rebuilt runtime metadata
-        if: inputs.publish_release && steps.release.outputs.runtime_rebuilt == 'true' && github.ref_type == 'branch'
-        shell: pwsh
-        env:
-          TARGET_BRANCH: ${{ github.ref_name }}
-        run: |
-          # // Keep future lightweight builds pointed at the exact runtime asset and SHA-256 published above.
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add installers/windows-runtime.json
-          git diff --cached --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "chore: update Windows runtime manifest"
-            git push origin "HEAD:$env:TARGET_BRANCH"
-          }
+          gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH --clobber

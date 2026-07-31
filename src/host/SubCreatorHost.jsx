@@ -1177,13 +1177,41 @@ function subcreator_get_mogrt_component_from_track_item(trackItem) {
   return components.length > 0 ? components[0] : null;
 }
 
+function subcreator_is_graphic_component(component) {
+  // // Recognize stable internal component names used by Premiere/After Effects graphics without relying only on localized UI labels.
+  if (!component) {
+    return false;
+  }
+
+  var matchName = "";
+  var displayName = "";
+
+  try {
+    matchName = String(component.matchName || "").toLowerCase();
+  } catch (matchNameError) {}
+
+  try {
+    displayName = String(component.displayName || component.name || "").toLowerCase();
+  } catch (displayNameError) {}
+
+  return (
+    matchName.indexOf("ae.adbe text") === 0 ||
+    matchName.indexOf("ae.adbe capsule") === 0 ||
+    matchName.indexOf("ae.adbe graphic") === 0 ||
+    matchName.indexOf("ae.adbe vector") === 0 ||
+    displayName === "graphic parameters"
+  );
+}
+
 function subcreator_get_mogrt_components_from_track_item(trackItem) {
-  // // Collect every usable Essential Graphics component because Premiere-authored MOGRTs do not always expose text on the first component.
+  // // Collect all components only after the track item proves it is a MOGRT or native Premiere graphic.
   if (!trackItem) {
     return [];
   }
 
   var components = [];
+  var rawComponents = [];
+  var hasGraphicIdentity = false;
 
   function rememberComponent(candidate) {
     if (!candidate || !candidate.properties || typeof candidate.properties.numItems !== "number") {
@@ -1201,16 +1229,34 @@ function subcreator_get_mogrt_components_from_track_item(trackItem) {
 
   try {
     if (typeof trackItem.getMGTComponent === "function") {
-      rememberComponent(trackItem.getMGTComponent());
+      var mgtComponent = trackItem.getMGTComponent();
+      if (mgtComponent) {
+        hasGraphicIdentity = true;
+        rememberComponent(mgtComponent);
+      }
     }
   } catch (mgtError) {}
 
   if (trackItem.components && typeof trackItem.components.numItems === "number" && trackItem.components.numItems > 0) {
     for (var componentIndex = 0; componentIndex < trackItem.components.numItems; componentIndex += 1) {
-      rememberComponent(trackItem.components[componentIndex]);
+      var rawComponent = trackItem.components[componentIndex];
+      rawComponents.push(rawComponent);
+      if (subcreator_is_graphic_component(rawComponent)) {
+        hasGraphicIdentity = true;
+      }
     }
   }
 
+  if (!hasGraphicIdentity) {
+    return [];
+  }
+
+  for (var rawComponentIndex = 0; rawComponentIndex < rawComponents.length; rawComponentIndex += 1) {
+    // // Once identified as a graphic, keep intrinsic Motion/Opacity controls available in the Visual editor too.
+    rememberComponent(rawComponents[rawComponentIndex]);
+  }
+
+  // // AE MOGRTs can expose only the component returned by getMGTComponent(), which is already a sufficient identity check.
   return components;
 }
 
@@ -1440,6 +1486,7 @@ function subcreator_get_selected_mogrt_visual_signature() {
 
 var subcreator_visual_selection_event_type = "com.cyrilplugin.subcreator.visualSelectionChanged";
 var subcreator_visual_selection_watcher_registered = false;
+var subcreator_visual_selection_watcher_enabled = false;
 
 function subcreator_dispatch_panel_event(eventType, eventData) {
   // // Send a custom CSXS event from Premiere ExtendScript to the CEP panel.
@@ -1462,7 +1509,19 @@ function subcreator_dispatch_panel_event(eventType, eventData) {
 
 function subcreator_notify_visual_selection_changed() {
   // // Keep the event payload tiny; the panel performs the debounced read only when needed.
+  if (!subcreator_visual_selection_watcher_enabled) {
+    return;
+  }
+
   subcreator_dispatch_panel_event(subcreator_visual_selection_event_type, "selectionChanged");
+}
+
+function subcreator_set_visual_selection_watcher_enabled(enabled) {
+  // // Leave Premiere's one-time event binding installed but silence it whenever the Visual editor is hidden or inactive.
+  subcreator_visual_selection_watcher_enabled = enabled === true || String(enabled || "").toLowerCase() === "true";
+  return subcreator_ok({
+    enabled: subcreator_visual_selection_watcher_enabled
+  });
 }
 
 function subcreator_register_visual_selection_watcher() {

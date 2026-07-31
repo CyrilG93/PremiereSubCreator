@@ -3936,6 +3936,18 @@ export async function registerVisualSelectionWatcher(): Promise<VisualSelectionW
   };
 }
 
+export async function setVisualSelectionWatcherEnabled(enabled: boolean): Promise<boolean> {
+  // // Silence the already-bound host callback while the Visual editor or its docked CEP document is hidden.
+  const response = await evalHostJson<{ enabled: boolean }>(
+    `subcreator_set_visual_selection_watcher_enabled(${enabled ? "true" : "false"})`
+  );
+  if (!response.ok) {
+    throw new Error(response.error ?? "Unable to update visual selection watcher state.");
+  }
+
+  return response.data?.enabled === true;
+}
+
 export function addVisualSelectionChangedListener(listener: (event?: unknown) => void): () => void {
   // // Subscribe to the custom CSXS event when CEP exposes the low-level listener bridge.
   const addEventListener = window.__adobe_cep__?.addEventListener;

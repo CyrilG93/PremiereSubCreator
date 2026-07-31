@@ -93,7 +93,7 @@ When native subtitles create an SRT source file, Sub Creator saves it in an `SRT
 
 ### After generation
 
-- Use `Visual editor` to inspect a selected MOGRT, edit exposed settings live, and copy styles between clips.
+- Use `Visual editor` to inspect a selected MOGRT or Premiere graphic, edit exposed settings live, and copy styles between clips. Standard video and audio clips are ignored by its automatic selection refresh.
 - Use `Text editor` to correct, move, split, or merge generated subtitles.
 - Add your own `.mogrt` files from `Open MOGRT folder`, then click `Refresh gallery`.
 

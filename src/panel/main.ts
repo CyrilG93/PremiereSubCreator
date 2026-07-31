@@ -51,6 +51,7 @@ import {
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
   registerVisualSelectionWatcher,
+  setVisualSelectionWatcherEnabled,
   transcribeWithWhisper,
   transcribeWithWhisperX,
   applySelectedMogrtTextItems,
@@ -2008,10 +2009,11 @@ function setActiveMode(mode: PanelMode): void {
       window.clearTimeout(visualLiveUpdateTimer);
       visualLiveUpdateTimer = null;
     }
-  } else {
+  } else if (isVisualSelectionMonitoringAllowed()) {
     startVisualSelectionPolling();
     scheduleVisualSelectionAutoRefresh("tab");
   }
+  void syncVisualSelectionWatcherState();
 
   if (elements.tabGenerate) {
     const isActive = mode === "generate";
@@ -4117,9 +4119,32 @@ function hasBlockingVisualEditorChanges(): boolean {
   return false;
 }
 
+function isVisualSelectionMonitoringAllowed(): boolean {
+  // // Avoid host calls while the Visual tab or the docked CEP document is not actually visible.
+  return activeMode === "visual" && document.visibilityState !== "hidden";
+}
+
+async function syncVisualSelectionWatcherState(): Promise<void> {
+  // // Keep Premiere's bound selection callback silent whenever this panel cannot use its events.
+  try {
+    await setVisualSelectionWatcherEnabled(isVisualSelectionMonitoringAllowed());
+  } catch (error) {
+    if (verboseLogsEnabled) {
+      setStructuredLog(translate("log.hostResult"), {
+        visualSelectionWatcherStateFailed: String(error)
+      });
+    }
+  }
+}
+
 async function refreshVisualPropertiesIfSelectionChanged(reason: string): Promise<void> {
   // // Compare a lightweight host signature before doing the expensive full Visual editor read.
-  if (activeMode !== "visual" || visualSelectionRefreshInFlight || visualReadInProgress || visualApplyInProgress) {
+  if (
+    !isVisualSelectionMonitoringAllowed() ||
+    visualSelectionRefreshInFlight ||
+    visualReadInProgress ||
+    visualApplyInProgress
+  ) {
     return;
   }
 
@@ -4159,7 +4184,7 @@ async function refreshVisualPropertiesIfSelectionChanged(reason: string): Promis
 
 function scheduleVisualSelectionAutoRefresh(reason: string): void {
   // // Debounce noisy Premiere selection events before comparing the current selection signature.
-  if (activeMode !== "visual") {
+  if (!isVisualSelectionMonitoringAllowed()) {
     return;
   }
 
@@ -4177,7 +4202,7 @@ function startVisualSelectionPolling(): void {
   }
 
   visualSelectionPollTimer = window.setInterval(() => {
-    if (activeMode === "visual") {
+    if (isVisualSelectionMonitoringAllowed()) {
       void refreshVisualPropertiesIfSelectionChanged("poll");
     }
   }, VISUAL_SELECTION_POLL_INTERVAL_MS);
@@ -4201,6 +4226,7 @@ async function initializeVisualSelectionWatcher(): Promise<void> {
 
   try {
     await registerVisualSelectionWatcher();
+    await syncVisualSelectionWatcherState();
   } catch (error) {
     if (verboseLogsEnabled) {
       setStructuredLog(translate("log.hostResult"), {
@@ -4209,7 +4235,7 @@ async function initializeVisualSelectionWatcher(): Promise<void> {
     }
   }
 
-  if (activeMode === "visual") {
+  if (isVisualSelectionMonitoringAllowed()) {
     startVisualSelectionPolling();
     scheduleVisualSelectionAutoRefresh("startup");
   }
@@ -5581,6 +5607,18 @@ async function initialize(): Promise<void> {
   });
   window.addEventListener("focus", () => {
     schedulePassiveMogrtCatalogRefresh();
+  });
+  document.addEventListener("visibilitychange", () => {
+    // // A docked CEP panel can stay open while hidden behind another panel, so suspend its fallback host polling until it is visible again.
+    void syncVisualSelectionWatcherState();
+    if (!isVisualSelectionMonitoringAllowed()) {
+      clearVisualSelectionAutoRefreshTimer();
+      stopVisualSelectionPolling();
+      return;
+    }
+
+    startVisualSelectionPolling();
+    scheduleVisualSelectionAutoRefresh("visibility");
   });
 
   elements.generateButton?.addEventListener("click", async () => {

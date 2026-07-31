@@ -116,6 +116,13 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.53 - 2026-07-31 (Pre-release)
+
+- Added complete Windows and Apple Silicon macOS installers with the private transcription runtime included.
+- Improved MOGRT timing, frame alignment, subtitle rebuilding, and long-generation reliability.
+- Added automatic Visual editor refresh, Premiere theme matching, clearer progress, and better diagnostics.
+- Reduced background activity by ignoring regular media selections and pausing Visual editor monitoring while the panel is hidden.
+
 ### 1.1.0 - 2026-05-11
 
 - Improved MOGRT generation and preserved template keyframes.

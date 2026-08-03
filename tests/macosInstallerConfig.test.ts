@@ -60,13 +60,18 @@ describe("macOS installer fonts", () => {
 });
 
 describe("macOS installer Whisper model selection", () => {
-  it("preselects and labels models installed by an earlier Sub Creator PKG", () => {
-    // // The Installer receipt state is available before the customization screen opens.
+  it("preselects models found in the current user's Whisper cache", () => {
+    // // The Installer can resolve the graphical console user before the customization screen opens.
     const packagingSource = readFileSync(packagingSourcePath, "utf8");
 
     expect(packagingSource).toContain('selected="subcreatorSelectPreviouslyInstalledModel');
     expect(packagingSource).toContain('require-scripts="true"');
+    expect(packagingSource).toContain("system.ioregistry.fromPath('IOService:/')");
+    expect(packagingSource).toContain("system.env && system.env.USER");
+    expect(packagingSource).toContain("kCGSSessionUserNameKey");
+    expect(packagingSource).toContain("/.cache/whisper/");
+    expect(packagingSource).toContain("system.files.fileExistsAtPath");
     expect(packagingSource).toContain("my.choice.packageUpgradeAction");
-    expect(packagingSource).toContain("(already installed)");
+    expect(packagingSource).toContain("return true;");
   });
 });

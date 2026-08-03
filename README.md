@@ -43,7 +43,7 @@ The installer automatically enables the CEP debug mode required for unsigned ext
 6. Reopen Premiere Pro.
 7. Open `Window > Extensions > Sub Creator`.
 
-The Full `.pkg` embeds the Apple Silicon private Python and LGPL FFmpeg runtime. Models installed by an earlier Sub Creator `.pkg` are preselected and marked `already installed`. Selected Whisper models may need an internet connection the first time they are installed. Running a newer Full installer preserves compatible runtime files, downloaded Whisper models, and custom MOGRT files.
+The Full `.pkg` embeds the Apple Silicon private Python and LGPL FFmpeg runtime. Valid models already in the current user's Whisper cache are preselected. Selected Whisper models may need an internet connection the first time they are installed. Running a newer Full installer preserves compatible runtime files, downloaded Whisper models, and custom MOGRT files.
 
 The installer is intentionally unsigned. If macOS blocks it, Control-click the package, choose `Open`, then confirm the installation. Intel Macs are not supported.
 

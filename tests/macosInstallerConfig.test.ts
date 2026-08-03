@@ -58,3 +58,15 @@ describe("macOS installer fonts", () => {
     expect(installerScript).toContain("Kept ${skipped} identical bundled font(s) already installed.");
   });
 });
+
+describe("macOS installer Whisper model selection", () => {
+  it("preselects and labels models installed by an earlier Sub Creator PKG", () => {
+    // // The Installer receipt state is available before the customization screen opens.
+    const packagingSource = readFileSync(packagingSourcePath, "utf8");
+
+    expect(packagingSource).toContain('selected="subcreatorSelectPreviouslyInstalledModel');
+    expect(packagingSource).toContain('require-scripts="true"');
+    expect(packagingSource).toContain("my.choice.packageUpgradeAction");
+    expect(packagingSource).toContain("(already installed)");
+  });
+});

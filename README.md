@@ -27,7 +27,7 @@ Sub Creator is distributed only as complete installers. Python, FFmpeg, Whisper,
 6. Reopen Premiere Pro.
 7. Open `Window > Extensions > Sub Creator`.
 
-The Full installer embeds the private runtime and the recommended `base` model, so the default installation works without Python, FFmpeg, or an internet connection. Extra selected models are downloaded only when they are missing or damaged. Existing models and custom MOGRT files are preserved when the Full installer is run again.
+The Full installer embeds the private runtime and the recommended `base` model, so the default installation works without Python, FFmpeg, or an internet connection. Valid models already in the local cache are preselected and marked `already installed`. Extra selected models are downloaded only when they are missing or damaged. Existing models and custom MOGRT files are preserved when the Full installer is run again.
 
 The installer is intentionally unsigned, so Windows may display a SmartScreen warning. After clicking `Install`, Setup can also appear frozen briefly while Windows checks the files. Leave any Command Prompt or PowerShell windows open until Setup finishes.
 
@@ -43,7 +43,7 @@ The installer automatically enables the CEP debug mode required for unsigned ext
 6. Reopen Premiere Pro.
 7. Open `Window > Extensions > Sub Creator`.
 
-The Full `.pkg` embeds the Apple Silicon private Python and LGPL FFmpeg runtime. Selected Whisper models may need an internet connection the first time they are installed. Running a newer Full installer preserves compatible runtime files, downloaded Whisper models, and custom MOGRT files.
+The Full `.pkg` embeds the Apple Silicon private Python and LGPL FFmpeg runtime. Models installed by an earlier Sub Creator `.pkg` are preselected and marked `already installed`. Selected Whisper models may need an internet connection the first time they are installed. Running a newer Full installer preserves compatible runtime files, downloaded Whisper models, and custom MOGRT files.
 
 The installer is intentionally unsigned. If macOS blocks it, Control-click the package, choose `Open`, then confirm the installation. Intel Macs are not supported.
 

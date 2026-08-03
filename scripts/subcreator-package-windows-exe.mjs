@@ -456,9 +456,14 @@ function createModelPascalDefinitions(bundledBaseModelPath) {
       `  Result := ExpandConstant('{%USERPROFILE}\\.cache\\whisper\\${model.fileName}');`,
       "end;",
       "",
+      `function HasCached${suffix}Model: Boolean;`,
+      "begin",
+      `  Result := FileHasHash(${suffix}ModelPath, '${model.sha256}');`,
+      "end;",
+      "",
       `procedure Prepare${suffix}ModelDownload;`,
       "begin",
-      `  Download${suffix}Model := ModelPage.Values[${index}] and (not FileHasHash(${suffix}ModelPath, '${model.sha256}'));`,
+      `  Download${suffix}Model := ModelPage.Values[${index}] and (not HasCached${suffix}Model);`,
       `  if Download${suffix}Model then`,
       ...(model.id === "base" && bundledBaseModelPath
         ? ["    Log('The verified base model is embedded in this Full installer.');"]
@@ -481,7 +486,9 @@ async function createFullInstaller(compilerPath, version) {
   });
   const modelPageItems = whisperModels.flatMap((model, index) => [
     `  ModelPage.Add('${escapePascalString(model.label)}${model.id === "base" && bundledBaseModelPath ? " - included" : ""}');`,
-    `  ModelPage.Values[${index}] := ${model.defaultSelected ? "True" : `FileExists(ExpandConstant('{%USERPROFILE}\\.cache\\whisper\\${model.fileName}'))`};`
+    `  ModelPage.Values[${index}] := ${model.defaultSelected ? "True" : `HasCached${model.id[0].toUpperCase() + model.id.slice(1)}Model`};`,
+    `  if HasCached${model.id[0].toUpperCase() + model.id.slice(1)}Model then`,
+    `    ModelPage.CheckListBox.ItemCaption[${index}] := '${escapePascalString(model.label)}${model.id === "base" && bundledBaseModelPath ? " - included" : ""} (already installed)';`
   ]);
   const prepareModelDownloads = whisperModels.map((model) => {
     const suffix = model.id[0].toUpperCase() + model.id.slice(1);
@@ -572,10 +579,10 @@ async function createFullInstaller(compilerPath, version) {
     "",
     "procedure InitializeWizard;",
     "begin",
-    "  { // Let users choose extra models without deleting models they already have. }",
+    "  { // Let users choose verified local models without downloading them again. }",
     "  ModelPage := CreateInputOptionPage(wpWelcome,",
     "    'Whisper models', 'Choose the models to keep available offline',",
-    "    'Only missing or damaged selected models will be downloaded. Existing models are never removed.',",
+    "    'Verified local models are checked and marked as already installed. Only missing or damaged selected models will be downloaded.',",
     "    False, False);",
     ...modelPageItems,
     "",

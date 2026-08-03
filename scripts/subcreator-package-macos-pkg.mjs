@@ -605,7 +605,7 @@ async function createDistribution(version) {
     .join("\n");
   const modelDefinitions = whisperModels
     .map(
-      (model) => `  <choice id="model-${xmlEscape(model.id)}" title="${xmlEscape(model.title)}" description="${xmlEscape(model.description)}" start_selected="${model.defaultSelected ? "true" : "false"}">
+      (model) => `  <choice id="model-${xmlEscape(model.id)}" title="${xmlEscape(model.title)}" description="${xmlEscape(model.description)}" start_selected="${model.defaultSelected ? "true" : "false"}" selected="subcreatorSelectPreviouslyInstalledModel('${xmlEscape(model.id)}')">
     <pkg-ref id="com.cyrilplugin.subcreator.installer.model.${xmlEscape(model.id)}"/>
   </choice>`
     )
@@ -622,7 +622,26 @@ async function createDistribution(version) {
   <title>Sub Creator</title>
   <organization>com.cyrilplugin.subcreator</organization>
   <domains enable_localSystem="true"/>
-  <options customize="always" require-scripts="false" hostArchitectures="${xmlEscape(macArch)}"/>
+  <options customize="always" require-scripts="true" hostArchitectures="${xmlEscape(macArch)}"/>
+  <script><![CDATA[
+// // Select and identify model packages that a previous Sub Creator installer completed successfully.
+var subcreatorModelSelectionInitialized = {};
+function subcreatorSelectPreviouslyInstalledModel(modelId) {
+  if (subcreatorModelSelectionInitialized[modelId]) {
+    return my.choice.selected;
+  }
+
+  subcreatorModelSelectionInitialized[modelId] = true;
+  var upgradeAction = my.choice.packageUpgradeAction;
+  var previouslyInstalled = upgradeAction == 'installed' || upgradeAction == 'upgrade' || upgradeAction == 'downgrade' || upgradeAction == 'mixed';
+  if (previouslyInstalled) {
+    my.choice.title = my.choice.title + ' (already installed)';
+    return true;
+  }
+
+  return my.choice.selected;
+}
+  ]]></script>
   <choices-outline>
     <line choice="core"/>
 ${modelChoices}

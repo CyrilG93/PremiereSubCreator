@@ -36,6 +36,16 @@ describe("Windows installer restart behavior", () => {
     expect(packagingSource).toContain('model.id === "base" && bundledBaseModelPath');
   });
 
+  it("checks and labels only verified models already in the local Whisper cache", () => {
+    // // A damaged .pt file must stay selectable but must not be presented as an installed model.
+    const packagingSource = readFileSync(packagingSourcePath, "utf8");
+
+    expect(packagingSource).toContain("function HasCached${suffix}Model: Boolean;");
+    expect(packagingSource).toContain("ModelPage.CheckListBox.ItemCaption");
+    expect(packagingSource).toContain("(already installed)");
+    expect(packagingSource).not.toContain("FileExists(ExpandConstant('{%USERPROFILE}\\\\.cache\\\\whisper\\\\${model.fileName}'))");
+  });
+
   it("fails Setup when a runtime or dependency validation process fails", () => {
     // // Inno's [Run] section ignores child exit codes, so the generated Pascal code must enforce them.
     const packagingSource = readFileSync(packagingSourcePath, "utf8");

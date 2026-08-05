@@ -45,6 +45,14 @@ export function normalizeInlineSubtitleText(text: string): string {
   return normalized;
 }
 
+export function removeSubtitlePunctuation(text: string): string {
+  // // Remove Unicode punctuation only when the user explicitly requests punctuation-free subtitles.
+  return normalizeInlineSubtitleText(text)
+    .replace(/\p{P}+/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function tokenizeSubtitleText(text: string): string[] {
   // // Tokenize subtitle text after punctuation normalization so editor/generation counts agree.
   const normalized = normalizeInlineSubtitleText(text);

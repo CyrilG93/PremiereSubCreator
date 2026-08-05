@@ -32,6 +32,7 @@ export interface CaptionStyleConfig {
   maxWordsPerLine: number;
   animationMode: AnimationMode;
   uppercase: boolean;
+  removePunctuation: boolean;
   linesPerCaption: number;
 }
 

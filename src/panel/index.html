@@ -181,6 +181,15 @@
             </select>
           </label>
 
+          <!-- Keep punctuation removal available for both MOGRT and native Premiere subtitle output. -->
+          <label class="field">
+            <span data-i18n="field.punctuation">Ponctuation</span>
+            <span class="checkbox-label">
+              <input id="removePunctuation" type="checkbox" />
+              <span data-i18n="field.removePunctuation">Enlever toute la ponctuation</span>
+            </span>
+          </label>
+
           <label class="field">
             <span data-i18n="field.maxChars">Lettres max par ligne</span>
             <input id="maxChars" type="number" value="28" min="8" max="80" step="1" />

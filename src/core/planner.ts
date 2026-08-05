@@ -1,6 +1,6 @@
 // // Build subtitle cues from parsed content based on style constraints.
 import type { CaptionBuildOptions, CaptionCue, CaptionWord } from "./types";
-import { normalizeCaptionWords, tokenizeSubtitleText } from "./textNormalization";
+import { normalizeCaptionWords, removeSubtitlePunctuation, tokenizeSubtitleText } from "./textNormalization";
 import { buildWeightedCaptionWords } from "./wordTiming";
 
 const SNAP_ADJACENT_CAPTION_GAP_SECONDS = 0.2;
@@ -351,18 +351,35 @@ function uppercaseIfNeeded(text: string, forceUppercase: boolean): string {
   return forceUppercase ? text.toUpperCase() : text;
 }
 
-function ensureCueWords(cue: CaptionCue, forceUppercase: boolean): CaptionWord[] {
+function removePunctuationFromCaptionWords(words: CaptionWord[]): CaptionWord[] {
+  // // Keep original word timings while dropping punctuation-only tokens from explicit punctuation-free output.
+  return words
+    .map((word) => ({
+      ...word,
+      text: removeSubtitlePunctuation(word.text)
+    }))
+    .filter((word) => Boolean(word.text));
+}
+
+function normalizeCueText(text: string, forceUppercase: boolean, removePunctuation: boolean): string {
+  // // Apply display-only text choices after source parsing so both MOGRT and native outputs share the same result.
+  const normalizedText = uppercaseIfNeeded(text, forceUppercase);
+  return removePunctuation ? removeSubtitlePunctuation(normalizedText) : normalizedText;
+}
+
+function ensureCueWords(cue: CaptionCue, forceUppercase: boolean, removePunctuation: boolean): CaptionWord[] {
   // // Guarantee word-level timing exists, synthesizing it when source lacks per-word data.
   if (cue.words.length > 0) {
-    return normalizeCaptionWords(cue.words).map((word) => {
+    const normalizedWords = normalizeCaptionWords(cue.words).map((word) => {
       return {
         ...word,
         text: uppercaseIfNeeded(word.text, forceUppercase)
       };
     });
+    return removePunctuation ? removePunctuationFromCaptionWords(normalizedWords) : normalizedWords;
   }
 
-  const words = normalizeWords(uppercaseIfNeeded(cue.text, forceUppercase));
+  const words = normalizeWords(normalizeCueText(cue.text, forceUppercase, removePunctuation));
   if (words.length < 1) {
     return [];
   }
@@ -419,9 +436,9 @@ export function buildCaptionPlan(cues: CaptionCue[], options: CaptionBuildOption
   const linesPerCaption = Math.max(1, Number(options.style.linesPerCaption || 2));
 
   for (const cue of cues) {
-    const normalizedWords = ensureCueWords(cue, options.style.uppercase);
+    const normalizedWords = ensureCueWords(cue, options.style.uppercase, options.style.removePunctuation);
     if (normalizedWords.length < 1) {
-      const normalizedText = uppercaseIfNeeded(cue.text, options.style.uppercase);
+      const normalizedText = normalizeCueText(cue.text, options.style.uppercase, options.style.removePunctuation);
       if (!normalizedText.trim()) {
         continue;
       }

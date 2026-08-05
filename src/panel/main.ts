@@ -104,6 +104,7 @@ interface OutputModeGenerationSettings {
   whisperSequenceRange: WhisperSequenceRangeMode;
   preserveMixedLanguages: boolean;
   mixedLanguagePrompt: string;
+  removePunctuation: boolean;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
   maxWordsPerLine: number;
@@ -156,6 +157,7 @@ interface PanelStateSnapshot {
   whisperSequenceRange: WhisperSequenceRangeMode;
   preserveMixedLanguages?: boolean;
   mixedLanguagePrompt?: string;
+  removePunctuation?: boolean;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
   maxWordsPerLine: number;
@@ -219,6 +221,7 @@ const elements = {
   preserveMixedLanguages: document.querySelector<HTMLInputElement>("#preserveMixedLanguages"),
   mixedLanguagePromptField: document.querySelector<HTMLElement>("#mixedLanguagePromptField"),
   mixedLanguagePrompt: document.querySelector<HTMLTextAreaElement>("#mixedLanguagePrompt"),
+  removePunctuation: document.querySelector<HTMLInputElement>("#removePunctuation"),
   animationField: document.querySelector<HTMLElement>("#animationField"),
   animationMode: document.querySelector<HTMLSelectElement>("#animationMode"),
   maxChars: document.querySelector<HTMLInputElement>("#maxChars"),
@@ -1109,6 +1112,7 @@ function createDefaultOutputModeSettings(mode: OutputMode): OutputModeGeneration
     whisperSequenceRange: "entire_sequence",
     preserveMixedLanguages: false,
     mixedLanguagePrompt: "",
+    removePunctuation: false,
     animationMode: mode === "premiere_subtitles" ? "none" : "line",
     maxCharsPerLine: 28,
     maxWordsPerLine: 12,
@@ -1144,6 +1148,7 @@ function normalizeOutputModeSettings(
       typeof raw.mixedLanguagePrompt === "string"
         ? raw.mixedLanguagePrompt.slice(0, MIXED_LANGUAGE_PROMPT_MAX_LENGTH)
         : fallback.mixedLanguagePrompt,
+    removePunctuation: typeof raw.removePunctuation === "boolean" ? raw.removePunctuation : fallback.removePunctuation,
     animationMode: isAnimationModeValue(raw.animationMode) ? raw.animationMode : fallback.animationMode,
     maxCharsPerLine: sanitizePersistedNumber(raw.maxCharsPerLine, fallback.maxCharsPerLine),
     maxWordsPerLine: sanitizePersistedNumber(raw.maxWordsPerLine, fallback.maxWordsPerLine),
@@ -1167,6 +1172,7 @@ function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMo
       whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
       preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages?.checked),
       mixedLanguagePrompt: MIXED_LANGUAGE_FEATURE_ENABLED ? sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt?.value || "") : "",
+      removePunctuation: Boolean(elements.removePunctuation?.checked),
       animationMode: (elements.animationMode?.value as AnimationMode) || fallback.animationMode,
       maxCharsPerLine: Number(elements.maxChars?.value),
       maxWordsPerLine: Number(elements.maxWords?.value),
@@ -1216,6 +1222,9 @@ function applyOutputModeSettingsToControls(mode: OutputMode): void {
   if (elements.mixedLanguagePrompt) {
     elements.mixedLanguagePrompt.value = settings.mixedLanguagePrompt || "";
   }
+  if (elements.removePunctuation) {
+    elements.removePunctuation.checked = Boolean(settings.removePunctuation);
+  }
   if (elements.animationMode && hasSelectOption(elements.animationMode, settings.animationMode)) {
     elements.animationMode.value = settings.animationMode;
   }
@@ -1263,6 +1272,7 @@ function buildLegacyOutputSettings(snapshot: Partial<PanelStateSnapshot>, fallba
       whisperSequenceRange: snapshot.whisperSequenceRange,
       preserveMixedLanguages: snapshot.preserveMixedLanguages,
       mixedLanguagePrompt: snapshot.mixedLanguagePrompt,
+      removePunctuation: snapshot.removePunctuation,
       animationMode: snapshot.animationMode,
       maxCharsPerLine: snapshot.maxCharsPerLine,
       maxWordsPerLine: snapshot.maxWordsPerLine,
@@ -1327,6 +1337,7 @@ function persistPanelState(): void {
     !elements.whisperSequenceRange ||
     !elements.preserveMixedLanguages ||
     !elements.mixedLanguagePrompt ||
+    !elements.removePunctuation ||
     !elements.animationMode ||
     !elements.maxChars ||
     !elements.maxWords ||
@@ -1354,6 +1365,7 @@ function persistPanelState(): void {
     whisperSequenceRange: outputSettingsByMode[activeOutputMode].whisperSequenceRange,
     preserveMixedLanguages: outputSettingsByMode[activeOutputMode].preserveMixedLanguages,
     mixedLanguagePrompt: outputSettingsByMode[activeOutputMode].mixedLanguagePrompt,
+    removePunctuation: outputSettingsByMode[activeOutputMode].removePunctuation,
     animationMode: outputSettingsByMode[activeOutputMode].animationMode,
     maxCharsPerLine: outputSettingsByMode[activeOutputMode].maxCharsPerLine,
     maxWordsPerLine: outputSettingsByMode[activeOutputMode].maxWordsPerLine,
@@ -2321,6 +2333,9 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   }
   if (elements.animationMode) {
     elements.animationMode.disabled = isBusy || isNativeSubtitleOutputMode();
+  }
+  if (elements.removePunctuation) {
+    elements.removePunctuation.disabled = isBusy;
   }
   if (elements.maxChars) {
     elements.maxChars.disabled = isBusy;
@@ -4823,6 +4838,7 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.whisperSequenceRange ||
     !elements.preserveMixedLanguages ||
     !elements.mixedLanguagePrompt
+    || !elements.removePunctuation
   ) {
     throw new Error("Panel bindings not initialized.");
   }
@@ -4866,6 +4882,7 @@ function collectBuildOptions(): CaptionBuildOptions {
       maxWordsPerLine: Number(elements.maxWords.value),
       animationMode: elements.animationMode.value as AnimationMode,
       uppercase: false,
+      removePunctuation: Boolean(elements.removePunctuation.checked),
       linesPerCaption: Number(elements.linesPerCaption.value)
     },
     extensionRootPath,
@@ -5536,6 +5553,10 @@ async function initialize(): Promise<void> {
   });
 
   elements.animationMode?.addEventListener("change", () => {
+    persistPanelState();
+  });
+  elements.removePunctuation?.addEventListener("change", () => {
+    // // Persist the per-output punctuation preference immediately after the user toggles it.
     persistPanelState();
   });
   elements.maxChars?.addEventListener("input", () => {

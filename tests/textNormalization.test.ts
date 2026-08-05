@@ -1,11 +1,16 @@
 // // Verify subtitle-token normalization shared by generation and text editing workflows.
 import { describe, expect, it } from "vitest";
-import { normalizeCaptionWords, normalizeInlineSubtitleText, tokenizeSubtitleText } from "../src/core/textNormalization";
+import { normalizeCaptionWords, normalizeInlineSubtitleText, removeSubtitlePunctuation, tokenizeSubtitleText } from "../src/core/textNormalization";
 
 describe("textNormalization", () => {
   it("re-attaches apostrophes and terminal punctuation in plain text", () => {
     expect(normalizeInlineSubtitleText("c 'est d 'accord ! mais pourquoi ?")).toBe("c'est d'accord! mais pourquoi?");
     expect(tokenizeSubtitleText("Salut ! c 'est bon ?")).toEqual(["Salut!", "c'est", "bon?"]);
+  });
+
+  it("removes all Unicode punctuation only when requested", () => {
+    expect(normalizeInlineSubtitleText("Bonjour, c'est une phrase.")).toBe("Bonjour, c'est une phrase.");
+    expect(removeSubtitlePunctuation("Bonjour, c'est une phrase.")).toBe("Bonjour cest une phrase");
   });
 
   it("removes extra spaces before percent signs", () => {

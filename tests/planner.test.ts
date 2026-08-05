@@ -13,6 +13,7 @@ const baseOptions: CaptionBuildOptions = {
     maxWordsPerLine: 12,
     animationMode: "line",
     uppercase: false,
+    removePunctuation: false,
     linesPerCaption: 2
   },
   extensionRootPath: "",
@@ -326,6 +327,37 @@ describe("buildCaptionPlan", () => {
 
     expect(planned[0].text).toBe("20% de mieux");
     expect(planned[0].words.map((word) => word.text)).toEqual(["20%", "de", "mieux"]);
+  });
+
+  it("removes punctuation from MOGRT and Premiere subtitles only when enabled", () => {
+    for (const outputMode of ["mogrt", "premiere_subtitles"] as const) {
+      const planned = buildCaptionPlan(
+        [
+          {
+            id: `cue-punctuation-${outputMode}`,
+            startSeconds: 0,
+            endSeconds: 2,
+            text: "Bonjour, c'est fini.",
+            words: [
+              { text: "Bonjour,", startSeconds: 0, endSeconds: 0.6 },
+              { text: "c'est", startSeconds: 0.6, endSeconds: 1.3 },
+              { text: "fini.", startSeconds: 1.3, endSeconds: 2 }
+            ]
+          }
+        ],
+        {
+          ...baseOptions,
+          outputMode,
+          style: {
+            ...baseOptions.style,
+            removePunctuation: true
+          }
+        }
+      );
+
+      expect(planned[0].text.replace(/\n/g, " ")).toBe("Bonjour cest fini");
+      expect(planned[0].words.map((word) => word.text)).toEqual(["Bonjour", "cest", "fini"]);
+    }
   });
 
   it("closes tiny gaps between near-adjacent source cues", () => {

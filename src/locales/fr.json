@@ -13,6 +13,8 @@
   "field.whisperLanguage": "Langue Whisper",
   "field.preserveMixedLanguages": "Preserver les langues mixtes",
   "field.mixedLanguagePrompt": "Mots a conserver",
+  "field.punctuation": "Ponctuation",
+  "field.removePunctuation": "Enlever toute la ponctuation",
   "field.animation": "Mode animation",
   "field.maxChars": "Lettres max par ligne",
   "field.linesPerCaption": "Lignes max par sous-titre",

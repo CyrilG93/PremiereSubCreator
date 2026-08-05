@@ -46,9 +46,9 @@ export function normalizeInlineSubtitleText(text: string): string {
 }
 
 export function removeSubtitlePunctuation(text: string): string {
-  // // Remove Unicode punctuation only when the user explicitly requests punctuation-free subtitles.
+  // // Remove Unicode punctuation on request while preserving apostrophes needed by contractions and elisions.
   return normalizeInlineSubtitleText(text)
-    .replace(/\p{P}+/gu, "")
+    .replace(/\p{P}+/gu, (punctuation) => punctuation.replace(/[^'’]/gu, ""))
     .replace(/\s+/g, " ")
     .trim();
 }

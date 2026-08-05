@@ -355,8 +355,8 @@ describe("buildCaptionPlan", () => {
         }
       );
 
-      expect(planned[0].text.replace(/\n/g, " ")).toBe("Bonjour cest fini");
-      expect(planned[0].words.map((word) => word.text)).toEqual(["Bonjour", "cest", "fini"]);
+      expect(planned[0].text.replace(/\n/g, " ")).toBe("Bonjour c'est fini");
+      expect(planned[0].words.map((word) => word.text)).toEqual(["Bonjour", "c'est", "fini"]);
     }
   });
 

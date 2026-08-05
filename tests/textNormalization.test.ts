@@ -8,9 +8,9 @@ describe("textNormalization", () => {
     expect(tokenizeSubtitleText("Salut ! c 'est bon ?")).toEqual(["Salut!", "c'est", "bon?"]);
   });
 
-  it("removes all Unicode punctuation only when requested", () => {
+  it("removes Unicode punctuation while preserving apostrophes when requested", () => {
     expect(normalizeInlineSubtitleText("Bonjour, c'est une phrase.")).toBe("Bonjour, c'est une phrase.");
-    expect(removeSubtitlePunctuation("Bonjour, c'est une phrase.")).toBe("Bonjour cest une phrase");
+    expect(removeSubtitlePunctuation("Bonjour, c'est une phrase. I'm pret, l’IA aussi !")).toBe("Bonjour c'est une phrase I'm pret l’IA aussi");
   });
 
   it("removes extra spaces before percent signs", () => {

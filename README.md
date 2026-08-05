@@ -73,7 +73,7 @@ The log panel keeps a timestamped history of generation stages. If `Generate` ca
 4. Choose `MOGRT` or `Premiere subtitles`.
 5. If you use `MOGRT`, choose a template from the gallery.
 6. Adjust the text limits if needed.
-7. Optionally enable `Remove all punctuation` to remove commas, periods, apostrophes, and other punctuation from generated captions.
+7. Optionally enable `Remove punctuation` to remove commas, periods, and other punctuation while keeping apostrophes in words such as `J'aime` or `I'm`.
 8. Click `Generate subtitles`.
 
 Sub Creator keeps punctuation by default and remembers separate generation settings for `MOGRT` and `Premiere subtitles` output.

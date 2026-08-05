@@ -117,6 +117,12 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
+### 1.1.60 - 2026-08-05 (Pre-release)
+
+- Added an optional punctuation-removal setting for MOGRT and Premiere subtitles.
+- Apostrophes in words such as `J'aime` and `I'm` are preserved when punctuation removal is enabled.
+- Updated the complete Windows and Apple Silicon macOS installers.
+
 ### 1.1.53 - 2026-07-31 (Pre-release)
 
 - Added complete Windows and Apple Silicon macOS installers with the private transcription runtime included.

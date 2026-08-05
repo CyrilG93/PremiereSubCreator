@@ -14,7 +14,7 @@
   "field.preserveMixedLanguages": "Preserver les langues mixtes",
   "field.mixedLanguagePrompt": "Mots a conserver",
   "field.punctuation": "Ponctuation",
-  "field.removePunctuation": "Enlever la ponctuation (garde les apostrophes)",
+  "field.removePunctuation": "Enlever la ponctuation",
   "field.animation": "Mode animation",
   "field.maxChars": "Lettres max par ligne",
   "field.linesPerCaption": "Lignes max par sous-titre",

@@ -4306,7 +4306,7 @@ function isVisualLiveUpdateEnabled(): boolean {
 }
 
 async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean }): Promise<void> {
-  // // Apply edited visual values; use progressive per-clip mode for multi-selection manual apply.
+  // // Apply edited visual values in one host batch so large subtitle selections do not repeat CEP work per clip.
   const useLiveUpdate = options?.liveUpdate === true;
 
   if (visualReadInProgress) {
@@ -4356,43 +4356,14 @@ async function applyVisualChangesToSelection(options?: { liveUpdate?: boolean })
       throw new Error(translate("visual.noChanges"));
     }
 
-    if (!useLiveUpdate && selectedCount > 1) {
-      let updatedCount = 0;
-      let failedCount = 0;
-      const debugLines: string[] = [];
-      setVisualApplyProgressState(true, 0, selectedCount);
-      await waitForNextPaint();
-
-      for (let clipIndex = 0; clipIndex < selectedCount; clipIndex += 1) {
-        const step = await applyVisualPropertiesToSelectedMogrts(changes, {
-          clipStartIndex: clipIndex,
-          clipEndIndex: clipIndex + 1
-        });
-        updatedCount += Number(step.updatedCount || 0);
-        failedCount += Number(step.failedCount || 0);
-        if (Array.isArray(step.debug)) {
-          debugLines.push(...step.debug);
-        }
-        setVisualApplyProgressState(true, clipIndex + 1, selectedCount);
-      }
-
-      setStructuredLog(translate("log.visualApplyDone"), {
-        selectedCount,
-        processedClipCount: selectedCount,
-        updatedCount,
-        failedCount,
-        debug: debugLines
-      });
-      setVisualApplyProgressState(false);
-      await loadVisualPropertiesFromSelection();
-      return;
-    }
-
     if (!useLiveUpdate) {
       setVisualApplyProgressState(true, 0, Math.max(1, selectedCount), translate("progress.visualApplyPending"));
       await waitForNextPaint();
     }
-    const response = await applyVisualPropertiesToSelectedMogrts(changes);
+    const response = await applyVisualPropertiesToSelectedMogrts(changes, {
+      // // Return costly host-level diagnostics only when the panel's verbose log mode is enabled.
+      includeDebug: verboseLogsEnabled
+    });
     if (useLiveUpdate && Number(response.failedCount || 0) === 0) {
       commitAppliedVisualChanges(changes);
     }

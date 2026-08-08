@@ -4174,6 +4174,7 @@ export async function applyVisualPropertiesToSelectedMogrts(
   options?: {
     clipStartIndex?: number;
     clipEndIndex?: number;
+    includeDebug?: boolean;
   }
 ): Promise<ApplyVisualPropertiesResult> {
   // // Send edited property payload to host and apply values on selected MOGRT clips.
@@ -4181,7 +4182,9 @@ export async function applyVisualPropertiesToSelectedMogrts(
     JSON.stringify({
       changes,
       clipStartIndex: Number.isFinite(Number(options?.clipStartIndex)) ? Number(options?.clipStartIndex) : undefined,
-      clipEndIndex: Number.isFinite(Number(options?.clipEndIndex)) ? Number(options?.clipEndIndex) : undefined
+      clipEndIndex: Number.isFinite(Number(options?.clipEndIndex)) ? Number(options?.clipEndIndex) : undefined,
+      // // Keep normal bulk applies compact while preserving an opt-in diagnostic payload for troubleshooting.
+      includeDebug: options?.includeDebug === true
     })
   );
   const response = await evalHostJson<ApplyVisualPropertiesResult>(

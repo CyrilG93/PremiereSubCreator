@@ -4520,10 +4520,10 @@ function subcreator_visual_parse_component_prefixed_path(pathValue) {
   };
 }
 
-function subcreator_visual_resolve_property_from_track_item(trackItem, pathValue) {
-  // // Resolve one visual-editor path back to the correct component/property pair on a track item.
+function subcreator_visual_resolve_property_from_track_item(trackItem, pathValue, knownComponents) {
+  // // Resolve one visual-editor path back to the correct component/property pair on a track item, reusing a batch cache when available.
   var parsedPath = subcreator_visual_parse_component_prefixed_path(pathValue);
-  var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+  var components = knownComponents || subcreator_get_mogrt_components_from_track_item(trackItem);
   var component = components[parsedPath.componentIndex];
   if (!component || !component.properties) {
     return null;
@@ -4911,6 +4911,8 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
   }
 
   var extractedStyleValues = subcreator_visual_extract_text_style_from_value(rawValue);
+  // // Defer Premiere UI work during a visual batch; the caller refreshes once after every property is committed.
+  var updateUi = !(extraOptions && extraOptions.updateUI === false);
 
   function applyStylePatch(styleKeyToApply, baseStyleValue, customOptions) {
     // // Try one text-style patch strategy for any text-style key, including companion font-style cleanup after a family clone.
@@ -4963,7 +4965,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
           subcreator_visual_apply_text_style_to_payload(objectCopy, exclusiveCompanionStyleKey, false, applyOptions);
         }
         if (didPatchCopy) {
-          property.setValue(objectCopy, true);
+          property.setValue(objectCopy, updateUi);
           return true;
         }
       } catch (copyError) {}
@@ -4979,7 +4981,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
           subcreator_visual_apply_text_style_to_payload(rawValue, exclusiveCompanionStyleKey, false, applyOptions);
         }
         if (didPatchDirect) {
-          property.setValue(rawValue, true);
+          property.setValue(rawValue, updateUi);
           return true;
         }
       } catch (directError) {}
@@ -4998,7 +5000,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
           subcreator_visual_apply_text_style_to_payload(parsed, exclusiveCompanionStyleKey, false, applyOptions);
         }
         if (didPatchParsed) {
-          property.setValue(JSON.stringify(parsed), true);
+          property.setValue(JSON.stringify(parsed), updateUi);
           return true;
         }
       } catch (jsonError) {}
@@ -5014,7 +5016,7 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
           patchedRaw = subcreator_try_patch_text_style_json_string(patchedRaw, exclusiveCompanionStyleKey, false, applyOptions) || patchedRaw;
         }
         if (patchedRaw) {
-          property.setValue(patchedRaw, true);
+          property.setValue(patchedRaw, updateUi);
           return true;
         }
       } catch (patchError) {}
@@ -5278,16 +5280,16 @@ function subcreator_visual_numeric_values_match(targetValue, readbackValue) {
 }
 
 function subcreator_visual_try_set_numeric_property(property, numericValue, debugLines, debugLabel) {
-  // // Validate numeric writes with readback because some Premiere sliders silently coerce values like `0`.
+  // // Validate numeric writes with readback, preferring no per-property UI refresh during bulk visual applies.
   if (!property || typeof property.setValue !== "function") {
     return false;
   }
 
   var attempts = [
-    { value: numericValue, useRefresh: true, label: "number_refresh" },
     { value: numericValue, useRefresh: false, label: "number_no_refresh" },
-    { value: String(numericValue), useRefresh: true, label: "string_refresh" },
-    { value: String(numericValue), useRefresh: false, label: "string_no_refresh" }
+    { value: numericValue, useRefresh: true, label: "number_refresh" },
+    { value: String(numericValue), useRefresh: false, label: "string_no_refresh" },
+    { value: String(numericValue), useRefresh: true, label: "string_refresh" }
   ];
 
   for (var attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
@@ -5588,7 +5590,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         }
 
         try {
-          property.setColorValue(payload, true);
+          property.setColorValue(payload, false);
           return true;
         } catch (arrayUiError) {}
 
@@ -5628,7 +5630,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
             alpha: isNaN(alpha) ? 1 : alpha
           };
           try {
-            property.setColorValue(objectUnitPayload, true);
+            property.setColorValue(objectUnitPayload, false);
             return true;
           } catch (objectUnitUiError) {}
 
@@ -5644,7 +5646,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
             alpha: isNaN(alpha) ? 255 : alpha
           };
           try {
-            property.setColorValue(objectBytePayload, true);
+            property.setColorValue(objectBytePayload, false);
             return true;
           } catch (objectByteUiError) {}
 
@@ -5678,7 +5680,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
             if (typeof property.setValue !== "function") {
               return false;
             }
-            property.setValue(stringifyJson ? JSON.stringify(payloadCopy) : payloadCopy, true);
+            property.setValue(stringifyJson ? JSON.stringify(payloadCopy) : payloadCopy, false);
             return true;
           })
         ) {
@@ -5770,7 +5772,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         }
         property.setColorValue(
           [fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1],
-          true
+          false
         );
         return true;
       })
@@ -5783,7 +5785,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         if (typeof property.setColorValue !== "function") {
           return false;
         }
-        property.setColorValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], true);
+        property.setColorValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], false);
         return true;
       })
     ) {
@@ -5802,7 +5804,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
             blue: fallbackRgbValue.blue / 255,
             alpha: 1
           },
-          true
+          false
         );
         return true;
       })
@@ -5815,7 +5817,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         if (typeof property.setValue !== "function") {
           return false;
         }
-        property.setValue([fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1], true);
+        property.setValue([fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1], false);
         return true;
       })
     ) {
@@ -5827,7 +5829,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         if (typeof property.setValue !== "function") {
           return false;
         }
-        property.setValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], true);
+        property.setValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], false);
         return true;
       })
     ) {
@@ -5841,7 +5843,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
         }
         property.setValue(
           subcreator_visual_rgb_to_hex(fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue),
-          true
+          false
         );
         return true;
       })
@@ -5858,7 +5860,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
           if (typeof property.setValue !== "function") {
             return false;
           }
-          property.setValue(packedRgb, true);
+          property.setValue(packedRgb, false);
           return true;
         })
       ) {
@@ -5870,7 +5872,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
           if (typeof property.setValue !== "function") {
             return false;
           }
-          property.setValue(255 * 16777216 + packedRgb, true);
+          property.setValue(255 * 16777216 + packedRgb, false);
           return true;
         })
       ) {
@@ -5882,7 +5884,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
           if (typeof property.setValue !== "function") {
             return false;
           }
-          property.setValue(packedBrg, true);
+          property.setValue(packedBrg, false);
           return true;
         })
       ) {
@@ -5894,7 +5896,7 @@ function subcreator_try_set_mogrt_color_property(property, value) {
           if (typeof property.setValue !== "function") {
             return false;
           }
-          property.setValue(255 * 16777216 + packedBrg, true);
+          property.setValue(255 * 16777216 + packedBrg, false);
           return true;
         })
       ) {
@@ -6631,6 +6633,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
     var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
     var payload = JSON.parse(decodedPayload || "{}");
     var changes = payload && payload.changes && typeof payload.changes.length === "number" ? payload.changes : [];
+    // // Avoid generating large host-to-panel diagnostic payloads unless troubleshooting explicitly requests them.
+    var includeDebug = payload && payload.includeDebug === true;
     var sequence = app.project.activeSequence;
     var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
 
@@ -6672,11 +6676,14 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
     var failedCount = 0;
     var colorUpdatedCount = 0;
     var debugLines = [];
+    var diagnosticLines = includeDebug ? debugLines : null;
     var applySequenceSize = subcreator_visual_read_sequence_dimensions();
-    debugLines.push("sequence=" + applySequenceSize.width + "x" + applySequenceSize.height);
-    debugLines.push(
-      "clip_range=" + String(clipStartIndex) + "-" + String(clipEndIndex) + " selected=" + String(mogrtItems.length)
-    );
+    if (includeDebug) {
+      debugLines.push("sequence=" + applySequenceSize.width + "x" + applySequenceSize.height);
+      debugLines.push(
+        "clip_range=" + String(clipStartIndex) + "-" + String(clipEndIndex) + " selected=" + String(mogrtItems.length)
+      );
+    }
 
     for (var clipIndex = clipStartIndex; clipIndex < clipEndIndex; clipIndex += 1) {
       var clip = mogrtItems[clipIndex];
@@ -6685,6 +6692,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         failedCount += changes.length;
         continue;
       }
+      // // Cache resolved paths so text-style siblings reuse the same Premiere property proxy on this clip.
+      var resolvedPropertiesByPath = {};
 
       for (var changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
         var change = changes[changeIndex] || {};
@@ -6704,7 +6713,13 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           continue;
         }
 
-        var resolvedProperty = subcreator_visual_resolve_property_from_track_item(clip, resolvedPath);
+        var resolvedProperty = null;
+        if (Object.prototype.hasOwnProperty.call(resolvedPropertiesByPath, resolvedPath)) {
+          resolvedProperty = resolvedPropertiesByPath[resolvedPath];
+        } else {
+          resolvedProperty = subcreator_visual_resolve_property_from_track_item(clip, resolvedPath, clipComponents);
+          resolvedPropertiesByPath[resolvedPath] = resolvedProperty;
+        }
         var property = resolvedProperty ? resolvedProperty.property : null;
         if (!property || typeof property.setValue !== "function") {
           failedCount += 1;
@@ -6717,12 +6732,13 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           displayName += " (" + virtualTextStyleTarget.styleKey + ")";
         }
         if (
-          controlKind === "vector" ||
-          controlKind === "color" ||
-          controlKind === "select" ||
-          (valueType === "number" && Number(value) === 0) ||
-          String(displayName || "").toLowerCase().indexOf("size") !== -1 ||
-          !!virtualTextStyleTarget
+          includeDebug &&
+          (controlKind === "vector" ||
+            controlKind === "color" ||
+            controlKind === "select" ||
+            (valueType === "number" && Number(value) === 0) ||
+            String(displayName || "").toLowerCase().indexOf("size") !== -1 ||
+            !!virtualTextStyleTarget)
         ) {
           debugLines.push(
             "change path=" +
@@ -6742,7 +6758,8 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         if (virtualTextStyleTarget) {
           try {
             applied = subcreator_try_set_mogrt_text_style_property(property, virtualTextStyleTarget.styleKey, value, {
-              fontToken: fontToken
+              fontToken: fontToken,
+              updateUI: false
             });
           } catch (textStyleError) {}
         } else if (controlKind === "text") {
@@ -6763,8 +6780,10 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               }
 
               var hostVector = subcreator_visual_vector_to_host_units(sourceVector, vectorScale || [1, 1, 1, 1]);
-              property.setValue(hostVector, true);
-              debugLines.push("vector out=" + String(hostVector));
+              property.setValue(hostVector, false);
+              if (includeDebug) {
+                debugLines.push("vector out=" + String(hostVector));
+              }
               applied = true;
             }
           } catch (vectorError) {}
@@ -6773,7 +6792,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
             applied = subcreator_visual_try_set_numeric_property(
               property,
               Number(value),
-              debugLines,
+              diagnosticLines,
               path + " name=" + displayName
             );
           } catch (numericError) {}
@@ -6782,22 +6801,26 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
         if (!applied && controlKind !== "color" && !virtualTextStyleTarget) {
           try {
             var normalizedValue = subcreator_normalize_visual_payload_value(valueType, value);
-            property.setValue(normalizedValue, true);
+            property.setValue(normalizedValue, false);
             applied = true;
           } catch (setError) {
             applied = false;
           }
         } else if (!applied && controlKind === "color") {
-          debugLines.push("color apply failed without generic setValue fallback");
+          if (includeDebug) {
+            debugLines.push("color apply failed without generic setValue fallback");
+          }
         } else if (!applied && virtualTextStyleTarget) {
-          debugLines.push("text style apply failed without generic setValue fallback");
+          if (includeDebug) {
+            debugLines.push("text style apply failed without generic setValue fallback");
+          }
         }
 
         if (applied) {
           if (controlKind === "color") {
             colorUpdatedCount += 1;
           }
-          if (virtualTextStyleTarget) {
+          if (virtualTextStyleTarget && includeDebug) {
             try {
               var textStyleReadbackRaw = typeof property.getValue === "function" ? property.getValue() : "";
               var textStyleReadback = subcreator_visual_extract_text_style_from_value(textStyleReadbackRaw);
@@ -6819,7 +6842,7 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
               debugLines.push("textstyle readback failed: " + String(textReadbackError));
             }
           }
-          if (controlKind === "color") {
+          if (controlKind === "color" && includeDebug) {
             try {
               var afterColorValue = typeof property.getColorValue === "function" ? property.getColorValue() : "<no getColorValue>";
               var afterRawValue = typeof property.getValue === "function" ? property.getValue() : "<no getValue>";
@@ -6845,24 +6868,30 @@ function subcreator_apply_selected_mogrt_properties(payloadEncoded) {
           }
           updatedCount += 1;
         } else {
-          debugLines.push("failed path=" + path + " name=" + displayName + " kind=" + controlKind);
+          if (includeDebug) {
+            debugLines.push("failed path=" + path + " name=" + displayName + " kind=" + controlKind);
+          }
           failedCount += 1;
         }
       }
     }
 
     var refreshTriggered = subcreator_force_sequence_visual_refresh(sequence);
-    debugLines.push("ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
+    if (includeDebug) {
+      debugLines.push("ui_refresh=" + (refreshTriggered ? "forced" : "not_available"));
+    }
     if (colorUpdatedCount > 0) {
       var colorRefresh = subcreator_force_color_apply_visual_refresh(sequence, mogrtItems);
-      debugLines.push(
-        "color_ui_refresh first=" +
-          (colorRefresh.firstRefresh ? "forced" : "not_available") +
-          " selection_pulse=" +
-          (colorRefresh.selectionPulse ? "forced" : "not_available") +
-          " delayed=" +
-          (colorRefresh.delayedRefresh ? "forced" : "not_available")
-      );
+      if (includeDebug) {
+        debugLines.push(
+          "color_ui_refresh first=" +
+            (colorRefresh.firstRefresh ? "forced" : "not_available") +
+            " selection_pulse=" +
+            (colorRefresh.selectionPulse ? "forced" : "not_available") +
+            " delayed=" +
+            (colorRefresh.delayedRefresh ? "forced" : "not_available")
+        );
+      }
     }
 
     return subcreator_ok({

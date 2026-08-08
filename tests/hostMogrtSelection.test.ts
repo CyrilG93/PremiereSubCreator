@@ -120,3 +120,19 @@ describe("Visual selection watcher lifecycle", () => {
     expect(panelSource).toContain("setVisualSelectionWatcherEnabled(isVisualSelectionMonitoringAllowed())");
   });
 });
+
+describe("Visual property bulk apply", () => {
+  it("sends one host batch for Copy properties Apply and reuses resolved component paths", () => {
+    // // Large subtitle selections must avoid one CEP evaluation, selection scan, and redraw per timeline clip.
+    const bridgeSourcePath = fileURLToPath(new URL("../src/panel/cepBridge.ts", import.meta.url));
+    const bridgeSource = readFileSync(bridgeSourcePath, "utf8");
+
+    expect(panelSource).not.toContain("for (let clipIndex = 0; clipIndex < selectedCount; clipIndex += 1)");
+    expect(panelSource).toContain("includeDebug: verboseLogsEnabled");
+    expect(bridgeSource).toContain("includeDebug: options?.includeDebug === true");
+    expect(hostSource).toContain("resolvedPropertiesByPath");
+    expect(hostSource).toContain("subcreator_visual_resolve_property_from_track_item(clip, resolvedPath, clipComponents)");
+    expect(hostSource).toContain("property.setValue(hostVector, false)");
+    expect(hostSource).toContain("subcreator_force_color_apply_visual_refresh(sequence, mogrtItems)");
+  });
+});

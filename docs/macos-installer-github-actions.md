@@ -27,7 +27,7 @@ Each GitHub runner:
 4. Rebuilds or reuses the validated private Python and LGPL FFmpeg runtime.
 5. Creates the Full PKG, expands it to verify its structure, checks the embedded version and ARM64 declaration, and calculates its SHA-256.
 
-When publication is enabled, lower semantic prereleases and their tags are removed before the stable release is created. Technical non-semantic tags are left untouched.
+When publication is enabled, lower semantic prereleases and their tags are removed before the stable release is created. A prerelease with the same version is promoted and reused, even if its tag uses a different letter case, so its installers are not duplicated. Technical non-semantic tags are left untouched.
 
 ## Signing
 

@@ -106,7 +106,29 @@ jobs:
             }
           }
 
-          # // Create the stable release when needed, then upload only the Full Windows asset.
+          # // Reuse a same-version release regardless of tag casing, so promoting a prerelease never duplicates its assets.
+          $matchingRelease = @(
+            gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" --jq '.[] | [.tag_name, (.prerelease | tostring)] | @tsv' |
+              Where-Object {
+                $parts = [string]$_ -split "`t", 2
+                $parts.Count -eq 2 -and $parts[0].ToLowerInvariant() -eq $env:RELEASE_TAG.ToLowerInvariant()
+              } |
+              Select-Object -First 1
+          )
+          if ($matchingRelease.Count -gt 0) {
+            $matchingParts = [string]$matchingRelease[0] -split "`t", 2
+            $matchingTag = $matchingParts[0]
+            $matchingIsPrerelease = $matchingParts[1] -eq 'true'
+            if ($matchingIsPrerelease) {
+              gh release edit $matchingTag --prerelease=false --title "Sub Creator $env:VERSION"
+              if ($LASTEXITCODE -ne 0) {
+                throw "Unable to promote the existing prerelease $matchingTag"
+              }
+            }
+            $env:RELEASE_TAG = $matchingTag
+          }
+
+          # // Create the stable release when no matching release already exists, then upload only the Full Windows asset.
           gh release view $env:RELEASE_TAG 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:RELEASE_TAG `

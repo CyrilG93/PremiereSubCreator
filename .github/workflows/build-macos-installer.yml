@@ -138,7 +138,18 @@ jobs:
             fi
           done
 
-          # // Create the stable release when needed, then upload only the Full ARM64 macOS asset.
+          # // Reuse a same-version release regardless of tag casing, so promoting a prerelease never duplicates its assets.
+          matching_release="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq ".[] | select((.tag_name | ascii_downcase) == \"${RELEASE_TAG}\") | [.tag_name, (.prerelease | tostring)] | @tsv" | head -n 1)"
+          if [[ -n "$matching_release" ]]; then
+            IFS=$'\t' read -r matching_tag matching_is_prerelease <<< "$matching_release"
+            if [[ "$matching_is_prerelease" == "true" ]]; then
+              gh release edit "$matching_tag" --prerelease=false --title "Sub Creator $VERSION"
+            fi
+            RELEASE_TAG="$matching_tag"
+          fi
+
+          # // Create the stable release when no matching release already exists, then upload only the Full ARM64 macOS asset.
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \

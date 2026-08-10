@@ -117,18 +117,13 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ## Changelog
 
-### 1.1.60 - 2026-08-05 (Pre-release)
+### 1.2.0 - 2026-08-10
 
-- Added an optional punctuation-removal setting for MOGRT and Premiere subtitles.
-- Apostrophes in words such as `J'aime` and `I'm` are preserved when punctuation removal is enabled.
-- Updated the complete Windows and Apple Silicon macOS installers.
-
-### 1.1.53 - 2026-07-31 (Pre-release)
-
-- Added complete Windows and Apple Silicon macOS installers with the private transcription runtime included.
-- Improved MOGRT timing, frame alignment, subtitle rebuilding, and long-generation reliability.
-- Added automatic Visual editor refresh, Premiere theme matching, clearer progress, and better diagnostics.
-- Reduced background activity by ignoring regular media selections and pausing Visual editor monitoring while the panel is hidden.
+- Added complete Windows and Apple Silicon macOS installers with the private transcription runtime included, so Python, FFmpeg, Whisper, and WhisperX do not need to be installed separately.
+- Improved subtitle generation with clearer live progress, richer diagnostics, separate Whisper language selection, and optional punctuation removal that preserves apostrophes in words such as `J'aime` and `I'm`.
+- Improved animated MOGRT workflows with more reliable frame-aligned timing, subtitle rebuilding, and preservation of text styling and animation data.
+- Expanded the Visual editor with automatic selection refresh, safer copying of exposed properties between subtitle clips, and faster batch application on large selections.
+- Improved the Text editor, Premiere theme matching, and overall panel responsiveness during long subtitle generations.
 
 ### 1.1.0 - 2026-05-11
 

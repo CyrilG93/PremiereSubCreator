@@ -119,7 +119,7 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ### 1.2.0 - 2026-08-10
 
-- Added complete Windows and Apple Silicon macOS installers with the private transcription runtime included, so Python, FFmpeg, Whisper, and WhisperX do not need to be installed separately.
+- Added complete Windows and Apple Silicon macOS installers, so Python, FFmpeg, Whisper, and WhisperX do not need to be installed separately.
 - Improved subtitle generation with clearer live progress, richer diagnostics, separate Whisper language selection, and optional punctuation removal that preserves apostrophes in words such as `J'aime` and `I'm`.
 - Improved animated MOGRT workflows with more reliable frame-aligned timing, subtitle rebuilding, and preservation of text styling and animation data.
 - Expanded the Visual editor with automatic selection refresh, safer copying of exposed properties between subtitle clips, and faster batch application on large selections.

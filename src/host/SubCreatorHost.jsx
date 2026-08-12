@@ -5469,6 +5469,58 @@ function subcreator_visual_color_distance(leftRgb, rightRgb) {
   );
 }
 
+function subcreator_visual_try_set_native_color_value(property, rgb, rawAlpha) {
+  // // Use Premiere's documented ARGB positional signature so channels cannot be swapped on the first write.
+  if (!property || typeof property.setColorValue !== "function" || !rgb) {
+    return false;
+  }
+
+  var alpha = Number(rawAlpha);
+  if (isNaN(alpha)) {
+    alpha = 255;
+  } else if (alpha >= 0 && alpha <= 1) {
+    alpha *= 255;
+  }
+
+  try {
+    property.setColorValue(
+      Math.round(subcreator_visual_clamp(alpha, 0, 255)),
+      Math.round(subcreator_visual_clamp(rgb.red, 0, 255)),
+      Math.round(subcreator_visual_clamp(rgb.green, 0, 255)),
+      Math.round(subcreator_visual_clamp(rgb.blue, 0, 255)),
+      false
+    );
+    return true;
+  } catch (nativeColorError) {}
+
+  return false;
+}
+
+function subcreator_visual_extract_alpha_channel(rawValue, preferredArrayLayout) {
+  // // Preserve an existing color alpha channel while defaulting opaque when the host omits it.
+  if (!rawValue || typeof rawValue !== "object") {
+    return 255;
+  }
+
+  if (typeof rawValue.alpha !== "undefined") {
+    return rawValue.alpha;
+  }
+  if (typeof rawValue.a !== "undefined") {
+    return rawValue.a;
+  }
+
+  if (typeof rawValue.length === "number" && rawValue.length >= 4) {
+    var arrayLayout =
+      subcreator_trim_string(String(preferredArrayLayout || "")) || subcreator_visual_detect_color_array_layout(rawValue);
+    var indices = subcreator_visual_color_layout_indices(arrayLayout, rawValue.length);
+    if (indices.alpha >= 0 && indices.alpha < rawValue.length) {
+      return rawValue[indices.alpha];
+    }
+  }
+
+  return 255;
+}
+
 function subcreator_visual_apply_rgb_to_payload(payload, rgb) {
   // // Patch object/array color payloads while preserving their original numeric scale.
   if (!payload || typeof payload !== "object" || !rgb) {
@@ -5542,7 +5594,6 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     return false;
   }
   var colorDisplayName = subcreator_trim_string(String(property.displayName || ""));
-  var colorWriteLayoutCandidates = subcreator_visual_build_color_layout_candidates(colorDisplayName, "", "write");
   var colorReadLayoutCandidates = subcreator_visual_build_color_layout_candidates(colorDisplayName, "", "read");
   var colorLayoutHint = colorReadLayoutCandidates.length ? colorReadLayoutCandidates[0] : "";
 
@@ -5555,8 +5606,8 @@ function subcreator_try_set_mogrt_color_property(property, value) {
   var colorOrders = [rgb, fallbackRgb];
   var colorDistanceThreshold = 8;
 
-  function applyAndVerify(applyCallback, readLayout) {
-    // // Apply one write strategy and verify readback when host API can expose a color.
+  function applyAndVerify(applyCallback, readLayout, retryOnMismatch) {
+    // // Apply one write strategy and retry verified native writes when Premiere exposes a stale first result.
     var attempted = false;
     try {
       attempted = applyCallback() !== false;
@@ -5570,6 +5621,31 @@ function subcreator_try_set_mogrt_color_property(property, value) {
 
     var readbackLayout = subcreator_trim_string(String(readLayout || colorLayoutHint || ""));
     var readback = subcreator_visual_try_read_property_rgb(property, true, readbackLayout);
+    if (!readback) {
+      return true;
+    }
+
+    if (subcreator_visual_color_distance(readback, rgb) <= colorDistanceThreshold) {
+      return true;
+    }
+
+    if (retryOnMismatch !== true) {
+      return false;
+    }
+
+    try {
+      $.sleep(15);
+      attempted = applyCallback() !== false;
+      $.sleep(15);
+    } catch (retryError) {
+      return false;
+    }
+
+    if (!attempted) {
+      return false;
+    }
+
+    readback = subcreator_visual_try_read_property_rgb(property, true, readbackLayout);
     if (!readback) {
       return true;
     }
@@ -5598,131 +5674,27 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     }
   }
 
-  function trySetColorByApiShape(referenceValue, candidateRgb, layoutOverride) {
-    // // Match native setColorValue payload shape to avoid unsupported host writes.
-    if (typeof property.setColorValue !== "function") {
-      return false;
-    }
+  if (hasColorApiValue && colorApiValue && typeof colorApiValue.length === "number") {
+    // // Decode readback through the one layout reported by Premiere instead of accepting any channel permutation.
+    colorLayoutHint = subcreator_visual_detect_color_array_layout(colorApiValue);
+    subcreator_visual_set_cached_color_layout(colorDisplayName, colorLayoutHint, "read");
+  }
 
-    if (!referenceValue) {
-      return false;
-    }
-
-    try {
-      if (typeof referenceValue.length === "number" && referenceValue.length >= 3) {
-        var v0 = Number(referenceValue[0]);
-        var v1 = Number(referenceValue[1]);
-        var v2 = Number(referenceValue[2]);
-        var v3 = Number(referenceValue[3]);
-        var arrayLayout =
-          subcreator_trim_string(String(layoutOverride || "")) || colorLayoutHint || subcreator_visual_detect_color_array_layout(referenceValue);
-        var hasFourChannels = typeof referenceValue.length === "number" && referenceValue.length >= 4;
-        var channelsUseUnit = false;
-        var alphaSource = 1;
-
-        if (arrayLayout === "argb") {
-          channelsUseUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
-          alphaSource = !isNaN(v0) ? v0 : 1;
-        } else if (arrayLayout === "rgba" || arrayLayout === "bgra") {
-          channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
-          alphaSource = !isNaN(v3) ? v3 : 1;
-        } else if (arrayLayout === "abgr") {
-          channelsUseUnit = !isNaN(v1) && !isNaN(v2) && !isNaN(v3) && v1 <= 1 && v2 <= 1 && v3 <= 1;
-          alphaSource = !isNaN(v0) ? v0 : 1;
-        } else {
-          channelsUseUnit = !isNaN(v0) && !isNaN(v1) && !isNaN(v2) && v0 <= 1 && v1 <= 1 && v2 <= 1;
-          alphaSource = 1;
-        }
-
-        var alphaAsUnit = alphaSource <= 1;
-        var alphaUnit = alphaAsUnit ? alphaSource : alphaSource / 255;
-        var alpha255 = alphaAsUnit ? Math.round(alphaSource * 255) : alphaSource;
-        var redPayload = channelsUseUnit ? candidateRgb.red / 255 : candidateRgb.red;
-        var greenPayload = channelsUseUnit ? candidateRgb.green / 255 : candidateRgb.green;
-        var bluePayload = channelsUseUnit ? candidateRgb.blue / 255 : candidateRgb.blue;
-        var payload = [redPayload, greenPayload, bluePayload];
-
-        if (hasFourChannels) {
-          var indices = subcreator_visual_color_layout_indices(arrayLayout, 4);
-          payload = [0, 0, 0, 0];
-          payload[indices.red] = redPayload;
-          payload[indices.green] = greenPayload;
-          payload[indices.blue] = bluePayload;
-          if (indices.alpha >= 0 && indices.alpha < payload.length) {
-            payload[indices.alpha] = channelsUseUnit ? alphaUnit : alpha255;
-          }
-        }
-
-        try {
-          property.setColorValue(payload, false);
-          return true;
-        } catch (arrayUiError) {}
-
-        try {
-          property.setColorValue(payload);
-          return true;
-        } catch (arrayError) {}
-
-        try {
-          if (payload.length >= 4) {
-            property.setColorValue(payload[0], payload[1], payload[2], payload[3]);
-          } else {
-            property.setColorValue(payload[0], payload[1], payload[2]);
-          }
-          return true;
-        } catch (positionalError) {}
-      }
-    } catch (arrayShapeError) {}
-
-    try {
-      if (
-        typeof referenceValue.red !== "undefined" ||
-        typeof referenceValue.green !== "undefined" ||
-        typeof referenceValue.blue !== "undefined"
-      ) {
-        var red = Number(referenceValue.red);
-        var green = Number(referenceValue.green);
-        var blue = Number(referenceValue.blue);
-        var alpha = Number(referenceValue.alpha);
-        var objectUsesUnit = !isNaN(red) && !isNaN(green) && !isNaN(blue) && red <= 1 && green <= 1 && blue <= 1;
-
-        if (objectUsesUnit) {
-          var objectUnitPayload = {
-            red: candidateRgb.red / 255,
-            green: candidateRgb.green / 255,
-            blue: candidateRgb.blue / 255,
-            alpha: isNaN(alpha) ? 1 : alpha
-          };
-          try {
-            property.setColorValue(objectUnitPayload, false);
-            return true;
-          } catch (objectUnitUiError) {}
-
-          try {
-            property.setColorValue(objectUnitPayload);
-            return true;
-          } catch (objectUnitError) {}
-        } else {
-          var objectBytePayload = {
-            red: candidateRgb.red,
-            green: candidateRgb.green,
-            blue: candidateRgb.blue,
-            alpha: isNaN(alpha) ? 255 : alpha
-          };
-          try {
-            property.setColorValue(objectBytePayload, false);
-            return true;
-          } catch (objectByteUiError) {}
-
-          try {
-            property.setColorValue(objectBytePayload);
-            return true;
-          } catch (objectByteError) {}
-        }
-      }
-    } catch (objectShapeError) {}
-
-    return false;
+  if (
+    applyAndVerify(
+      function () {
+        return subcreator_visual_try_set_native_color_value(
+          property,
+          rgb,
+          subcreator_visual_extract_alpha_channel(colorApiValue, colorLayoutHint)
+        );
+      },
+      colorLayoutHint,
+      true
+    )
+  ) {
+    subcreator_visual_set_cached_color_layout(colorDisplayName, "argb", "write");
+    return true;
   }
 
   function tryApplyStructuredPayload(structuredValue, stringifyJson) {
@@ -5771,110 +5743,8 @@ function subcreator_try_set_mogrt_color_property(property, value) {
     } catch (jsonError) {}
   }
 
-  if (hasColorApiValue) {
-    for (var layoutIndex = 0; layoutIndex < colorWriteLayoutCandidates.length; layoutIndex += 1) {
-      var layoutCandidate = colorWriteLayoutCandidates[layoutIndex];
-      for (var apiOrderIndex = 0; apiOrderIndex < colorOrders.length; apiOrderIndex += 1) {
-        var apiRgb = colorOrders[apiOrderIndex];
-        if (colorLayoutHint) {
-          if (
-            applyAndVerify(
-              function () {
-                return trySetColorByApiShape(colorApiValue, apiRgb, layoutCandidate);
-              },
-              colorLayoutHint
-            )
-          ) {
-            subcreator_visual_set_cached_color_layout(colorDisplayName, layoutCandidate, "write");
-            subcreator_visual_set_cached_color_layout(colorDisplayName, colorLayoutHint, "read");
-            return true;
-          }
-        }
-
-        for (var readLayoutIndex = 0; readLayoutIndex < colorReadLayoutCandidates.length; readLayoutIndex += 1) {
-          var readLayoutCandidate = colorReadLayoutCandidates[readLayoutIndex];
-          if (readLayoutCandidate && readLayoutCandidate === colorLayoutHint) {
-            continue;
-          }
-
-          if (
-            applyAndVerify(
-              function () {
-                return trySetColorByApiShape(colorApiValue, apiRgb, layoutCandidate);
-              },
-              readLayoutCandidate
-            )
-          ) {
-            subcreator_visual_set_cached_color_layout(colorDisplayName, layoutCandidate, "write");
-            subcreator_visual_set_cached_color_layout(colorDisplayName, readLayoutCandidate, "read");
-            return true;
-          }
-        }
-      }
-    }
-  }
-
   for (var fallbackOrderIndex = 0; fallbackOrderIndex < colorOrders.length; fallbackOrderIndex += 1) {
     var fallbackRgbValue = colorOrders[fallbackOrderIndex];
-
-    if (
-      applyAndVerify(function () {
-        if (typeof property.setColorValue !== "function") {
-          return false;
-        }
-        property.setColorValue(fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255);
-        return true;
-      })
-    ) {
-      return true;
-    }
-
-    if (
-      applyAndVerify(function () {
-        if (typeof property.setColorValue !== "function") {
-          return false;
-        }
-        property.setColorValue(
-          [fallbackRgbValue.red / 255, fallbackRgbValue.green / 255, fallbackRgbValue.blue / 255, 1],
-          false
-        );
-        return true;
-      })
-    ) {
-      return true;
-    }
-
-    if (
-      applyAndVerify(function () {
-        if (typeof property.setColorValue !== "function") {
-          return false;
-        }
-        property.setColorValue([fallbackRgbValue.red, fallbackRgbValue.green, fallbackRgbValue.blue, 255], false);
-        return true;
-      })
-    ) {
-      return true;
-    }
-
-    if (
-      applyAndVerify(function () {
-        if (typeof property.setColorValue !== "function") {
-          return false;
-        }
-        property.setColorValue(
-          {
-            red: fallbackRgbValue.red / 255,
-            green: fallbackRgbValue.green / 255,
-            blue: fallbackRgbValue.blue / 255,
-            alpha: 1
-          },
-          false
-        );
-        return true;
-      })
-    ) {
-      return true;
-    }
 
     if (
       applyAndVerify(function () {

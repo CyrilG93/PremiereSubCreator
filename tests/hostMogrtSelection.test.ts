@@ -155,6 +155,31 @@ function readVisualDescriptorNormalizer(): (descriptor: Record<string, unknown>)
   ) as (descriptor: Record<string, unknown>) => Record<string, unknown>;
 }
 
+function readNativeColorWriter(): (
+  property: { setColorValue: (...channels: Array<number | boolean>) => void },
+  rgb: { red: number; green: number; blue: number },
+  alpha: number
+) => boolean {
+  // // Execute the real native color writer with a minimal clamp adapter to verify Premiere's positional channel order.
+  const match = hostSource.match(
+    /function subcreator_visual_try_set_native_color_value[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_visual_extract_alpha_channel/
+  );
+
+  expect(match).not.toBeNull();
+  const helperSource = (match?.[0] ?? "").replace(
+    /\r?\nfunction subcreator_visual_extract_alpha_channel[\s\S]*$/,
+    ""
+  );
+  return new Function(
+    "subcreator_visual_clamp",
+    `${helperSource}; return subcreator_visual_try_set_native_color_value;`
+  )((value: number, minValue: number, maxValue: number) => Math.min(maxValue, Math.max(minValue, value))) as (
+    property: { setColorValue: (...channels: Array<number | boolean>) => void },
+    rgb: { red: number; green: number; blue: number },
+    alpha: number
+  ) => boolean;
+}
+
 describe("MOGRT and graphic selection filtering", () => {
   it("ignores ordinary video clips with only intrinsic components and effects", () => {
     // // Motion, Opacity, and normal effects exist on media clips and must not trigger Visual editor loading.
@@ -367,5 +392,20 @@ describe("Visual property bulk apply", () => {
     ).toBeUndefined();
     expect(bridgeSource).toContain("excludeFromClone: item.excludeFromClone === true");
     expect(panelSource).toContain("if (includeUnchanged && excludeFromClone)");
+  });
+
+  it("writes native colors in Premiere's documented ARGB order on the first attempt", () => {
+    // // A red picker value must not be interpreted as a green or blue channel before a second Apply.
+    const writeNativeColor = readNativeColorWriter();
+    const calls: Array<Array<number | boolean>> = [];
+    const property = {
+      setColorValue: (...channels: Array<number | boolean>) => {
+        calls.push(channels);
+      }
+    };
+
+    expect(writeNativeColor(property, { red: 255, green: 0, blue: 0 }, 1)).toBe(true);
+    expect(calls).toEqual([[255, 255, 0, 0, false]]);
+    expect(hostSource).not.toContain("setColorValue(fallbackRgbValue.red, fallbackRgbValue.green");
   });
 });

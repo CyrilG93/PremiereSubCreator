@@ -108,6 +108,23 @@ function readSelectedMogrtAnalyzer(
   ) as (sequence: { selectedItems: HostTrackItem[] }) => HostSelectionAnalysis;
 }
 
+function readVisualSelectionPulse(): (trackItems: Array<{ setSelected: (selected: boolean, updateUi: boolean) => void }>) => boolean {
+  // // Execute the real color-refresh selection pulse with a no-delay ExtendScript sleep adapter.
+  const match = hostSource.match(
+    /function subcreator_try_set_track_item_selected[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_force_color_apply_visual_refresh/
+  );
+
+  expect(match).not.toBeNull();
+  const helperSource = (match?.[0] ?? "").replace(
+    /\r?\nfunction subcreator_force_color_apply_visual_refresh[\s\S]*$/,
+    ""
+  );
+  return new Function("$", `${helperSource}; return subcreator_pulse_selected_track_items_for_refresh;`)({
+    // // Keep the unit test synchronous while preserving the host helper's expected API shape.
+    sleep: () => undefined
+  }) as (trackItems: Array<{ setSelected: (selected: boolean, updateUi: boolean) => void }>) => boolean;
+}
+
 describe("MOGRT and graphic selection filtering", () => {
   it("ignores ordinary video clips with only intrinsic components and effects", () => {
     // // Motion, Opacity, and normal effects exist on media clips and must not trigger Visual editor loading.
@@ -263,5 +280,32 @@ describe("Visual property bulk apply", () => {
     expect(listSource).toContain("subcreator_visual_resolve_property_from_track_item(firstTrackItem, item.path, rawComponents)");
     expect(bridgeSource).toContain("subcreator_list_selected_mogrt_properties(${options?.includeDebug === true");
     expect(panelSource).toContain("includeDebug: verboseLogsEnabled");
+  });
+
+  it("repaints the timeline only after restoring the complete MOGRT selection", () => {
+    // // Premiere must not snapshot the UI after only the first selected clip has been restored.
+    const pulseSelection = readVisualSelectionPulse();
+    const selectedState = [true, true, true];
+    const uiSnapshots: number[][] = [];
+    const items = selectedState.map((_selected, itemIndex) => ({
+      setSelected: (selected: boolean, updateUi: boolean) => {
+        // // Mirror Premiere state changes and capture only moments where the host requests an interface repaint.
+        selectedState[itemIndex] = selected;
+        if (updateUi) {
+          uiSnapshots.push(
+            selectedState.reduce<number[]>((selectedIndexes, itemSelected, selectedIndex) => {
+              if (itemSelected) {
+                selectedIndexes.push(selectedIndex);
+              }
+              return selectedIndexes;
+            }, [])
+          );
+        }
+      }
+    }));
+
+    expect(pulseSelection(items)).toBe(true);
+    expect(selectedState).toEqual([true, true, true]);
+    expect(uiSnapshots).toEqual([[], [0, 1, 2]]);
   });
 });

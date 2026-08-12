@@ -6012,19 +6012,19 @@ function subcreator_force_sequence_visual_refresh(sequence) {
   return false;
 }
 
-function subcreator_try_set_track_item_selected(trackItem, selected, deselectOthers) {
-  // // Normalize boolean/numeric setSelected variants used by different Premiere host versions.
+function subcreator_try_set_track_item_selected(trackItem, selected, updateUi) {
+  // // Normalize boolean/numeric setSelected variants and control when Premiere repaints the completed selection state.
   if (!trackItem || typeof trackItem.setSelected !== "function") {
     return false;
   }
 
   try {
-    trackItem.setSelected(selected === true, deselectOthers === true);
+    trackItem.setSelected(selected === true, updateUi === true);
     return true;
   } catch (firstSelectError) {}
 
   try {
-    trackItem.setSelected(selected === true ? 1 : 0, deselectOthers === true ? 1 : 0);
+    trackItem.setSelected(selected === true ? 1 : 0, updateUi === true ? 1 : 0);
     return true;
   } catch (secondSelectError) {}
 
@@ -6036,7 +6036,7 @@ function subcreator_pulse_selected_track_items_for_refresh(trackItems) {
   var items = trackItems || [];
   var changed = false;
   for (var clearIndex = 0; clearIndex < items.length; clearIndex += 1) {
-    changed = subcreator_try_set_track_item_selected(items[clearIndex], false, clearIndex === 0) || changed;
+    changed = subcreator_try_set_track_item_selected(items[clearIndex], false, clearIndex === items.length - 1) || changed;
   }
 
   try {
@@ -6044,7 +6044,8 @@ function subcreator_pulse_selected_track_items_for_refresh(trackItems) {
   } catch (sleepError) {}
 
   for (var selectIndex = 0; selectIndex < items.length; selectIndex += 1) {
-    changed = subcreator_try_set_track_item_selected(items[selectIndex], true, selectIndex === 0) || changed;
+    // // Repaint only after every item is selected so Premiere keeps the complete multi-selection visible and active.
+    changed = subcreator_try_set_track_item_selected(items[selectIndex], true, selectIndex === items.length - 1) || changed;
   }
 
   return changed;

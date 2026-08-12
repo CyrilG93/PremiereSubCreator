@@ -125,6 +125,36 @@ function readVisualSelectionPulse(): (trackItems: Array<{ setSelected: (selected
   }) as (trackItems: Array<{ setSelected: (selected: boolean, updateUi: boolean) => void }>) => boolean;
 }
 
+function readVisualDescriptorNormalizer(): (descriptor: Record<string, unknown>) => Record<string, unknown> {
+  // // Execute the host descriptor normalizer with lightweight label/group adapters for clone metadata tests.
+  const match = hostSource.match(
+    /function subcreator_visual_normalize_descriptor[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_visual_should_hide_descriptor/
+  );
+
+  expect(match).not.toBeNull();
+  const helperSource = (match?.[0] ?? "").replace(
+    /\r?\nfunction subcreator_visual_should_hide_descriptor[\s\S]*$/,
+    ""
+  );
+  return new Function(
+    "subcreator_trim_string",
+    "subcreator_visual_normalize_label_key",
+    "subcreator_visual_group_mentions",
+    "subcreator_visual_append_group_suffix",
+    `${helperSource}; return subcreator_visual_normalize_descriptor;`
+  )(
+    (value: unknown) => String(value ?? "").trim(),
+    (value: unknown) =>
+      String(value ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, ""),
+    (groupPath: unknown, token: unknown) => String(groupPath ?? "").toLowerCase().includes(String(token ?? "").toLowerCase()),
+    (groupPath: unknown, suffix: unknown) => `${String(groupPath ?? "").trim()} / ${String(suffix ?? "").trim()}`
+  ) as (descriptor: Record<string, unknown>) => Record<string, unknown>;
+}
+
 describe("MOGRT and graphic selection filtering", () => {
   it("ignores ordinary video clips with only intrinsic components and effects", () => {
     // // Motion, Opacity, and normal effects exist on media clips and must not trigger Visual editor loading.
@@ -307,5 +337,35 @@ describe("Visual property bulk apply", () => {
     expect(pulseSelection(items)).toBe(true);
     expect(selectedState).toEqual([true, true, true]);
     expect(uiSnapshots).toEqual([[], [0, 1, 2]]);
+  });
+
+  it("excludes Clip Duration from full Copy/Apply property clones", () => {
+    // // Duration drives each clip's animation timing and must never be copied as a shared visual style value.
+    const normalizeDescriptor = readVisualDescriptorNormalizer();
+    const bridgeSourcePath = fileURLToPath(new URL("../src/panel/cepBridge.ts", import.meta.url));
+    const bridgeSource = readFileSync(bridgeSourcePath, "utf8");
+
+    expect(
+      normalizeDescriptor({
+        path: "c0|4",
+        displayName: "Clip Duration",
+        groupPath: "Graphic Parameters",
+        valueType: "number",
+        controlKind: "slider",
+        value: 1.5
+      }).excludeFromClone
+    ).toBe(true);
+    expect(
+      normalizeDescriptor({
+        path: "c0|5",
+        displayName: "Position",
+        groupPath: "Graphic Parameters",
+        valueType: "json",
+        controlKind: "vector",
+        value: "[0,0]"
+      }).excludeFromClone
+    ).toBeUndefined();
+    expect(bridgeSource).toContain("excludeFromClone: item.excludeFromClone === true");
+    expect(panelSource).toContain("if (includeUnchanged && excludeFromClone)");
   });
 });

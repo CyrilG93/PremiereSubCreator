@@ -121,6 +121,7 @@ interface HostVisualProperty {
   valueType: "number" | "boolean" | "string" | "json";
   controlKind: "slider" | "number" | "checkbox" | "color" | "text" | "string" | "json" | "vector" | "select";
   cloneOnlyWhenDirty?: boolean;
+  excludeFromClone?: boolean;
   fontToken?: string;
   options?: Array<{ value: number | string; label: string }>;
   styleOptionsByFamily?: Record<string, string[]>;
@@ -4023,6 +4024,7 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
 
   const includeUnchanged = options?.includeUnchanged === true;
   const restrictToDirtyPaths = !includeUnchanged && loadedVisualSelectionCount <= 1;
+  const loadedPropertyByPath = new Map(loadedVisualProperties.map((property) => [property.path, property]));
   const changes: VisualPropertyChange[] = [];
   const controls = elements.visualPropertyList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
     '[data-visual-role="value"]'
@@ -4033,6 +4035,7 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
     const controlKind =
       (String(control.dataset.visualControlKind || "string") as HostVisualProperty["controlKind"]) || "string";
     const cloneOnlyWhenDirty = String(control.dataset.visualCloneOnlyWhenDirty || "") === "1";
+    const excludeFromClone = loadedPropertyByPath.get(path)?.excludeFromClone === true;
     const explicitFontToken = String(control.dataset.visualFontToken || "").trim();
     const vectorScaleRaw = String(control.dataset.visualVectorScale || "");
     const vectorScale = vectorScaleRaw
@@ -4049,6 +4052,10 @@ function collectVisualPropertyChanges(options?: { includeUnchanged?: boolean }):
       return;
     }
     if (restrictToDirtyPaths && !visualDirtyPaths.has(path)) {
+      return;
+    }
+    if (includeUnchanged && excludeFromClone) {
+      // // Clip Duration and future timing-only controls must remain specific to each target clip during Copy/Apply.
       return;
     }
     if (includeUnchanged && cloneOnlyWhenDirty && !visualDirtyPaths.has(path)) {

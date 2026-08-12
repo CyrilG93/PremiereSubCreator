@@ -4360,6 +4360,16 @@ function subcreator_visual_normalize_descriptor(descriptor) {
   var isShapeGroup = subcreator_visual_group_mentions(groupPath, "shape");
   var isTextGroup = subcreator_visual_group_mentions(groupPath, "text");
 
+  if (
+    normalizedKey === "clipduration" ||
+    normalizedKey === "captionduration" ||
+    normalizedKey === "subtitleduration" ||
+    normalizedKey === "dureeclip"
+  ) {
+    // // Keep timing controls editable per clip but never include them in Visual editor style cloning.
+    normalized.excludeFromClone = true;
+  }
+
   if ((isShapeGroup || isTextGroup) && /^(left|top|right|bottom)$/.test(normalizedKey)) {
     normalized.groupPath = subcreator_visual_append_group_suffix(groupPath, "Responsive Design");
   }

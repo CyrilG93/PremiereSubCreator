@@ -4269,7 +4269,10 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadin
   }
 
   try {
-    const result = await readSelectedMogrtVisualProperties();
+    const result = await readSelectedMogrtVisualProperties({
+      // // Avoid raw color/text payload diagnostics during normal automatic selection refreshes.
+      includeDebug: verboseLogsEnabled
+    });
     pendingVisualSelectionChangeNotice = false;
     lastVisualSelectionSignature = String(result.signature || lastVisualSelectionSignature || "");
     loadedVisualSelectionCount = Number(result.selectedCount || 0);

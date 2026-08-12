@@ -1260,19 +1260,63 @@ function subcreator_get_mogrt_components_from_track_item(trackItem) {
   return components;
 }
 
-function subcreator_collect_selected_mogrt_items(sequence) {
-  // // Collect selected timeline clips that expose a valid MOGRT component.
+function subcreator_get_track_item_project_identity(trackItem) {
+  // // Group timeline instances that reference the same project item so their MOGRT identity is validated only once per selection scan.
+  try {
+    return subcreator_trim_string(String((trackItem && trackItem.projectItem && trackItem.projectItem.nodeId) || ""));
+  } catch (projectIdentityError) {}
+
+  return "";
+}
+
+function subcreator_analyze_selected_mogrt_items(sequence) {
+  // // Classify the current selection once and retain the first MOGRT components for the Visual editor reference read.
   var selectedItems = subcreator_get_selected_track_items(sequence);
   var mogrtItems = [];
+  var firstTrackItem = null;
+  var firstComponents = [];
+  var mogrtIdentityByProjectItem = {};
 
   for (var index = 0; index < selectedItems.length; index += 1) {
     var trackItem = selectedItems[index];
-    if (subcreator_get_mogrt_component_from_track_item(trackItem)) {
-      mogrtItems.push(trackItem);
+    var projectIdentity = subcreator_get_track_item_project_identity(trackItem);
+    var hasCachedMogrtIdentity = !!(projectIdentity && mogrtIdentityByProjectItem[projectIdentity] === true);
+    var components = [];
+    var isMogrt = false;
+
+    if (hasCachedMogrtIdentity) {
+      isMogrt = true;
+    } else {
+      components = subcreator_get_mogrt_components_from_track_item(trackItem);
+      isMogrt = components.length > 0;
+      if (projectIdentity && isMogrt) {
+        // // Cache only confirmed graphics so a temporarily unavailable first MOGRT cannot hide valid later instances.
+        mogrtIdentityByProjectItem[projectIdentity] = true;
+      }
+    }
+
+    if (!isMogrt) {
+      continue;
+    }
+
+    mogrtItems.push(trackItem);
+    if (!firstTrackItem) {
+      firstTrackItem = trackItem;
+      firstComponents = components;
     }
   }
 
-  return mogrtItems;
+  return {
+    selectedItems: selectedItems,
+    mogrtItems: mogrtItems,
+    firstTrackItem: firstTrackItem,
+    firstComponents: firstComponents
+  };
+}
+
+function subcreator_collect_selected_mogrt_items(sequence) {
+  // // Return accurately filtered MOGRT items while reusing same-project classification inside this selection scan.
+  return subcreator_analyze_selected_mogrt_items(sequence).mogrtItems;
 }
 
 function subcreator_sort_track_items_by_time(items) {
@@ -1425,28 +1469,38 @@ function subcreator_build_selected_mogrt_text_signature(sequence, trackItems) {
 }
 
 function subcreator_build_selected_mogrt_visual_signature(sequence, trackItems) {
-  // // Encode lightweight selection details so the panel can refresh the Visual editor only when the selected MOGRTs change.
-  var sortedItems = subcreator_sort_track_items_by_time(trackItems || []);
+  // // Build a stable selection fingerprint without opening MOGRT components or scanning sequence tracks.
+  var sourceItems = trackItems || [];
   var parts = [];
 
-  for (var index = 0; index < sortedItems.length; index += 1) {
-    var trackItem = sortedItems[index];
-    var videoTrackIndex = subcreator_find_track_item_video_track_index(sequence, trackItem);
+  for (var index = 0; index < sourceItems.length; index += 1) {
+    var trackItem = sourceItems[index];
+    var trackItemNodeId = "";
+    var projectItemNodeId = "";
     var startSeconds = subcreator_to_seconds(trackItem && (trackItem.start || trackItem.inPoint || trackItem.startTime));
     var endSeconds = subcreator_to_seconds(trackItem && (trackItem.end || trackItem.outPoint || trackItem.endTime));
     var clipName = subcreator_trim_string(String((trackItem && trackItem.projectItem && trackItem.projectItem.name) || (trackItem && trackItem.name) || "MOGRT"));
-    var components = subcreator_get_mogrt_components_from_track_item(trackItem);
+
+    try {
+      trackItemNodeId = subcreator_trim_string(String((trackItem && trackItem.nodeId) || ""));
+    } catch (trackItemNodeIdError) {}
+    try {
+      projectItemNodeId = subcreator_get_track_item_project_identity(trackItem);
+    } catch (projectItemNodeIdError) {}
+
     parts.push(
       [
-        String(videoTrackIndex),
+        trackItemNodeId,
+        projectItemNodeId,
         String(Math.round(Number(startSeconds || 0) * 1000)),
         String(Math.round(Number(endSeconds || 0) * 1000)),
-        clipName,
-        String(components.length)
+        clipName
       ].join("|")
     );
   }
 
+  // // Ignore host collection ordering changes so polling remains quiet while the actual selection stays unchanged.
+  parts.sort();
   return parts.join("||");
 }
 
@@ -1459,7 +1513,7 @@ function subcreator_get_selected_mogrt_visual_signature() {
 
     var sequence = app.project.activeSequence;
     var sequenceIdentity = subcreator_get_sequence_identity(sequence);
-    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
+    var selectedItems = subcreator_get_selected_track_items(sequence);
     var signature =
       String(sequenceIdentity.projectDocumentId || "") +
       "||" +
@@ -1469,10 +1523,10 @@ function subcreator_get_selected_mogrt_visual_signature() {
       "||" +
       String(sequenceIdentity.sequenceName || "") +
       "||" +
-      subcreator_build_selected_mogrt_visual_signature(sequence, mogrtItems);
+      subcreator_build_selected_mogrt_visual_signature(sequence, selectedItems);
 
     return subcreator_ok({
-      selectedCount: mogrtItems.length,
+      selectedCount: selectedItems.length,
       signature: signature,
       projectDocumentId: sequenceIdentity.projectDocumentId,
       projectPath: sequenceIdentity.projectPath,
@@ -6013,7 +6067,7 @@ function subcreator_force_color_apply_visual_refresh(sequence, trackItems) {
   };
 }
 
-function subcreator_list_selected_mogrt_properties() {
+function subcreator_list_selected_mogrt_properties(includeDebug) {
   // // Return editable visual properties from selected MOGRT clips in active sequence.
   try {
     if (!app || !app.project || !app.project.activeSequence) {
@@ -6022,7 +6076,10 @@ function subcreator_list_selected_mogrt_properties() {
 
     var sequence = app.project.activeSequence;
     var sequenceIdentity = subcreator_get_sequence_identity(sequence);
-    var mogrtItems = subcreator_collect_selected_mogrt_items(sequence);
+    var selectionAnalysis = subcreator_analyze_selected_mogrt_items(sequence);
+    var selectedItems = selectionAnalysis.selectedItems;
+    var mogrtItems = selectionAnalysis.mogrtItems;
+    var includeFullDebug = includeDebug === true || String(includeDebug || "").toLowerCase() === "true";
     var visualSelectionSignature =
       String(sequenceIdentity.projectDocumentId || "") +
       "||" +
@@ -6032,7 +6089,7 @@ function subcreator_list_selected_mogrt_properties() {
       "||" +
       String(sequenceIdentity.sequenceName || "") +
       "||" +
-      subcreator_build_selected_mogrt_visual_signature(sequence, mogrtItems);
+      subcreator_build_selected_mogrt_visual_signature(sequence, selectedItems);
 
     if (!mogrtItems.length) {
       return subcreator_ok({
@@ -6047,8 +6104,8 @@ function subcreator_list_selected_mogrt_properties() {
       });
     }
 
-    var firstTrackItem = mogrtItems[0];
-    var rawComponents = subcreator_get_mogrt_components_from_track_item(firstTrackItem);
+    var firstTrackItem = selectionAnalysis.firstTrackItem;
+    var rawComponents = selectionAnalysis.firstComponents;
     var components = [];
     var properties = [];
     var componentDebugEntries = [];
@@ -6121,6 +6178,7 @@ function subcreator_list_selected_mogrt_properties() {
       }
 
       if (
+        includeFullDebug &&
         debug.sample.length < 20 &&
         (item.controlKind === "vector" || item.controlKind === "color" || item.controlKind === "select")
       ) {
@@ -6138,7 +6196,7 @@ function subcreator_list_selected_mogrt_properties() {
 
         if (item.controlKind === "color") {
           // // Include raw color API/value snapshots to troubleshoot host channel-order inconsistencies.
-          var sampleResolved = subcreator_visual_resolve_property_from_track_item(firstTrackItem, item.path);
+          var sampleResolved = subcreator_visual_resolve_property_from_track_item(firstTrackItem, item.path, rawComponents);
           if (sampleResolved && sampleResolved.property) {
             try {
               var sampleColorApiValue =
@@ -6167,20 +6225,23 @@ function subcreator_list_selected_mogrt_properties() {
       }
     }
 
-    for (var debugComponentIndex = 0; debugComponentIndex < componentDebugEntries.length; debugComponentIndex += 1) {
-      var debugComponentEntry = componentDebugEntries[debugComponentIndex];
-      var debugComponent = rawComponents[debugComponentEntry.index];
-      if (!debugComponentEntry || !debugComponent || !debugComponent.properties) {
-        continue;
-      }
+    if (includeFullDebug) {
+      // // Traverse text payloads a second time only when the user explicitly requests full troubleshooting logs.
+      for (var debugComponentIndex = 0; debugComponentIndex < componentDebugEntries.length; debugComponentIndex += 1) {
+        var debugComponentEntry = componentDebugEntries[debugComponentIndex];
+        var debugComponent = rawComponents[debugComponentEntry.index];
+        if (!debugComponentEntry || !debugComponent || !debugComponent.properties) {
+          continue;
+        }
 
-      subcreator_collect_text_style_debug_candidates(
-        debugComponent.properties,
-        subcreator_visual_build_component_path_prefix(debugComponentEntry.index),
-        rawComponents.length > 1 ? subcreator_visual_get_component_group_label(debugComponent, debugComponentEntry.index) : "",
-        debug.textStyleCandidates,
-        20
-      );
+        subcreator_collect_text_style_debug_candidates(
+          debugComponent.properties,
+          subcreator_visual_build_component_path_prefix(debugComponentEntry.index),
+          rawComponents.length > 1 ? subcreator_visual_get_component_group_label(debugComponent, debugComponentEntry.index) : "",
+          debug.textStyleCandidates,
+          20
+        );
+      }
     }
 
     return subcreator_ok({

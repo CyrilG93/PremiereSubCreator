@@ -16,11 +16,23 @@ type HostComponent = {
 };
 
 type HostTrackItem = {
+  nodeId?: string;
+  projectItem?: {
+    nodeId?: string;
+    name?: string;
+  };
   components: {
     numItems: number;
     [index: number]: HostComponent;
   };
   getMGTComponent?: () => HostComponent | null;
+};
+
+type HostSelectionAnalysis = {
+  selectedItems: HostTrackItem[];
+  mogrtItems: HostTrackItem[];
+  firstTrackItem: HostTrackItem | null;
+  firstComponents: HostComponent[];
 };
 
 function createComponent(matchName: string, displayName: string): HostComponent {
@@ -66,6 +78,36 @@ function readMogrtComponentCollector(): (trackItem: HostTrackItem) => HostCompon
   ) => HostComponent[];
 }
 
+function readSelectedMogrtAnalyzer(
+  collectComponents: (trackItem: HostTrackItem) => HostComponent[],
+  onComponentRead: () => void
+): (sequence: { selectedItems: HostTrackItem[] }) => HostSelectionAnalysis {
+  // // Execute the real selection grouping helper with controlled host-selection and component-read adapters.
+  const match = hostSource.match(
+    /function subcreator_get_track_item_project_identity[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_collect_selected_mogrt_items/
+  );
+
+  expect(match).not.toBeNull();
+  const helperSource = (match?.[0] ?? "").replace(
+    /\r?\nfunction subcreator_collect_selected_mogrt_items[\s\S]*$/,
+    ""
+  );
+  return new Function(
+    "subcreator_trim_string",
+    "subcreator_get_selected_track_items",
+    "subcreator_get_mogrt_components_from_track_item",
+    `${helperSource}; return subcreator_analyze_selected_mogrt_items;`
+  )(
+    (value: unknown) => String(value ?? "").trim(),
+    (sequence: { selectedItems: HostTrackItem[] }) => sequence.selectedItems,
+    (trackItem: HostTrackItem) => {
+      // // Count only real component classifications so same-project cache reuse stays directly testable.
+      onComponentRead();
+      return collectComponents(trackItem);
+    }
+  ) as (sequence: { selectedItems: HostTrackItem[] }) => HostSelectionAnalysis;
+}
+
 describe("MOGRT and graphic selection filtering", () => {
   it("ignores ordinary video clips with only intrinsic components and effects", () => {
     // // Motion, Opacity, and normal effects exist on media clips and must not trigger Visual editor loading.
@@ -107,6 +149,77 @@ describe("MOGRT and graphic selection filtering", () => {
 
     expect(collectComponents(createTrackItem([capsule]))).toEqual([capsule]);
   });
+
+  it("classifies timeline instances from the same project item only once", () => {
+    // // Repeated subtitle instances from one source MOGRT should share the expensive getMGTComponent identity result.
+    const collectComponents = readMogrtComponentCollector();
+    const exposedControls = createComponent("Vendor.Custom Controls", "Controls");
+    let componentReadCount = 0;
+    const analyzeSelection = readSelectedMogrtAnalyzer(collectComponents, () => {
+      componentReadCount += 1;
+    });
+    const selectedItems = [0, 1, 2].map((index) => ({
+      ...createTrackItem([], exposedControls),
+      nodeId: `track-${index}`,
+      projectItem: {
+        nodeId: "shared-mogrt-project-item",
+        name: "Shared Subtitle"
+      }
+    }));
+
+    const result = analyzeSelection({ selectedItems });
+
+    expect(componentReadCount).toBe(1);
+    expect(result.mogrtItems).toEqual(selectedItems);
+    expect(result.firstTrackItem).toBe(selectedItems[0]);
+    expect(result.firstComponents).toEqual([exposedControls]);
+  });
+
+  it("retries a shared project item after an unavailable first component read", () => {
+    // // A transient empty Premiere proxy must not cache a false result for every later MOGRT instance.
+    const collectComponents = readMogrtComponentCollector();
+    const motion = createComponent("AE.ADBE Motion", "Motion");
+    const exposedControls = createComponent("Vendor.Custom Controls", "Controls");
+    let componentReadCount = 0;
+    const analyzeSelection = readSelectedMogrtAnalyzer(collectComponents, () => {
+      componentReadCount += 1;
+    });
+    const unavailableItem = {
+      ...createTrackItem([motion]),
+      nodeId: "track-unavailable",
+      projectItem: {
+        nodeId: "shared-transient-project-item",
+        name: "Transient Subtitle"
+      }
+    };
+    const availableItem = {
+      ...createTrackItem([], exposedControls),
+      nodeId: "track-available",
+      projectItem: {
+        nodeId: "shared-transient-project-item",
+        name: "Transient Subtitle"
+      }
+    };
+
+    const result = analyzeSelection({ selectedItems: [unavailableItem, availableItem] });
+
+    expect(componentReadCount).toBe(2);
+    expect(result.mogrtItems).toEqual([availableItem]);
+    expect(result.firstTrackItem).toBe(availableItem);
+    expect(result.firstComponents).toEqual([exposedControls]);
+  });
+
+  it("keeps the Visual selection signature free of component and track scans", () => {
+    // // Polling must use TrackItem identity and timing only, leaving MOGRT inspection to the full read.
+    const signatureSource = hostSource.match(
+      /function subcreator_build_selected_mogrt_visual_signature[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_get_selected_mogrt_visual_signature/
+    )?.[0];
+
+    expect(signatureSource).toContain("trackItem.nodeId");
+    expect(signatureSource).toContain("parts.sort()");
+    expect(signatureSource).not.toContain("subcreator_get_mogrt_components_from_track_item(trackItem)");
+    expect(signatureSource).not.toContain("subcreator_find_track_item_video_track_index(sequence, trackItem)");
+  });
 });
 
 describe("Visual selection watcher lifecycle", () => {
@@ -134,5 +247,21 @@ describe("Visual property bulk apply", () => {
     expect(hostSource).toContain("subcreator_visual_resolve_property_from_track_item(clip, resolvedPath, clipComponents)");
     expect(hostSource).toContain("property.setValue(hostVector, false)");
     expect(hostSource).toContain("subcreator_force_color_apply_visual_refresh(sequence, mogrtItems)");
+  });
+
+  it("keeps expensive Visual read diagnostics opt-in and reuses first-clip components", () => {
+    // // Normal auto-refresh reads should avoid diagnostic traversal and repeated component collection.
+    const bridgeSourcePath = fileURLToPath(new URL("../src/panel/cepBridge.ts", import.meta.url));
+    const bridgeSource = readFileSync(bridgeSourcePath, "utf8");
+    const listSource = hostSource.match(
+      /function subcreator_list_selected_mogrt_properties[\s\S]*?\r?\n}\r?\n\r?\nfunction subcreator_get_selected_mogrt_count/
+    )?.[0];
+
+    expect(listSource).toContain("subcreator_analyze_selected_mogrt_items(sequence)");
+    expect(listSource).toContain("var rawComponents = selectionAnalysis.firstComponents");
+    expect(listSource).toContain("includeFullDebug &&");
+    expect(listSource).toContain("subcreator_visual_resolve_property_from_track_item(firstTrackItem, item.path, rawComponents)");
+    expect(bridgeSource).toContain("subcreator_list_selected_mogrt_properties(${options?.includeDebug === true");
+    expect(panelSource).toContain("includeDebug: verboseLogsEnabled");
   });
 });

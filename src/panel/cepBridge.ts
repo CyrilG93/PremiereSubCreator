@@ -3902,9 +3902,13 @@ function normalizeSelectedMogrtTextItemList(data: unknown): SelectedMogrtTextIte
   };
 }
 
-export async function readSelectedMogrtVisualProperties(): Promise<SelectedMogrtVisualPropertyList> {
-  // // Request editable MOGRT properties from selected timeline clips.
-  const response = await evalHostJson<SelectedMogrtVisualPropertyList>("subcreator_list_selected_mogrt_properties()");
+export async function readSelectedMogrtVisualProperties(options?: {
+  includeDebug?: boolean;
+}): Promise<SelectedMogrtVisualPropertyList> {
+  // // Request editable MOGRT properties while keeping expensive host diagnostics opt-in.
+  const response = await evalHostJson<SelectedMogrtVisualPropertyList>(
+    `subcreator_list_selected_mogrt_properties(${options?.includeDebug === true ? "true" : "false"})`
+  );
   if (!response.ok) {
     throw new Error(response.error ?? "Unable to read selected MOGRT properties.");
   }

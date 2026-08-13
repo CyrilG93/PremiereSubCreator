@@ -114,6 +114,14 @@ export interface WhisperRuntimeStatus {
   alignmentDetails: string;
 }
 
+export interface WhisperGlossaryStore {
+  available: boolean;
+  exists: boolean;
+  enabled: boolean;
+  text: string;
+  path: string;
+}
+
 export interface SystemFontCatalog {
   available: boolean;
   source: string;
@@ -2319,6 +2327,73 @@ function resolveRuntimeConfigPathCandidates(modules: CepNodeModules): string[] {
   pushUniqueString(candidates, modules.path.join(home, "Library", "Application Support", "SubCreator", "subcreator-runtime.json"));
   pushUniqueString(candidates, modules.path.join(home, "Library", "Application Support", "PremiereSubCreator", "subcreator-runtime.json"));
   return candidates;
+}
+
+function resolveWhisperGlossaryPath(modules: CepNodeModules): string {
+  // // Keep the dictionary beside Sub Creator's user runtime configuration so it survives Premiere project changes and extension updates.
+  const home = String(modules.os.homedir() || "").trim();
+  if (detectWindowsRuntime()) {
+    const appData = String(modules.process.env.APPDATA || modules.path.join(home, "AppData", "Roaming"));
+    return modules.path.join(appData, "SubCreator", "glossary.json");
+  }
+  return modules.path.join(home, "Library", "Application Support", "SubCreator", "glossary.json");
+}
+
+export async function readWhisperGlossaryStore(): Promise<WhisperGlossaryStore> {
+  // // Read the cross-project dictionary from the user profile, with localStorage remaining available as a browser fallback.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return { available: false, exists: false, enabled: true, text: "", path: "" };
+  }
+
+  const glossaryPath = resolveWhisperGlossaryPath(modules);
+  if (!modules.fs.existsSync(glossaryPath)) {
+    return { available: true, exists: false, enabled: true, text: "", path: glossaryPath };
+  }
+
+  try {
+    const rawText = String(modules.fs.readFileSync(glossaryPath, "utf8") || "").replace(/^\uFEFF/, "");
+    const payload = JSON.parse(rawText) as { enabled?: unknown; text?: unknown };
+    return {
+      available: true,
+      exists: true,
+      enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
+      text: typeof payload.text === "string" ? payload.text : "",
+      path: glossaryPath
+    };
+  } catch (error) {
+    throw new Error(`Unable to read Whisper dictionary at ${glossaryPath}: ${String(error)}`);
+  }
+}
+
+export async function writeWhisperGlossaryStore(enabled: boolean, text: string): Promise<string> {
+  // // Persist the dictionary as UTF-8 JSON outside the extension folder so installers cannot overwrite it.
+  const modules = resolveCepNodeModules();
+  if (!modules) {
+    return "";
+  }
+
+  const glossaryPath = resolveWhisperGlossaryPath(modules);
+  try {
+    modules.fs.mkdirSync(modules.path.dirname(glossaryPath), { recursive: true });
+    modules.fs.writeFileSync(
+      glossaryPath,
+      strToU8(
+        `${JSON.stringify(
+          {
+            version: 1,
+            enabled: Boolean(enabled),
+            text: String(text || "")
+          },
+          null,
+          2
+        )}\n`
+      )
+    );
+    return glossaryPath;
+  } catch (error) {
+    throw new Error(`Unable to save Whisper dictionary at ${glossaryPath}: ${String(error)}`);
+  }
 }
 
 function buildWindowsPrivateRuntimeConfig(modules: CepNodeModules): SubcreatorRuntimeConfig | null {

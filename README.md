@@ -7,6 +7,7 @@ Compatible with Premiere Pro `2025+` on Windows and Apple Silicon macOS. Premier
 ## Main features
 
 - Generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`.
+- Keep names, brands, and technical terms consistent with a global Whisper dictionary shared by all Premiere projects.
 - Create animated `MOGRT` clips or native Premiere subtitle tracks.
 - Align subtitle timing to sequence frames to avoid one-frame gaps.
 - Inspect and copy exposed MOGRT settings with the `Visual editor`.
@@ -59,6 +60,25 @@ The installers offer `tiny`, `base`, `small`, `medium`, and `large-v3`. Existing
 
 If transcription is unstable, manually select the language in `Whisper language` instead of using `Auto detect`.
 
+## Global Whisper dictionary
+
+When using `Whisper` or `WhisperX`, enable `Use global Whisper dictionary` to guide transcription and enforce exact spellings. Add one canonical spelling per line:
+
+```text
+Adobe Premiere Pro
+Cyril Plugin
+WhisperX
+```
+
+If Whisper commonly produces a specific mistake, map the heard or incorrect variant to the exact spelling:
+
+```text
+adobe premiere => Adobe Premiere Pro
+serial plugin | cyril plug-in => Cyril Plugin
+```
+
+Separate multiple variants with `|`. Sub Creator first gives the canonical spellings to Whisper, then applies the explicit corrections while preserving subtitle timing. The dictionary is stored in the current user profile and remains available when switching Premiere projects or updating the extension.
+
 Sub Creator renders temporary transcription audio directly in Premiere Pro. Adobe Media Encoder is used automatically only if Premiere cannot complete the direct export.
 
 The log panel keeps a timestamped history of generation stages. If `Generate` cannot start in a Whisper mode, it shows the detected runtime, installed models, and cache paths. Share this diagnostic block when requesting support.
@@ -73,8 +93,9 @@ The log panel keeps a timestamped history of generation stages. If `Generate` ca
 4. Choose `MOGRT` or `Premiere subtitles`.
 5. If you use `MOGRT`, choose a template from the gallery.
 6. Adjust the text limits if needed.
-7. Optionally enable `Remove punctuation` to remove commas, periods, and other punctuation while keeping apostrophes in words such as `J'aime` or `I'm`.
-8. Click `Generate subtitles`.
+7. For Whisper sources, optionally enable the global dictionary and add names or exact spellings.
+8. Optionally enable `Remove punctuation` to remove commas, periods, and other punctuation while keeping apostrophes in words such as `J'aime` or `I'm`.
+9. Click `Generate subtitles`.
 
 Sub Creator keeps punctuation by default and remembers separate generation settings for `MOGRT` and `Premiere subtitles` output.
 

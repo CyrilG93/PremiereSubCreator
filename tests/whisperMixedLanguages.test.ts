@@ -36,20 +36,31 @@ describe("Whisper mixed-language preservation", () => {
     expect(source).toContain('"--initial-prompt"');
   });
 
-  it("does not send a generic mixed-language prompt when no glossary terms are provided", () => {
-    // // A generic prompt without concrete terms caused missing subtitle segments in Hindi/English tests.
+  it("does not send a generic prompt when no dictionary terms are provided", () => {
+    // // An empty dictionary must not add context that could destabilize multilingual transcription.
     const source = readFileSync(panelSourcePath, "utf8").replace(/\r\n/g, "\n");
 
-    expect(source).toContain("if (!glossary) {\n    return \"\";\n  }");
+    expect(source).toContain("return buildWhisperGlossaryPrompt(sanitizeWhisperGlossary(options.mixedLanguagePrompt));");
     expect(source).not.toContain("Keep English words in English Latin spelling");
   });
 
-  it("keeps the experimental mixed-language UI disabled until it is reliable enough to expose again", () => {
-    // // Older localStorage values must not be able to send a Preserve prompt while the feature flag is disabled.
+  it("exposes the global dictionary and applies it after Whisper transcription", () => {
+    // // The dictionary combines prompt guidance with deterministic cue correction for exact spellings.
     const source = readFileSync(panelSourcePath, "utf8");
 
-    expect(source).toContain("const MIXED_LANGUAGE_FEATURE_ENABLED = false;");
-    expect(source).toContain("if (!MIXED_LANGUAGE_FEATURE_ENABLED || !options.preserveMixedLanguages)");
-    expect(source).toContain("preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages");
+    expect(source).not.toContain("MIXED_LANGUAGE_FEATURE_ENABLED");
+    expect(source).toContain("applyWhisperGlossaryToCues(fallbackCues, options.mixedLanguagePrompt)");
+    expect(source).toContain("readWhisperGlossaryStore()");
+    expect(source).toContain("writeWhisperGlossaryStore(");
+  });
+
+  it("stores the dictionary outside the extension for cross-project persistence", () => {
+    // // Installer updates must not erase the user dictionary on either supported platform.
+    const source = readFileSync(cepBridgeSourcePath, "utf8");
+
+    expect(source).toContain('modules.path.join(appData, "SubCreator", "glossary.json")');
+    expect(source).toContain('"Library", "Application Support", "SubCreator", "glossary.json"');
+    expect(source).toContain("export async function readWhisperGlossaryStore");
+    expect(source).toContain("export async function writeWhisperGlossaryStore");
   });
 });

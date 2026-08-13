@@ -156,19 +156,20 @@
           <section class="field field--full" id="mixedLanguageField">
             <label class="checkbox-label">
               <input id="preserveMixedLanguages" type="checkbox" />
-              <span data-i18n="field.preserveMixedLanguages">Preserve mixed languages</span>
+              <span data-i18n="field.preserveMixedLanguages">Use global Whisper dictionary</span>
             </label>
             <label class="subfield" id="mixedLanguagePromptField">
-              <span data-i18n="field.mixedLanguagePrompt">Words to preserve</span>
+              <span data-i18n="field.mixedLanguagePrompt">Names, brands, and exact spellings</span>
               <textarea
                 id="mixedLanguagePrompt"
                 data-i18n-placeholder="placeholder.mixedLanguagePrompt"
-                placeholder="Premiere, timeline, subscribe..."
-                rows="2"
+                placeholder="Adobe Premiere Pro&#10;adobe première => Adobe Premiere Pro"
+                rows="5"
+                spellcheck="false"
               ></textarea>
             </label>
             <p class="hint" data-i18n="help.mixedLanguages">
-              Experimental: asks Whisper to transcribe without translating and to keep foreign words in their spoken language.
+              One spelling per line. Use heard variant =&gt; Exact spelling for guaranteed corrections across projects.
             </p>
           </section>
 

@@ -1,6 +1,7 @@
 // // Drive the Sub Creator panel UI and connect it to subtitle generation logic.
 import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
+import { applyWhisperGlossaryToCues, buildWhisperGlossaryPrompt } from "../core/whisperGlossary";
 import { normalizeWhisperXCuesForDisplay } from "../core/whisperxDisplay";
 import { parseSrt, shiftCaptionCues, trimSrtCuesToRange } from "../core/srt";
 import {
@@ -50,10 +51,12 @@ import {
   readPremiereTemplateTextPayloads,
   readSelectedMogrtVisualProperties,
   readTextFileFromHost,
+  readWhisperGlossaryStore,
   registerVisualSelectionWatcher,
   setVisualSelectionWatcherEnabled,
   transcribeWithWhisper,
   transcribeWithWhisperX,
+  writeWhisperGlossaryStore,
   applySelectedMogrtTextItems,
   isCancelledJobError
 } from "./cepBridge";
@@ -158,6 +161,8 @@ interface PanelStateSnapshot {
   whisperSequenceRange: WhisperSequenceRangeMode;
   preserveMixedLanguages?: boolean;
   mixedLanguagePrompt?: string;
+  whisperGlossaryEnabled?: boolean;
+  whisperGlossary?: string;
   removePunctuation?: boolean;
   animationMode: AnimationMode;
   maxCharsPerLine: number;
@@ -351,8 +356,8 @@ const textEditorPendingCommitTimers = new Map<string, number>();
 const GENERATE_PROGRESS_MAX = 100;
 const SUBCREATOR_GENERATE_CANCELLED_CODE = "SUBCREATOR_GENERATE_CANCELLED";
 const VISUAL_SELECTION_AUTO_REFRESH_DEBOUNCE_MS = 350;
-const MIXED_LANGUAGE_FEATURE_ENABLED = false;
-const MIXED_LANGUAGE_PROMPT_MAX_LENGTH = 420;
+const WHISPER_GLOSSARY_MAX_LENGTH = 12000;
+const WHISPER_GLOSSARY_SAVE_DELAY_MS = 300;
 const VISUAL_SELECTION_POLL_INTERVAL_MS = 1000;
 const VISUAL_LIVE_UPDATE_DEBOUNCE_MS = 220;
 const VISUAL_COLOR_LIVE_UPDATE_DEBOUNCE_MS = 40;
@@ -364,6 +369,7 @@ let activeFloatingPanelSelect: {
   overlayRoot: HTMLDivElement;
   cleanup: (restoreFocus?: boolean) => void;
 } | null = null;
+let whisperGlossarySaveTimer: number | null = null;
 const SUBCREATOR_WHISPER_LANGUAGE_DEFINITIONS: Array<{ code: string; label: string }> = [
   ["af", "afrikaans"],
   ["am", "amharic"],
@@ -999,26 +1005,40 @@ function getSelectedWhisperLanguageCode(): string {
   return String(elements.whisperLanguage?.value || pendingWhisperLanguageValue || "auto").trim() || "auto";
 }
 
-function sanitizeMixedLanguagePrompt(value: string): string {
-  // // Keep the user glossary compact because Whisper only considers a small prompt context.
+function sanitizeWhisperGlossary(value: string): string {
+  // // Preserve one-entry-per-line dictionary formatting while bounding user-profile storage.
   return String(value || "")
-    .replace(/\s+/g, " ")
+    .replace(/\r/g, "\n")
+    .replace(/[\t ]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim()
-    .slice(0, MIXED_LANGUAGE_PROMPT_MAX_LENGTH);
+    .slice(0, WHISPER_GLOSSARY_MAX_LENGTH);
 }
 
 function buildWhisperInitialPrompt(options: CaptionBuildOptions): string {
-  // // Build one concise Whisper initial prompt for the experimental mixed-language preservation mode.
-  if (!MIXED_LANGUAGE_FEATURE_ENABLED || !options.preserveMixedLanguages) {
+  // // Build one concise list of canonical spellings for Whisper's vocabulary guidance.
+  if (!options.preserveMixedLanguages) {
     return "";
   }
 
-  const glossary = sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt);
-  if (!glossary) {
-    return "";
+  return buildWhisperGlossaryPrompt(sanitizeWhisperGlossary(options.mixedLanguagePrompt));
+}
+
+function scheduleWhisperGlossaryStoreSave(): void {
+  // // Debounce user-profile writes while keeping localStorage updates immediate.
+  if (whisperGlossarySaveTimer !== null) {
+    window.clearTimeout(whisperGlossarySaveTimer);
   }
 
-  return `Transcribe the audio without translating. Preserve these words/terms exactly when heard: ${glossary}`;
+  whisperGlossarySaveTimer = window.setTimeout(() => {
+    whisperGlossarySaveTimer = null;
+    void writeWhisperGlossaryStore(
+      Boolean(elements.preserveMixedLanguages?.checked),
+      sanitizeWhisperGlossary(elements.mixedLanguagePrompt?.value || "")
+    ).catch((error) => {
+      setLog(String(error), true);
+    });
+  }, WHISPER_GLOSSARY_SAVE_DELAY_MS);
 }
 
 function resolveSpellcheckLanguageCode(): string {
@@ -1111,7 +1131,7 @@ function createDefaultOutputModeSettings(mode: OutputMode): OutputModeGeneration
     whisperModel: "base",
     whisperLanguageCode: "auto",
     whisperSequenceRange: "entire_sequence",
-    preserveMixedLanguages: false,
+    preserveMixedLanguages: true,
     mixedLanguagePrompt: "",
     removePunctuation: false,
     animationMode: mode === "premiere_subtitles" ? "none" : "line",
@@ -1147,7 +1167,7 @@ function normalizeOutputModeSettings(
       typeof raw.preserveMixedLanguages === "boolean" ? raw.preserveMixedLanguages : fallback.preserveMixedLanguages,
     mixedLanguagePrompt:
       typeof raw.mixedLanguagePrompt === "string"
-        ? raw.mixedLanguagePrompt.slice(0, MIXED_LANGUAGE_PROMPT_MAX_LENGTH)
+        ? sanitizeWhisperGlossary(raw.mixedLanguagePrompt)
         : fallback.mixedLanguagePrompt,
     removePunctuation: typeof raw.removePunctuation === "boolean" ? raw.removePunctuation : fallback.removePunctuation,
     animationMode: isAnimationModeValue(raw.animationMode) ? raw.animationMode : fallback.animationMode,
@@ -1171,8 +1191,8 @@ function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMo
       whisperModel: elements.whisperModel?.value || pendingWhisperModelValue || fallback.whisperModel,
       whisperLanguageCode: getSelectedWhisperLanguageCode(),
       whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
-      preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages?.checked),
-      mixedLanguagePrompt: MIXED_LANGUAGE_FEATURE_ENABLED ? sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt?.value || "") : "",
+      preserveMixedLanguages: Boolean(elements.preserveMixedLanguages?.checked),
+      mixedLanguagePrompt: sanitizeWhisperGlossary(elements.mixedLanguagePrompt?.value || ""),
       removePunctuation: Boolean(elements.removePunctuation?.checked),
       animationMode: (elements.animationMode?.value as AnimationMode) || fallback.animationMode,
       maxCharsPerLine: Number(elements.maxChars?.value),
@@ -1217,12 +1237,7 @@ function applyOutputModeSettingsToControls(mode: OutputMode): void {
   if (elements.whisperSequenceRange && hasSelectOption(elements.whisperSequenceRange, settings.whisperSequenceRange)) {
     elements.whisperSequenceRange.value = settings.whisperSequenceRange;
   }
-  if (elements.preserveMixedLanguages) {
-    elements.preserveMixedLanguages.checked = Boolean(settings.preserveMixedLanguages);
-  }
-  if (elements.mixedLanguagePrompt) {
-    elements.mixedLanguagePrompt.value = settings.mixedLanguagePrompt || "";
-  }
+  // // The Whisper dictionary is global and must not change when switching MOGRT/native output settings.
   if (elements.removePunctuation) {
     elements.removePunctuation.checked = Boolean(settings.removePunctuation);
   }
@@ -1366,6 +1381,8 @@ function persistPanelState(): void {
     whisperSequenceRange: outputSettingsByMode[activeOutputMode].whisperSequenceRange,
     preserveMixedLanguages: outputSettingsByMode[activeOutputMode].preserveMixedLanguages,
     mixedLanguagePrompt: outputSettingsByMode[activeOutputMode].mixedLanguagePrompt,
+    whisperGlossaryEnabled: Boolean(elements.preserveMixedLanguages.checked),
+    whisperGlossary: sanitizeWhisperGlossary(elements.mixedLanguagePrompt.value),
     removePunctuation: outputSettingsByMode[activeOutputMode].removePunctuation,
     animationMode: outputSettingsByMode[activeOutputMode].animationMode,
     maxCharsPerLine: outputSettingsByMode[activeOutputMode].maxCharsPerLine,
@@ -1393,6 +1410,21 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
   }
 
   hydrateOutputModeSettings(snapshot);
+
+  const activeSettings = outputSettingsByMode[activeOutputMode];
+  if (elements.preserveMixedLanguages) {
+    elements.preserveMixedLanguages.checked =
+      typeof snapshot.whisperGlossaryEnabled === "boolean" ? snapshot.whisperGlossaryEnabled : true;
+  }
+  if (elements.mixedLanguagePrompt) {
+    const legacyGlossary =
+      typeof snapshot.mixedLanguagePrompt === "string"
+        ? snapshot.mixedLanguagePrompt
+        : activeSettings?.mixedLanguagePrompt || "";
+    elements.mixedLanguagePrompt.value = sanitizeWhisperGlossary(
+      typeof snapshot.whisperGlossary === "string" ? snapshot.whisperGlossary : legacyGlossary
+    );
+  }
 
   if (typeof snapshot.logExpanded === "boolean") {
     setLogPanelExpanded(snapshot.logExpanded, true);
@@ -1923,12 +1955,11 @@ function toggleSourceFields(): void {
   }
 
   if (elements.mixedLanguageField) {
-    elements.mixedLanguageField.style.display = MIXED_LANGUAGE_FEATURE_ENABLED && (whisperModeActive || whisperxModeActive) ? "grid" : "none";
+    elements.mixedLanguageField.style.display = whisperModeActive || whisperxModeActive ? "grid" : "none";
   }
 
   if (elements.mixedLanguagePromptField) {
-    elements.mixedLanguagePromptField.style.display =
-      MIXED_LANGUAGE_FEATURE_ENABLED && elements.preserveMixedLanguages?.checked ? "grid" : "none";
+    elements.mixedLanguagePromptField.style.display = elements.preserveMixedLanguages?.checked ? "grid" : "none";
   }
 
   if (elements.whisperLanguageField) {
@@ -2321,13 +2352,11 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
   }
   if (elements.preserveMixedLanguages) {
     elements.preserveMixedLanguages.disabled =
-      !MIXED_LANGUAGE_FEATURE_ENABLED ||
       isBusy ||
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
   }
   if (elements.mixedLanguagePrompt) {
     elements.mixedLanguagePrompt.disabled =
-      !MIXED_LANGUAGE_FEATURE_ENABLED ||
       isBusy ||
       !elements.preserveMixedLanguages?.checked ||
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence");
@@ -4872,8 +4901,8 @@ function collectBuildOptions(): CaptionBuildOptions {
     correctedTranscriptPath: String(elements.correctedTranscriptPath.value || "").trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
-    preserveMixedLanguages: MIXED_LANGUAGE_FEATURE_ENABLED && Boolean(elements.preserveMixedLanguages.checked),
-    mixedLanguagePrompt: MIXED_LANGUAGE_FEATURE_ENABLED ? sanitizeMixedLanguagePrompt(elements.mixedLanguagePrompt.value) : "",
+    preserveMixedLanguages: Boolean(elements.preserveMixedLanguages.checked),
+    mixedLanguagePrompt: sanitizeWhisperGlossary(elements.mixedLanguagePrompt.value),
     videoTrackIndex: 0,
     audioTrackIndex: 0
   };
@@ -5214,7 +5243,7 @@ async function loadCuesFromSelectedSource(
         languageCode: options.languageCode,
         preserveMixedLanguages: options.preserveMixedLanguages,
         initialPromptUsed: Boolean(initialPrompt),
-        mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
+        mixedLanguagePromptLength: sanitizeWhisperGlossary(options.mixedLanguagePrompt).length,
         audioPath: whisperAudioPath
       });
       whisperResult = await (whisperxModeActive
@@ -5251,7 +5280,10 @@ async function loadCuesFromSelectedSource(
       }
     }
     const fallbackCues = cues.length > 0 ? cues : parseSrt(whisperResult.srtText);
-    const displayCues = whisperxModeActive ? normalizeWhisperXCuesForDisplay(fallbackCues) : fallbackCues;
+    const glossaryCues = options.preserveMixedLanguages
+      ? applyWhisperGlossaryToCues(fallbackCues, options.mixedLanguagePrompt)
+      : fallbackCues;
+    const displayCues = whisperxModeActive ? normalizeWhisperXCuesForDisplay(glossaryCues) : glossaryCues;
     if (!displayCues.length) {
       throw new Error(translate("error.emptyWhisper"));
     }
@@ -5300,7 +5332,7 @@ async function generate(): Promise<void> {
       whisperSequenceRange: options.whisperSequenceRange,
       preserveMixedLanguages: options.preserveMixedLanguages,
       mixedLanguageInitialPromptUsed: Boolean(buildWhisperInitialPrompt(options)),
-      mixedLanguagePromptLength: sanitizeMixedLanguagePrompt(options.mixedLanguagePrompt).length,
+      mixedLanguagePromptLength: sanitizeWhisperGlossary(options.mixedLanguagePrompt).length,
       mogrtTemplateRelativePath: options.mogrtTemplateRelativePath
     });
     setLog(translate("log.processing"));
@@ -5424,6 +5456,20 @@ async function initialize(): Promise<void> {
   await loadPanelMeta();
   refreshVersionLabel();
   const persistedState = readPersistedPanelState();
+  let whisperGlossaryLoadError = "";
+  let shouldMigrateWhisperGlossaryToFile = false;
+  try {
+    const glossaryStore = await readWhisperGlossaryStore();
+    shouldMigrateWhisperGlossaryToFile = glossaryStore.available && !glossaryStore.exists;
+    if (glossaryStore.exists) {
+      // // The user-profile file is canonical because it persists independently of Premiere projects and output modes.
+      persistedState.whisperGlossaryEnabled = glossaryStore.enabled;
+      persistedState.whisperGlossary = glossaryStore.text;
+    }
+  } catch (error) {
+    // // Keep the localStorage fallback usable when a damaged or locked profile file cannot be read.
+    whisperGlossaryLoadError = String(error);
+  }
 
   const defaultLanguage =
     typeof persistedState.languageCode === "string" && persistedState.languageCode.length > 0
@@ -5442,6 +5488,9 @@ async function initialize(): Promise<void> {
   toggleSourceFields();
   renderMogrtGallery();
   persistPanelState();
+  if (shouldMigrateWhisperGlossaryToFile) {
+    scheduleWhisperGlossaryStoreSave();
+  }
 
   elements.languageSelect?.addEventListener("change", async () => {
     await loadLocale(elements.languageSelect?.value ?? "en");
@@ -5576,9 +5625,18 @@ async function initialize(): Promise<void> {
     toggleSourceFields();
     setGenerateButtonsBusy(generateInProgress);
     persistPanelState();
+    scheduleWhisperGlossaryStoreSave();
   });
   elements.mixedLanguagePrompt?.addEventListener("input", () => {
     persistPanelState();
+    scheduleWhisperGlossaryStoreSave();
+  });
+  window.addEventListener("beforeunload", () => {
+    // // Flush the last keystrokes synchronously inside the bridge before CEP closes the panel.
+    void writeWhisperGlossaryStore(
+      Boolean(elements.preserveMixedLanguages?.checked),
+      sanitizeWhisperGlossary(elements.mixedLanguagePrompt?.value || "")
+    );
   });
   elements.logToggleButton?.addEventListener("click", () => {
     setLogPanelExpanded(!logPanelExpanded);
@@ -5684,6 +5742,9 @@ async function initialize(): Promise<void> {
 
   refreshVisualButtonsBusyState();
   setLog(translate("log.ready"));
+  if (whisperGlossaryLoadError) {
+    setLog(whisperGlossaryLoadError, true);
+  }
 
   void initializeVisualSelectionWatcher();
 

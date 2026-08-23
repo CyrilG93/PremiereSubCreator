@@ -3509,7 +3509,9 @@ export async function applyCaptionPlan(payload: HostApplyPayload): Promise<strin
   return evalHostJsonRaw(`subcreator_apply_captions("${escapeForJsx(encodedPayload)}")`);
 }
 
-export async function applyNativeSubtitlePlan(payload: HostApplyPayload): Promise<string> {
+export async function applyNativeSubtitlePlan(
+  payload: Pick<HostApplyPayload, "cues"> & { options?: Partial<CaptionBuildOptions> }
+): Promise<string> {
   // // Send planned cues to ExtendScript so Premiere can import them as one native subtitle track from SRT.
   const encodedPayload = encodeURIComponent(JSON.stringify(payload));
   return evalHostJsonRaw(`subcreator_apply_native_subtitles("${escapeForJsx(encodedPayload)}")`);

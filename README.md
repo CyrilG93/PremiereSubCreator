@@ -116,9 +116,9 @@ Sub Creator keeps punctuation by default and remembers separate generation setti
 
 ### Translation
 
-The `Translation` tab translates selected Sub Creator MOGRT subtitle clips without changing the original clips or their timing. Select the clips on one video track, choose source and target languages, enter your personal DeepL API Free key, then review the preview before creating the translated track above the source.
+The `Translation` tab translates selected Sub Creator MOGRT subtitle clips without changing the original clips or their timing. Select the clips on one video track, choose source and target languages, enter your personal DeepL API Free key, then review or correct each translated subtitle before creating the translated track above the source.
 
-The key is used only for the current translation and is not saved by Sub Creator. The translated text is sent to DeepL; the subtitle timings and visual style stay local. This first version supports MOGRT subtitles selected on one video track. Native Premiere subtitle tracks are not yet supported by this workflow.
+The key is used only for the current translation and is not saved by Sub Creator. The translated text is sent to DeepL; the subtitle timings and visual style stay local. For native Premiere subtitles, choose `SRT file / native Premiere subtitles`, select the source SRT, then Sub Creator creates a second native subtitle track with the translated text and the same timings. Premiere's CEP API does not reliably expose the text of an existing native caption track, so its original SRT file is required.
 
 When native subtitles create an SRT source file, Sub Creator saves it in an `SRT` folder next to the current `.prproj` file.
 

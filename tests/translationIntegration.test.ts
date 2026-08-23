@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 const projectRoot = resolve(import.meta.dirname, "..");
 const bridgeSource = readFileSync(resolve(projectRoot, "src/panel/cepBridge.ts"), "utf8");
 const hostSource = readFileSync(resolve(projectRoot, "src/host/SubCreatorHost.jsx"), "utf8");
+const panelSource = readFileSync(resolve(projectRoot, "src/panel/main.ts"), "utf8");
 
 describe("translation integration", () => {
   it("selects the appropriate DeepL endpoint and sends the user key only as an authorization header", () => {
@@ -18,5 +19,11 @@ describe("translation integration", () => {
     expect(hostSource).toContain("var duplicateSelection = Boolean(payload && payload.duplicateSelection === true);");
     expect(hostSource).toContain("if (!duplicateSelection) {");
     expect(hostSource).toContain("subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex)");
+  });
+
+  it("keeps correction inputs and native SRT output tied to existing cue timings", () => {
+    expect(panelSource).toContain('input.addEventListener("input"');
+    expect(panelSource).toContain('getTranslationInputMode() === "srt"');
+    expect(panelSource).toContain("applyNativeSubtitlePlan({");
   });
 });

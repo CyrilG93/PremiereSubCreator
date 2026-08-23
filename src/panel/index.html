@@ -258,6 +258,17 @@
         <section class="panel__grid">
           <section class="field field--full">
             <p class="hint" data-i18n="help.translationSelection">Select Sub Creator MOGRTs on one track, then load them here. Originals are never modified.</p>
+            <label class="subfield">
+              <span data-i18n="field.translationInput">Translation source</span>
+              <select id="translationInputMode">
+                <option value="mogrt" data-i18n="translation.inputMogrt">Selected MOGRT subtitles</option>
+                <option value="srt" data-i18n="translation.inputSrt">SRT file / native Premiere subtitles</option>
+              </select>
+            </label>
+            <div id="translationSrtField" class="inline-row" hidden>
+              <input id="translationSrtPath" type="text" data-i18n-placeholder="placeholder.srtPath" placeholder="path/to/captions.srt" />
+              <button id="translationSrtBrowseButton" type="button" class="button button--secondary" data-i18n="action.browse">Browse</button>
+            </div>
             <button id="translationReadButton" type="button" class="button button--secondary" data-i18n="action.translationRead">Read selected subtitles</button>
             <p id="translationSelectionSummary" class="hint" data-i18n="translation.selectionDefault">No subtitles loaded.</p>
           </section>
@@ -285,7 +296,7 @@
           </section>
           <label class="field field--full">
             <span data-i18n="field.translationPreview">Translated preview</span>
-            <textarea id="translationPreview" rows="10" readonly data-i18n-placeholder="placeholder.translationPreview" placeholder="Translation will appear here."></textarea>
+            <div id="translationPreview" class="translation-preview" data-i18n="placeholder.translationPreview">Translation will appear here.</div>
           </label>
         </section>
       </section>

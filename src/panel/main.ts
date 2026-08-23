@@ -217,8 +217,12 @@ const elements = {
   translationSelectionSummary: document.querySelector<HTMLElement>("#translationSelectionSummary"),
   translationSourceLanguage: document.querySelector<HTMLSelectElement>("#translationSourceLanguage"),
   translationTargetLanguage: document.querySelector<HTMLSelectElement>("#translationTargetLanguage"),
+  translationInputMode: document.querySelector<HTMLSelectElement>("#translationInputMode"),
+  translationSrtField: document.querySelector<HTMLElement>("#translationSrtField"),
+  translationSrtPath: document.querySelector<HTMLInputElement>("#translationSrtPath"),
+  translationSrtBrowseButton: document.querySelector<HTMLButtonElement>("#translationSrtBrowseButton"),
   deeplApiKey: document.querySelector<HTMLInputElement>("#deeplApiKey"),
-  translationPreview: document.querySelector<HTMLTextAreaElement>("#translationPreview"),
+  translationPreview: document.querySelector<HTMLElement>("#translationPreview"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   outputMode: document.querySelector<HTMLSelectElement>("#outputMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
@@ -3072,17 +3076,79 @@ function setTranslationSelectionSummary(message: string): void {
 }
 
 function renderTranslationPreview(): void {
-  // // Render an immutable, timestamped preview so the user can inspect translated text before timeline changes.
+  // // Render one editable field per cue so manual corrections keep their original subtitle boundaries.
   if (!elements.translationPreview) {
     return;
   }
-  elements.translationPreview.value = translatedSubtitleTexts
-    .map((text, index) => `${index + 1}. ${translationBlocks[index]?.startSeconds.toFixed(2) ?? "0.00"} - ${text}`)
-    .join("\n");
+  elements.translationPreview.innerHTML = "";
+  if (translatedSubtitleTexts.length < 1) {
+    elements.translationPreview.textContent = translate("placeholder.translationPreview");
+    return;
+  }
+  translatedSubtitleTexts.forEach((text, index) => {
+    const item = document.createElement("label");
+    item.className = "translation-preview__item";
+    const label = document.createElement("span");
+    label.textContent = `${index + 1}. ${translationBlocks[index]?.startSeconds.toFixed(2) ?? "0.00"}`;
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.rows = 2;
+    input.addEventListener("input", () => {
+      // // Store each correction directly by cue index, without recalculating any timeline time.
+      translatedSubtitleTexts[index] = input.value;
+    });
+    item.append(label, input);
+    elements.translationPreview?.appendChild(item);
+  });
+}
+
+function getTranslationInputMode(): "mogrt" | "srt" {
+  // // Keep translation sources explicit because Premiere cannot reliably expose native caption text through CEP.
+  return elements.translationInputMode?.value === "srt" ? "srt" : "mogrt";
+}
+
+function toggleTranslationInputMode(): void {
+  // // Show the appropriate source picker while keeping the translated preview untouched until it is reloaded.
+  const srtMode = getTranslationInputMode() === "srt";
+  if (elements.translationSrtField) {
+    elements.translationSrtField.hidden = !srtMode;
+  }
+  if (elements.translationReadButton) {
+    elements.translationReadButton.textContent = translate(srtMode ? "action.translationReadSrt" : "action.translationRead");
+  }
 }
 
 async function loadTranslationSelection(): Promise<void> {
   // // Read selected Sub Creator MOGRTs without altering the Text editor's active selection state.
+  if (getTranslationInputMode() === "srt") {
+    const srtPath = String(elements.translationSrtPath?.value || "").trim();
+    if (!srtPath) {
+      throw new Error(translate("error.translationSrtMissing"));
+    }
+    const cues = parseSrt(await readTextFileFromHost(srtPath));
+    translationBlocks = cues.map((cue, index) => ({
+      sourceSelectionIndex: index,
+      clipName: `Caption ${index + 1}`,
+      startSeconds: cue.startSeconds,
+      endSeconds: cue.endSeconds,
+      text: cue.text,
+      words: cue.words.map((word) => word.text),
+      timedWords: cue.words
+    }));
+    translationSelectionSignature = `srt:${srtPath}`;
+    translationSameTrack = true;
+    translatedSubtitleTexts = [];
+    renderTranslationPreview();
+    if (elements.translationDuplicateButton) {
+      elements.translationDuplicateButton.disabled = true;
+    }
+    setTranslationSelectionSummary(
+      translationBlocks.length > 0
+        ? translateTemplate("translation.selectionReady", { count: String(translationBlocks.length) })
+        : translate("translation.selectionDefault")
+    );
+    return;
+  }
   const result = await readSelectedMogrtTextItems();
   const selectedItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
   const identity = resolveCaptionMetadataIdentityFromHostPayload(result);
@@ -3152,6 +3218,26 @@ async function duplicateTranslatedSelection(): Promise<void> {
   // // Rebuild translated captions on a safe track above the source while preserving each original timing range.
   if (!translationSelectionSignature || translatedSubtitleTexts.length !== translationBlocks.length) {
     throw new Error(translate("error.translationRequired"));
+  }
+  if (translatedSubtitleTexts.some((text) => !String(text || "").trim())) {
+    throw new Error(translate("error.translationRequired"));
+  }
+  if (getTranslationInputMode() === "srt") {
+    // // Reuse the existing native-caption importer to add a second Premiere subtitle track from translated SRT-equivalent cues.
+    const rawResult = await applyNativeSubtitlePlan({
+      options: { outputMode: "premiere_subtitles" },
+      cues: translationBlocks.map((block, index): CaptionCue => ({
+        id: `translated-native-${index + 1}`,
+        startSeconds: block.startSeconds,
+        endSeconds: block.endSeconds,
+        text: translatedSubtitleTexts[index] || "",
+        words: []
+      }))
+    });
+    setStructuredLogFromRaw(translate("log.hostResult"), rawResult);
+    assertHostApplySucceeded(rawResult);
+    setTranslationSelectionSummary(translateTemplate("translation.duplicateDone", { count: String(translationBlocks.length) }));
+    return;
   }
   const options = collectTextEditorBuildOptions();
   const payload: TextEditorApplyPayload = {
@@ -5695,6 +5781,7 @@ async function initialize(): Promise<void> {
 
   await loadLocale(elements.languageSelect?.value ?? "en");
   refreshWhisperLanguageUi();
+  toggleTranslationInputMode();
   applyPersistedPanelState(persistedState);
   setActiveMode(activeMode);
   toggleSourceFields();
@@ -5963,6 +6050,28 @@ async function initialize(): Promise<void> {
   elements.translationReadButton?.addEventListener("click", async () => {
     try {
       await loadTranslationSelection();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+  elements.translationInputMode?.addEventListener("change", () => {
+    toggleTranslationInputMode();
+    translationBlocks = [];
+    translationSelectionSignature = "";
+    translationSameTrack = false;
+    translatedSubtitleTexts = [];
+    renderTranslationPreview();
+    setTranslationSelectionSummary(translate("translation.selectionDefault"));
+    if (elements.translationDuplicateButton) {
+      elements.translationDuplicateButton.disabled = true;
+    }
+  });
+  elements.translationSrtBrowseButton?.addEventListener("click", async () => {
+    try {
+      const srtPath = await pickSrtPath();
+      if (elements.translationSrtPath && srtPath) {
+        elements.translationSrtPath.value = srtPath;
+      }
     } catch (error) {
       setLog(String(error), true);
     }

@@ -145,8 +145,8 @@ body {
 }
 
 .tab-nav {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -159,6 +159,8 @@ body {
   cursor: pointer;
   font-size: 0.78rem;
   font-weight: 650;
+  flex: 1 1 90px;
+  min-width: 0;
 }
 
 .tab-button.is-active {

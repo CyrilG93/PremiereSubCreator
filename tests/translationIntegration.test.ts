@@ -39,4 +39,11 @@ describe("translation integration", () => {
     expect(panelSource).toContain("refreshDeepLSupportedLanguages()");
     expect(panelSource).toContain("replaceTranslationLanguageOptions(elements.translationSourceLanguage");
   });
+
+  it("maps DeepL failures to stable user-facing error codes", () => {
+    expect(bridgeSource).toContain('return "SUBCREATOR_DEEPL_API_KEY_INVALID";');
+    expect(bridgeSource).toContain('return "SUBCREATOR_DEEPL_QUOTA_EXCEEDED";');
+    expect(bridgeSource).toContain('return "SUBCREATOR_DEEPL_RATE_LIMITED";');
+    expect(panelSource).toContain("getDeepLUserErrorMessage(error)");
+  });
 });

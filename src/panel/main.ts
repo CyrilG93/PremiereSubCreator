@@ -3185,6 +3185,27 @@ async function refreshDeepLSupportedLanguages(): Promise<void> {
   }
 }
 
+function getDeepLUserErrorMessage(error: unknown): string {
+  // // Present common DeepL failures in the panel language instead of leaking HTTP or network implementation details.
+  const code = String(error || "");
+  if (code.includes("SUBCREATOR_DEEPL_API_KEY_INVALID")) {
+    return translate("error.deeplApiKeyInvalid");
+  }
+  if (code.includes("SUBCREATOR_DEEPL_QUOTA_EXCEEDED")) {
+    return translate("error.deeplQuotaExceeded");
+  }
+  if (code.includes("SUBCREATOR_DEEPL_RATE_LIMITED")) {
+    return translate("error.deeplRateLimited");
+  }
+  if (code.includes("SUBCREATOR_DEEPL_NETWORK_UNAVAILABLE")) {
+    return translate("error.deeplNetworkUnavailable");
+  }
+  if (code.includes("SUBCREATOR_DEEPL_RESPONSE_INVALID") || code.includes("SUBCREATOR_DEEPL_REQUEST_FAILED")) {
+    return translate("error.deeplRequestFailed");
+  }
+  return code;
+}
+
 async function loadTranslationSelection(): Promise<void> {
   // // Read selected Sub Creator MOGRTs without altering the Text editor's active selection state.
   if (getTranslationInputMode() === "srt") {
@@ -6013,7 +6034,7 @@ async function initialize(): Promise<void> {
   elements.deeplApiKey?.addEventListener("change", () => {
     // // Refresh options after the key is complete, without sending it through Premiere's host bridge.
     void refreshDeepLSupportedLanguages().catch((error) => {
-      setLog(String(error), true);
+      setLog(getDeepLUserErrorMessage(error), true);
     });
   });
   window.addEventListener("beforeunload", () => {
@@ -6133,7 +6154,7 @@ async function initialize(): Promise<void> {
   });
   elements.translationLanguagesRefreshButton?.addEventListener("click", () => {
     void refreshDeepLSupportedLanguages().catch((error) => {
-      setLog(String(error), true);
+      setLog(getDeepLUserErrorMessage(error), true);
     });
   });
   elements.translationInputMode?.addEventListener("change", () => {
@@ -6162,7 +6183,7 @@ async function initialize(): Promise<void> {
     try {
       await translateLoadedSelection();
     } catch (error) {
-      setLog(String(error), true);
+      setLog(getDeepLUserErrorMessage(error), true);
     }
   });
   elements.translationDuplicateButton?.addEventListener("click", async () => {
@@ -6211,7 +6232,7 @@ async function initialize(): Promise<void> {
   });
   void refreshDeepLSupportedLanguages().catch((error) => {
     // // Keep the built-in fallback list usable if the stored key is invalid or DeepL is offline.
-    setLog(String(error), true);
+    setLog(getDeepLUserErrorMessage(error), true);
   });
 }
 

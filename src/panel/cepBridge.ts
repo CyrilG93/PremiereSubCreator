@@ -278,6 +278,23 @@ interface DeepLSupportedLanguagesResponseItem {
   supports_formality?: unknown;
 }
 
+function getDeepLRequestErrorCode(statusCode: number): string {
+  // // Convert HTTP responses into stable UI-safe error codes without exposing request details or credentials.
+  if (statusCode === 401 || statusCode === 403) {
+    return "SUBCREATOR_DEEPL_API_KEY_INVALID";
+  }
+  if (statusCode === 456) {
+    return "SUBCREATOR_DEEPL_QUOTA_EXCEEDED";
+  }
+  if (statusCode === 429) {
+    return "SUBCREATOR_DEEPL_RATE_LIMITED";
+  }
+  if (statusCode >= 500) {
+    return "SUBCREATOR_DEEPL_NETWORK_UNAVAILABLE";
+  }
+  return "SUBCREATOR_DEEPL_REQUEST_FAILED";
+}
+
 export interface ApplySelectedMogrtTextResult {
   selectedCount: number;
   rebuiltCount: number;
@@ -4396,27 +4413,28 @@ export async function translateWithDeepL(request: DeepLTranslationRequest): Prom
           responseText += String(chunk || "");
         });
         response.on("end", () => {
+          const statusCode = Number(response.statusCode || 0);
+          if (statusCode < 200 || statusCode >= 300) {
+            reject(new Error(getDeepLRequestErrorCode(statusCode)));
+            return;
+          }
           let parsed: DeepLTranslationResponse = {};
           try {
             parsed = JSON.parse(responseText) as DeepLTranslationResponse;
           } catch {
-            reject(new Error("DeepL returned an unreadable response."));
-            return;
-          }
-          if (Number(response.statusCode || 0) < 200 || Number(response.statusCode || 0) >= 300) {
-            reject(new Error(`DeepL error: ${String(parsed.message || responseText || response.statusCode)}`));
+            reject(new Error("SUBCREATOR_DEEPL_RESPONSE_INVALID"));
             return;
           }
           const translations = Array.isArray(parsed.translations) ? parsed.translations.map((item) => String(item?.text || "").trim()) : [];
           if (translations.length !== texts.length) {
-            reject(new Error("DeepL did not return every translated subtitle."));
+            reject(new Error("SUBCREATOR_DEEPL_RESPONSE_INVALID"));
             return;
           }
           resolve(translations);
         });
       }
     );
-    requestHandle.on("error", reject);
+    requestHandle.on("error", () => reject(new Error("SUBCREATOR_DEEPL_NETWORK_UNAVAILABLE")));
     requestHandle.write(body);
     requestHandle.end();
   });
@@ -4464,15 +4482,16 @@ export async function getDeepLSupportedLanguages(authKey: string): Promise<{
             responseText += String(chunk || "");
           });
           response.on("end", () => {
+            const statusCode = Number(response.statusCode || 0);
+            if (statusCode < 200 || statusCode >= 300) {
+              reject(new Error(getDeepLRequestErrorCode(statusCode)));
+              return;
+            }
             let parsed: DeepLSupportedLanguagesResponseItem[] = [];
             try {
               parsed = JSON.parse(responseText) as DeepLSupportedLanguagesResponseItem[];
             } catch {
-              reject(new Error("DeepL returned an unreadable language list."));
-              return;
-            }
-            if (Number(response.statusCode || 0) < 200 || Number(response.statusCode || 0) >= 300) {
-              reject(new Error(`DeepL error: ${String(responseText || response.statusCode)}`));
+              reject(new Error("SUBCREATOR_DEEPL_RESPONSE_INVALID"));
               return;
             }
             const languages = Array.isArray(parsed)
@@ -4481,14 +4500,14 @@ export async function getDeepLSupportedLanguages(authKey: string): Promise<{
                   .filter((item) => Boolean(item.language && item.name))
               : [];
             if (languages.length < 1) {
-              reject(new Error(`DeepL returned no ${type} languages.`));
+              reject(new Error("SUBCREATOR_DEEPL_RESPONSE_INVALID"));
               return;
             }
             resolve(languages);
           });
         }
       );
-      requestHandle.on("error", reject);
+      requestHandle.on("error", () => reject(new Error("SUBCREATOR_DEEPL_NETWORK_UNAVAILABLE")));
       requestHandle.end();
     });
 

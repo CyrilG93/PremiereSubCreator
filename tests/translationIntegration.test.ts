@@ -46,4 +46,9 @@ describe("translation integration", () => {
     expect(bridgeSource).toContain('return "SUBCREATOR_DEEPL_RATE_LIMITED";');
     expect(panelSource).toContain("getDeepLUserErrorMessage(error)");
   });
+
+  it("opens DeepL API key management in the external browser", () => {
+    expect(panelSource).toContain('const DEEPL_API_KEY_PAGE_URL = "https://www.deepl.com/your-account/keys";');
+    expect(panelSource).toContain("openDeepLApiKeyPage()");
+  });
 });

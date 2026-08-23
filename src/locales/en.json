@@ -127,6 +127,7 @@
   "action.translationRead": "Read selected subtitles",
   "action.translationReadSrt": "Read SRT file",
   "action.refreshTranslationLanguages": "Refresh DeepL languages",
+  "action.openDeepLApiKeys": "Get a DeepL API key",
   "action.translateSelected": "Translate selection",
   "action.createTranslatedTrack": "Create translated track",
   "update.downloadNotice": "New version available (v{latest}, installed v{current}). Click to download.",

@@ -225,6 +225,7 @@ const elements = {
   translationSrtPath: document.querySelector<HTMLInputElement>("#translationSrtPath"),
   translationSrtBrowseButton: document.querySelector<HTMLButtonElement>("#translationSrtBrowseButton"),
   deeplApiKey: document.querySelector<HTMLInputElement>("#deeplApiKey"),
+  deeplApiKeyLink: document.querySelector<HTMLAnchorElement>("#deeplApiKeyLink"),
   translationPreview: document.querySelector<HTMLElement>("#translationPreview"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   outputMode: document.querySelector<HTMLSelectElement>("#outputMode"),
@@ -310,6 +311,7 @@ const FALLBACK_PANEL_META: PanelMeta = {
   releasePageUrl: "https://github.com/CyrilG93/PremiereSubCreator/releases/latest"
 };
 const PRODUCT_PAGE_URL = "https://www.cyrilplugin.com/subcreator";
+const DEEPL_API_KEY_PAGE_URL = "https://www.deepl.com/your-account/keys";
 let panelMeta: PanelMeta = { ...FALLBACK_PANEL_META };
 const updateState: UpdateState = {
   visible: false,
@@ -1704,6 +1706,11 @@ function refreshVersionLabel(): void {
 async function openProductPage(): Promise<void> {
   // // Route version-badge clicks through the same CEP-safe external URL opener as update links.
   await openExternalUrl(PRODUCT_PAGE_URL);
+}
+
+async function openDeepLApiKeyPage(): Promise<void> {
+  // // Open DeepL's account-key page in the default browser because CEP panels cannot safely navigate there in place.
+  await openExternalUrl(DEEPL_API_KEY_PAGE_URL);
 }
 
 function refreshUpdateBanner(): void {
@@ -6052,6 +6059,13 @@ async function initialize(): Promise<void> {
   });
   elements.appVersion?.addEventListener("click", () => {
     void openProductPage().catch((error) => {
+      setLog(String(error), true);
+    });
+  });
+  elements.deeplApiKeyLink?.addEventListener("click", (event) => {
+    // // Keep the account page in the external browser instead of replacing the Premiere panel.
+    event.preventDefault();
+    void openDeepLApiKeyPage().catch((error) => {
       setLog(String(error), true);
     });
   });

@@ -26,4 +26,10 @@ describe("translation integration", () => {
     expect(panelSource).toContain('getTranslationInputMode() === "srt"');
     expect(panelSource).toContain("applyNativeSubtitlePlan({");
   });
+
+  it("persists the DeepL key locally without adding it to the translation request payload", () => {
+    expect(panelSource).toContain("deeplApiKey?: string;");
+    expect(panelSource).toContain("deeplApiKey: String(elements.deeplApiKey?.value || \"\")");
+    expect(panelSource).toContain('elements.deeplApiKey?.addEventListener("input"');
+  });
 });

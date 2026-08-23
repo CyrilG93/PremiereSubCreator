@@ -178,6 +178,7 @@ interface PanelStateSnapshot {
   visualLiveUpdate: boolean;
   logExpanded: boolean;
   verboseLogs: boolean;
+  deeplApiKey?: string;
 }
 
 interface TextEditorBlockState extends TextEditorBlock {
@@ -1427,7 +1428,9 @@ function persistPanelState(): void {
     selectedMogrtId: outputSettingsByMode[activeOutputMode].selectedMogrtId,
     visualLiveUpdate: true,
     logExpanded: logPanelExpanded,
-    verboseLogs: verboseLogsEnabled
+    verboseLogs: verboseLogsEnabled,
+    // // Keep the user's DeepL key in the local CEP profile so it survives a Premiere restart.
+    deeplApiKey: String(elements.deeplApiKey?.value || "")
   };
 
   try {
@@ -1466,6 +1469,11 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
 
   if (typeof snapshot.verboseLogs === "boolean") {
     setVerboseLogsEnabled(snapshot.verboseLogs, true);
+  }
+
+  if (elements.deeplApiKey && typeof snapshot.deeplApiKey === "string") {
+    // // Restore the locally stored key without ever writing it to logs or host payloads.
+    elements.deeplApiKey.value = snapshot.deeplApiKey;
   }
 
   if (snapshot.activeMode === "visual" || snapshot.activeMode === "text" || snapshot.activeMode === "translate") {
@@ -5938,6 +5946,10 @@ async function initialize(): Promise<void> {
   elements.mixedLanguagePrompt?.addEventListener("input", () => {
     persistPanelState();
     scheduleWhisperGlossaryStoreSave();
+  });
+  elements.deeplApiKey?.addEventListener("input", () => {
+    // // Persist the private key locally as it is typed so closing Premiere cannot lose it.
+    persistPanelState();
   });
   window.addEventListener("beforeunload", () => {
     // // Flush the last keystrokes synchronously inside the bridge before CEP closes the panel.

@@ -74,7 +74,7 @@
   "help.mixedLanguages": "Use one spelling per line. Enter heard variant => Exact spelling for guaranteed corrections. This dictionary is shared by all Premiere projects.",
   "help.preserveTranslationTiming": "Analyzes the audio a second time to keep the original-language timing. No external API is used.",
   "help.translationSelection": "Select Sub Creator MOGRTs on one track, then load them here. Originals are never modified.",
-  "help.deeplApiKey": "The key is used only for this translation and is not stored by Sub Creator.",
+  "help.deeplApiKey": "The key is stored locally on this computer and sent only to DeepL for translation.",
   "help.mogrtTracks": "MOGRT subtitles are automatically inserted on a new top video track.",
   "help.nativeTracks": "Premiere subtitles are imported as a native subtitle track from a temporary SRT.",
   "progress.prepareGeneration": "Preparing subtitle generation...",

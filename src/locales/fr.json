@@ -74,7 +74,7 @@
   "help.mixedLanguages": "Une orthographe par ligne. Utilise variante entendue => Orthographe exacte pour garantir la correction. Ce dictionnaire est conserve pour tous les projets Premiere.",
   "help.preserveTranslationTiming": "Analyse l'audio une seconde fois pour conserver les timings de la langue d'origine. Aucune API externe n'est utilisee.",
   "help.translationSelection": "Selectionne des MOGRT Sub Creator sur une seule piste, puis charge-les ici. Les originaux ne seront jamais modifies.",
-  "help.deeplApiKey": "La cle est utilisee uniquement pour cette traduction et n'est pas enregistree par Sub Creator.",
+  "help.deeplApiKey": "La cle est enregistree localement sur cet ordinateur et envoyee uniquement a DeepL pour la traduction.",
   "help.mogrtTracks": "Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.",
   "help.nativeTracks": "Les sous-titres Premiere sont importes comme une piste native depuis un SRT temporaire.",
   "progress.prepareGeneration": "Preparation de la generation...",

@@ -3,6 +3,7 @@ import { buildCaptionPlan } from "../core/planner";
 import { parseWhisperJson } from "../core/whisper";
 import { applyWhisperGlossaryToCues, buildWhisperGlossaryPrompt } from "../core/whisperGlossary";
 import { normalizeWhisperXCuesForDisplay } from "../core/whisperxDisplay";
+import { lockTranslatedCuesToSourceTiming } from "../core/timingLockedTranslation";
 import { parseSrt, shiftCaptionCues, trimSrtCuesToRange } from "../core/srt";
 import {
   buildTextEditorSafeApplyPlans,
@@ -105,6 +106,7 @@ interface OutputModeGenerationSettings {
   whisperModel: string;
   whisperLanguageCode: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  preserveTranslationTiming: boolean;
   preserveMixedLanguages: boolean;
   mixedLanguagePrompt: string;
   removePunctuation: boolean;
@@ -159,6 +161,7 @@ interface PanelStateSnapshot {
   correctedTranscriptPath: string;
   whisperModel: string;
   whisperSequenceRange: WhisperSequenceRangeMode;
+  preserveTranslationTiming?: boolean;
   preserveMixedLanguages?: boolean;
   mixedLanguagePrompt?: string;
   whisperGlossaryEnabled?: boolean;
@@ -223,6 +226,9 @@ const elements = {
   whisperLanguageField: document.querySelector<HTMLElement>("#whisperLanguageField"),
   whisperLanguage: document.querySelector<HTMLSelectElement>("#whisperLanguage"),
   whisperSequenceRange: document.querySelector<HTMLSelectElement>("#whisperSequenceRange"),
+  translationTimingField: document.querySelector<HTMLElement>("#translationTimingField"),
+  preserveTranslationTiming: document.querySelector<HTMLInputElement>("#preserveTranslationTiming"),
+  translationTimingHint: document.querySelector<HTMLElement>("#translationTimingHint"),
   mixedLanguageField: document.querySelector<HTMLElement>("#mixedLanguageField"),
   preserveMixedLanguages: document.querySelector<HTMLInputElement>("#preserveMixedLanguages"),
   mixedLanguagePromptField: document.querySelector<HTMLElement>("#mixedLanguagePromptField"),
@@ -1131,6 +1137,7 @@ function createDefaultOutputModeSettings(mode: OutputMode): OutputModeGeneration
     whisperModel: "base",
     whisperLanguageCode: "auto",
     whisperSequenceRange: "entire_sequence",
+    preserveTranslationTiming: false,
     preserveMixedLanguages: true,
     mixedLanguagePrompt: "",
     removePunctuation: false,
@@ -1163,6 +1170,8 @@ function normalizeOutputModeSettings(
     whisperSequenceRange: isWhisperSequenceRangeValue(raw.whisperSequenceRange)
       ? raw.whisperSequenceRange
       : fallback.whisperSequenceRange,
+    preserveTranslationTiming:
+      typeof raw.preserveTranslationTiming === "boolean" ? raw.preserveTranslationTiming : fallback.preserveTranslationTiming,
     preserveMixedLanguages:
       typeof raw.preserveMixedLanguages === "boolean" ? raw.preserveMixedLanguages : fallback.preserveMixedLanguages,
     mixedLanguagePrompt:
@@ -1191,6 +1200,7 @@ function captureOutputModeSettingsFromControls(mode: OutputMode = activeOutputMo
       whisperModel: elements.whisperModel?.value || pendingWhisperModelValue || fallback.whisperModel,
       whisperLanguageCode: getSelectedWhisperLanguageCode(),
       whisperSequenceRange: (elements.whisperSequenceRange?.value as WhisperSequenceRangeMode) || fallback.whisperSequenceRange,
+      preserveTranslationTiming: Boolean(elements.preserveTranslationTiming?.checked),
       preserveMixedLanguages: Boolean(elements.preserveMixedLanguages?.checked),
       mixedLanguagePrompt: sanitizeWhisperGlossary(elements.mixedLanguagePrompt?.value || ""),
       removePunctuation: Boolean(elements.removePunctuation?.checked),
@@ -1236,6 +1246,9 @@ function applyOutputModeSettingsToControls(mode: OutputMode): void {
 
   if (elements.whisperSequenceRange && hasSelectOption(elements.whisperSequenceRange, settings.whisperSequenceRange)) {
     elements.whisperSequenceRange.value = settings.whisperSequenceRange;
+  }
+  if (elements.preserveTranslationTiming) {
+    elements.preserveTranslationTiming.checked = Boolean(settings.preserveTranslationTiming);
   }
   // // The Whisper dictionary is global and must not change when switching MOGRT/native output settings.
   if (elements.removePunctuation) {
@@ -1286,6 +1299,7 @@ function buildLegacyOutputSettings(snapshot: Partial<PanelStateSnapshot>, fallba
       whisperModel: snapshot.whisperModel,
       whisperLanguageCode: snapshot.whisperLanguageCode,
       whisperSequenceRange: snapshot.whisperSequenceRange,
+      preserveTranslationTiming: snapshot.preserveTranslationTiming,
       preserveMixedLanguages: snapshot.preserveMixedLanguages,
       mixedLanguagePrompt: snapshot.mixedLanguagePrompt,
       removePunctuation: snapshot.removePunctuation,
@@ -1379,6 +1393,7 @@ function persistPanelState(): void {
     correctedTranscriptPath: outputSettingsByMode[activeOutputMode].correctedTranscriptPath,
     whisperModel: outputSettingsByMode[activeOutputMode].whisperModel,
     whisperSequenceRange: outputSettingsByMode[activeOutputMode].whisperSequenceRange,
+    preserveTranslationTiming: outputSettingsByMode[activeOutputMode].preserveTranslationTiming,
     preserveMixedLanguages: outputSettingsByMode[activeOutputMode].preserveMixedLanguages,
     mixedLanguagePrompt: outputSettingsByMode[activeOutputMode].mixedLanguagePrompt,
     whisperGlossaryEnabled: Boolean(elements.preserveMixedLanguages.checked),
@@ -1966,6 +1981,20 @@ function toggleSourceFields(): void {
     elements.whisperLanguageField.style.display = whisperModeActive || whisperxModeActive || correctedAlignModeActive ? "grid" : "none";
   }
 
+  const canLockForcedLanguageTiming = whisperModeActive && getSelectedWhisperLanguageCode().toLowerCase() !== "auto";
+  if (elements.translationTimingField) {
+    elements.translationTimingField.style.display = canLockForcedLanguageTiming ? "flex" : "none";
+  }
+  if (elements.translationTimingHint) {
+    elements.translationTimingHint.style.display = canLockForcedLanguageTiming ? "block" : "none";
+  }
+  if (elements.preserveTranslationTiming) {
+    elements.preserveTranslationTiming.disabled = !canLockForcedLanguageTiming || generateInProgress;
+    if (!canLockForcedLanguageTiming) {
+      elements.preserveTranslationTiming.checked = false;
+    }
+  }
+
   if (elements.whisperSequenceRange) {
     elements.whisperSequenceRange.disabled = !sequenceRangeModeActive;
   }
@@ -2349,6 +2378,10 @@ function setGenerateButtonsBusy(isBusy: boolean): void {
     elements.whisperLanguage.disabled =
       isBusy ||
       (getSourceMode() !== "whisper_sequence" && getSourceMode() !== "whisperx_sequence" && getSourceMode() !== "corrected_align");
+  }
+  if (elements.preserveTranslationTiming) {
+    elements.preserveTranslationTiming.disabled =
+      isBusy || getSourceMode() !== "whisper_sequence" || getSelectedWhisperLanguageCode().toLowerCase() === "auto";
   }
   if (elements.preserveMixedLanguages) {
     elements.preserveMixedLanguages.disabled =
@@ -4846,6 +4879,7 @@ function collectBuildOptions(): CaptionBuildOptions {
     !elements.correctedTranscriptPath ||
     !elements.whisperModel ||
     !elements.whisperSequenceRange ||
+    !elements.preserveTranslationTiming ||
     !elements.preserveMixedLanguages ||
     !elements.mixedLanguagePrompt
     || !elements.removePunctuation
@@ -4901,6 +4935,7 @@ function collectBuildOptions(): CaptionBuildOptions {
     correctedTranscriptPath: String(elements.correctedTranscriptPath.value || "").trim(),
     whisperModel: elements.whisperModel.value,
     whisperSequenceRange: (elements.whisperSequenceRange.value as WhisperSequenceRangeMode) || "entire_sequence",
+    preserveTranslationTiming: Boolean(elements.preserveTranslationTiming.checked),
     preserveMixedLanguages: Boolean(elements.preserveMixedLanguages.checked),
     mixedLanguagePrompt: sanitizeWhisperGlossary(elements.mixedLanguagePrompt.value),
     videoTrackIndex: 0,
@@ -5228,8 +5263,30 @@ async function loadCuesFromSelectedSource(
             }));
           }, 1000);
     let whisperResult;
+    let sourceTimingResult: Awaited<ReturnType<typeof transcribeWithWhisper>> | null = null;
     try {
       const initialPrompt = buildWhisperInitialPrompt(options);
+      const preserveTranslationTiming =
+        options.preserveTranslationTiming &&
+        options.sourceMode === "whisper_sequence" &&
+        options.languageCode.toLowerCase() !== "auto";
+      if (preserveTranslationTiming) {
+        // // Run auto-detect first because its timestamps follow the spoken language instead of the forced-language output.
+        if (onProgress) {
+          await onProgress(22, translate("progress.whisperSourceTiming"), true);
+        }
+        setLog(translate("log.whisperSourceTiming"));
+        sourceTimingResult = await transcribeWithWhisper({
+          audioPath: whisperAudioPath,
+          languageCode: "auto",
+          model: options.whisperModel,
+          initialPrompt
+        });
+        assertNotCancelled();
+        if (onProgress) {
+          await onProgress(50, translate("progress.whisperForcedLanguage"), true);
+        }
+      }
       const transcriptionRequest = {
         audioPath: whisperAudioPath,
         languageCode: options.languageCode,
@@ -5253,7 +5310,10 @@ async function loadCuesFromSelectedSource(
           })
         : transcribeWithWhisper(transcriptionRequest, (progress) => {
             latestRealWhisperProgressAt = Date.now();
-            void updateGenerateProgress(mapWhisperPercentToGenerateProgress(progress), buildWhisperProgressLabel(progress));
+            const mappedProgress = preserveTranslationTiming
+              ? 50 + Math.round((mapWhisperPercentToGenerateProgress(progress) - 22) * 0.5)
+              : mapWhisperPercentToGenerateProgress(progress);
+            void updateGenerateProgress(mappedProgress, buildWhisperProgressLabel(progress));
           }));
     } finally {
       window.clearInterval(fallbackProgressTimer);
@@ -5283,7 +5343,24 @@ async function loadCuesFromSelectedSource(
     const glossaryCues = options.preserveMixedLanguages
       ? applyWhisperGlossaryToCues(fallbackCues, options.mixedLanguagePrompt)
       : fallbackCues;
-    const displayCues = whisperxModeActive ? normalizeWhisperXCuesForDisplay(glossaryCues) : glossaryCues;
+    let displayCues = whisperxModeActive ? normalizeWhisperXCuesForDisplay(glossaryCues) : glossaryCues;
+    if (sourceTimingResult) {
+      let sourceTimingCues: CaptionCue[] = [];
+      if (sourceTimingResult.jsonText) {
+        try {
+          sourceTimingCues = parseWhisperJson(sourceTimingResult.jsonText);
+        } catch {
+          // // Fall back to SRT timing when the auto-detect Whisper JSON is unavailable on this runtime.
+          sourceTimingCues = [];
+        }
+      }
+      sourceTimingCues = sourceTimingCues.length > 0 ? sourceTimingCues : parseSrt(sourceTimingResult.srtText);
+      const timingLockedCues = lockTranslatedCuesToSourceTiming(sourceTimingCues, displayCues);
+      if (timingLockedCues.length > 0) {
+        displayCues = timingLockedCues;
+        setLog(translate("log.whisperTimingLocked"));
+      }
+    }
     if (!displayCues.length) {
       throw new Error(translate("error.emptyWhisper"));
     }
@@ -5613,12 +5690,17 @@ async function initialize(): Promise<void> {
   });
   elements.whisperLanguage?.addEventListener("change", () => {
     pendingWhisperLanguageValue = getSelectedWhisperLanguageCode();
+    toggleSourceFields();
     if (elements.generateButton && !generateInProgress) {
       elements.generateButton.disabled = !isCurrentSourceReady();
     }
     if (textEditorBlocks.length > 0) {
       renderTextEditor();
     }
+    persistPanelState();
+  });
+  elements.preserveTranslationTiming?.addEventListener("change", () => {
+    // // Remember the opt-in because timing locking performs a second local Whisper pass.
     persistPanelState();
   });
   elements.preserveMixedLanguages?.addEventListener("change", () => {

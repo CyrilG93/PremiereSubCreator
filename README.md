@@ -7,6 +7,7 @@ Compatible with Premiere Pro `2025+` on Windows and Apple Silicon macOS. Premier
 ## Main features
 
 - Generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`.
+- Keep the original spoken-language timing when using a forced Whisper language, without an external translation API.
 - Keep names, brands, and technical terms consistent with a global Whisper dictionary shared by all Premiere projects.
 - Create animated `MOGRT` clips or native Premiere subtitle tracks.
 - Align subtitle timing to sequence frames to avoid one-frame gaps.
@@ -94,8 +95,9 @@ The log panel keeps a timestamped history of generation stages. If `Generate` ca
 5. If you use `MOGRT`, choose a template from the gallery.
 6. Adjust the text limits if needed.
 7. For Whisper sources, optionally enable the global dictionary and add names or exact spellings.
-8. Optionally enable `Remove punctuation` to remove commas, periods, and other punctuation while keeping apostrophes in words such as `J'aime` or `I'm`.
-9. Click `Generate subtitles`.
+8. With `Whisper (fast)` and an explicit `Whisper language`, optionally enable `Keep source timing with a forced language`. Sub Creator analyzes the audio first with automatic detection for the original timing, then places the forced-language text on those same time ranges. This takes roughly twice as long, runs entirely locally, and is useful for multi-language subtitle tracks.
+9. Optionally enable `Remove punctuation` to remove commas, periods, and other punctuation while keeping apostrophes in words such as `J'aime` or `I'm`.
+10. Click `Generate subtitles`.
 
 Sub Creator keeps punctuation by default and remembers separate generation settings for `MOGRT` and `Premiere subtitles` output.
 

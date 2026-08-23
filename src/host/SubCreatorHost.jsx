@@ -6230,6 +6230,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var decodedPayload = subcreator_decode_payload(payloadEncoded || "");
     var payload = JSON.parse(decodedPayload || "{}");
     var editedItems = payload && payload.items && typeof payload.items.length === "number" ? payload.items : [];
+    var duplicateSelection = Boolean(payload && payload.duplicateSelection === true);
     var currentSelection = subcreator_collect_resolved_selected_mogrt_items(sequence);
     var currentSignature = subcreator_build_selected_mogrt_text_signature(sequence, currentSelection);
     var expectedSignature = subcreator_trim_string(String(payload.selectionSignature || ""));
@@ -6262,6 +6263,16 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     var track = sequence.videoTracks ? sequence.videoTracks[targetTrackIndex] : null;
     if (!track) {
       return subcreator_error("Unable to access target video track.");
+    }
+
+    if (duplicateSelection) {
+      // // Keep originals untouched and recreate translated clips on an empty/new track above the selected subtitles.
+      var duplicateTrackInfo = subcreator_get_or_create_video_track_above_index(sequence, targetTrackIndex);
+      if (!duplicateTrackInfo || duplicateTrackInfo.index < 0 || !sequence.videoTracks[duplicateTrackInfo.index]) {
+        return subcreator_error("Unable to create a safe video track for translated subtitles.");
+      }
+      targetTrackIndex = duplicateTrackInfo.index;
+      track = sequence.videoTracks[targetTrackIndex];
     }
 
     var replaceSelectionStartIndex = Number(payload.replaceSelectionStartIndex);
@@ -6317,7 +6328,7 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     );
     debugLines.push("text_apply source_track=" + String(targetTrackIndex));
 
-    if (fallbackPathCandidates.length < 1) {
+    if (fallbackPathCandidates.length < 1 && !duplicateSelection) {
       return subcreator_error(
         "Sub Creator could not resolve the source MOGRT file for a safe text rebuild. Select the matching template in the gallery, then retry."
       );
@@ -6390,10 +6401,12 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
     }
     debugLines.push("text_apply rebuild_track=" + String(targetTrackIndex));
 
-    for (var removeIndex = selectionItemsToReplace.length - 1; removeIndex >= 0; removeIndex -= 1) {
-      if (!subcreator_remove_track_item_without_ripple(selectionItemsToReplace[removeIndex])) {
-        failedCount += 1;
-        debugLines.push("text_apply remove_failed index=" + String(removeIndex));
+    if (!duplicateSelection) {
+      for (var removeIndex = selectionItemsToReplace.length - 1; removeIndex >= 0; removeIndex -= 1) {
+        if (!subcreator_remove_track_item_without_ripple(selectionItemsToReplace[removeIndex])) {
+          failedCount += 1;
+          debugLines.push("text_apply remove_failed index=" + String(removeIndex));
+        }
       }
     }
 
@@ -6454,7 +6467,24 @@ function subcreator_apply_selected_mogrt_text_items(payloadEncoded) {
       var insertedTrackItem = null;
       var itemPathCandidates = itemMogrtPathOverride ? subcreator_build_mogrt_path_candidates(itemMogrtPathOverride) : fallbackPathCandidates;
 
-      if (itemPathCandidates.length > 0) {
+      if (duplicateSelection) {
+        // // Prefer the selected clip's project item so translation duplicates the exact template instead of the current gallery selection.
+        var sourceTrackItem = currentSelection[sourceSelectionIndex] || null;
+        var sourceProjectItem = sourceTrackItem && sourceTrackItem.projectItem ? sourceTrackItem.projectItem : null;
+        insertedTrackItem = subcreator_try_place_project_item_on_track(
+          sequence,
+          track,
+          sourceProjectItem,
+          startSeconds,
+          targetTrackIndex,
+          0
+        );
+        if (insertedTrackItem) {
+          debugLines.push("text_apply duplicate_project_item index=" + String(editedIndex));
+        }
+      }
+
+      if (!insertedTrackItem && itemPathCandidates.length > 0) {
         var importAttempt = subcreator_try_import_mogrt(sequence, itemPathCandidates, startSeconds, targetTrackIndex, 0);
         insertedTrackItem = importAttempt.trackItem;
         if (insertedTrackItem) {

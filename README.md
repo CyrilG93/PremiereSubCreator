@@ -8,6 +8,7 @@ Compatible with Premiere Pro `2025+` on Windows and Apple Silicon macOS. Premier
 
 - Generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`.
 - Keep the original spoken-language timing when using a forced Whisper language, without an external translation API.
+- Translate selected Sub Creator MOGRT subtitles with a personal DeepL API Free key, then duplicate them on a new synchronized track.
 - Keep names, brands, and technical terms consistent with a global Whisper dictionary shared by all Premiere projects.
 - Create animated `MOGRT` clips or native Premiere subtitle tracks.
 - Align subtitle timing to sequence frames to avoid one-frame gaps.
@@ -112,6 +113,12 @@ Sub Creator keeps punctuation by default and remembers separate generation setti
 
 - `MOGRT`: creates animated graphic clips using a template.
 - `Premiere subtitles`: creates a native Premiere subtitle track.
+
+### Translation
+
+The `Translation` tab translates selected Sub Creator MOGRT subtitle clips without changing the original clips or their timing. Select the clips on one video track, choose source and target languages, enter your personal DeepL API Free key, then review the preview before creating the translated track above the source.
+
+The key is used only for the current translation and is not saved by Sub Creator. The translated text is sent to DeepL; the subtitle timings and visual style stay local. This first version supports MOGRT subtitles selected on one video track. Native Premiere subtitle tracks are not yet supported by this workflow.
 
 When native subtitles create an SRT source file, Sub Creator saves it in an `SRT` folder next to the current `.prproj` file.
 

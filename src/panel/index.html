@@ -52,6 +52,9 @@
         <button id="tabText" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="text" data-i18n="tab.text">
           Text editor
         </button>
+        <button id="tabTranslate" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="translate" data-i18n="tab.translate">
+          Translation
+        </button>
       </section>
 
       <section id="modeGenerate" class="mode-panel is-active" data-mode="generate">
@@ -248,6 +251,42 @@
           <p id="outputModeHint" class="hint field--full" data-i18n="help.mogrtTracks">
             Les MOGRT sont automatiquement inseres sur une nouvelle piste video creee en haut de la sequence.
           </p>
+        </section>
+      </section>
+
+      <section id="modeTranslate" class="mode-panel" data-mode="translate" hidden>
+        <section class="panel__grid">
+          <section class="field field--full">
+            <p class="hint" data-i18n="help.translationSelection">Select Sub Creator MOGRTs on one track, then load them here. Originals are never modified.</p>
+            <button id="translationReadButton" type="button" class="button button--secondary" data-i18n="action.translationRead">Read selected subtitles</button>
+            <p id="translationSelectionSummary" class="hint" data-i18n="translation.selectionDefault">No subtitles loaded.</p>
+          </section>
+          <label class="field">
+            <span data-i18n="field.translationSourceLanguage">Source language</span>
+            <select id="translationSourceLanguage">
+              <option value="AUTO" data-i18n="translation.languageAuto">Auto detect</option>
+              <option value="EN">English</option><option value="FR">French</option><option value="DE">German</option><option value="ES">Spanish</option><option value="IT">Italian</option><option value="PT">Portuguese</option><option value="JA">Japanese</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="field.translationTargetLanguage">Target language</span>
+            <select id="translationTargetLanguage">
+              <option value="FR">French</option><option value="EN-US">English (US)</option><option value="DE">German</option><option value="ES">Spanish</option><option value="IT">Italian</option><option value="PT-BR">Portuguese (Brazil)</option><option value="JA">Japanese</option>
+            </select>
+          </label>
+          <label class="field field--full">
+            <span data-i18n="field.deeplApiKey">DeepL API Free key</span>
+            <input id="deeplApiKey" type="password" autocomplete="off" data-i18n-placeholder="placeholder.deeplApiKey" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx" />
+          </label>
+          <p class="hint field--full" data-i18n="help.deeplApiKey">The key is used only for this translation and is not stored by Sub Creator.</p>
+          <section class="field field--full field--actions">
+            <button id="translationTranslateButton" type="button" class="button" data-i18n="action.translateSelected">Translate selection</button>
+            <button id="translationDuplicateButton" type="button" class="button button--secondary" data-i18n="action.createTranslatedTrack" disabled>Create translated track</button>
+          </section>
+          <label class="field field--full">
+            <span data-i18n="field.translationPreview">Translated preview</span>
+            <textarea id="translationPreview" rows="10" readonly data-i18n-placeholder="placeholder.translationPreview" placeholder="Translation will appear here."></textarea>
+          </label>
         </section>
       </section>
 

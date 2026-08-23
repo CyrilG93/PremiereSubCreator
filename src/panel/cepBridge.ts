@@ -251,6 +251,20 @@ export interface TextEditorApplyPayload {
   replaceSelectionEndIndex: number;
   items: TextEditorApplyItemPayload[];
   options: CaptionBuildOptions;
+  duplicateSelection?: boolean;
+}
+
+export interface DeepLTranslationRequest {
+  authKey: string;
+  texts: string[];
+  sourceLanguage?: string;
+  targetLanguage: string;
+  context?: string;
+}
+
+interface DeepLTranslationResponse {
+  translations?: Array<{ text?: unknown; detected_source_language?: unknown }>;
+  message?: unknown;
 }
 
 export interface ApplySelectedMogrtTextResult {
@@ -4313,6 +4327,86 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
     sequenceName: typeof response.data?.sequenceName === "string" ? response.data.sequenceName : undefined,
     debug: Array.isArray(response.data?.debug) ? response.data.debug.map((line) => String(line)) : undefined
   };
+}
+
+export async function translateWithDeepL(request: DeepLTranslationRequest): Promise<string[]> {
+  // // Send one local-user DeepL Free request without persisting the personal authentication key.
+  const nodeRequire =
+    (window.cep_node && typeof window.cep_node.require === "function" ? window.cep_node.require : null) ||
+    (typeof window.require === "function" ? window.require : null);
+  if (!nodeRequire) {
+    throw new Error("CEP Node runtime unavailable. Unable to contact DeepL.");
+  }
+
+  const authKey = String(request.authKey || "").trim();
+  const texts = Array.isArray(request.texts) ? request.texts.map((text) => String(text || "").trim()) : [];
+  if (!authKey || texts.length < 1) {
+    throw new Error("A DeepL API key and at least one subtitle are required.");
+  }
+
+  const https = nodeRequire("https") as {
+    request: (
+      options: { hostname: string; path: string; method: string; headers: Record<string, string | number> },
+      callback: (response: { statusCode?: number; on: (event: string, listener: (chunk?: unknown) => void) => void }) => void
+    ) => { on: (event: string, listener: (error: Error) => void) => void; write: (data: string) => void; end: () => void };
+  };
+  const BufferConstructor = (nodeRequire("buffer") as { Buffer: { byteLength: (value: string, encoding: string) => number } }).Buffer;
+  const payload: Record<string, unknown> = {
+    text: texts,
+    target_lang: String(request.targetLanguage || "").trim().toUpperCase(),
+    context: String(request.context || "").trim(),
+    show_billed_characters: true
+  };
+  const sourceLanguage = String(request.sourceLanguage || "").trim().toUpperCase();
+  if (sourceLanguage && sourceLanguage !== "AUTO") {
+    payload.source_lang = sourceLanguage;
+  }
+  const body = JSON.stringify(payload);
+  const hostname = authKey.endsWith(":fx") ? "api-free.deepl.com" : "api.deepl.com";
+
+  return new Promise<string[]>((resolve, reject) => {
+    const requestHandle = https.request(
+      {
+        hostname,
+        path: "/v2/translate",
+        method: "POST",
+        headers: {
+          Authorization: `DeepL-Auth-Key ${authKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": String(BufferConstructor.byteLength(body, "utf8")),
+          "User-Agent": "Sub-Creator"
+        }
+      },
+      (response) => {
+        let responseText = "";
+        response.on("data", (chunk) => {
+          responseText += String(chunk || "");
+        });
+        response.on("end", () => {
+          let parsed: DeepLTranslationResponse = {};
+          try {
+            parsed = JSON.parse(responseText) as DeepLTranslationResponse;
+          } catch {
+            reject(new Error("DeepL returned an unreadable response."));
+            return;
+          }
+          if (Number(response.statusCode || 0) < 200 || Number(response.statusCode || 0) >= 300) {
+            reject(new Error(`DeepL error: ${String(parsed.message || responseText || response.statusCode)}`));
+            return;
+          }
+          const translations = Array.isArray(parsed.translations) ? parsed.translations.map((item) => String(item?.text || "").trim()) : [];
+          if (translations.length !== texts.length) {
+            reject(new Error("DeepL did not return every translated subtitle."));
+            return;
+          }
+          resolve(translations);
+        });
+      }
+    );
+    requestHandle.on("error", reject);
+    requestHandle.write(body);
+    requestHandle.end();
+  });
 }
 
 async function transcribeWithWhisperXViaCepNodeAsync(

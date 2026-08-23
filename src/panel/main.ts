@@ -57,6 +57,7 @@ import {
   setVisualSelectionWatcherEnabled,
   transcribeWithWhisper,
   transcribeWithWhisperX,
+  translateWithDeepL,
   writeWhisperGlossaryStore,
   applySelectedMogrtTextItems,
   isCancelledJobError
@@ -97,7 +98,7 @@ interface UpdateState {
   downloadUrl: string;
 }
 
-type PanelMode = "generate" | "visual" | "text";
+type PanelMode = "generate" | "visual" | "text" | "translate";
 
 interface OutputModeGenerationSettings {
   sourceMode: SourceMode;
@@ -205,9 +206,19 @@ const elements = {
   tabGenerate: document.querySelector<HTMLButtonElement>("#tabGenerate"),
   tabVisual: document.querySelector<HTMLButtonElement>("#tabVisual"),
   tabText: document.querySelector<HTMLButtonElement>("#tabText"),
+  tabTranslate: document.querySelector<HTMLButtonElement>("#tabTranslate"),
   modeGenerate: document.querySelector<HTMLElement>("#modeGenerate"),
   modeVisual: document.querySelector<HTMLElement>("#modeVisual"),
   modeText: document.querySelector<HTMLElement>("#modeText"),
+  modeTranslate: document.querySelector<HTMLElement>("#modeTranslate"),
+  translationReadButton: document.querySelector<HTMLButtonElement>("#translationReadButton"),
+  translationTranslateButton: document.querySelector<HTMLButtonElement>("#translationTranslateButton"),
+  translationDuplicateButton: document.querySelector<HTMLButtonElement>("#translationDuplicateButton"),
+  translationSelectionSummary: document.querySelector<HTMLElement>("#translationSelectionSummary"),
+  translationSourceLanguage: document.querySelector<HTMLSelectElement>("#translationSourceLanguage"),
+  translationTargetLanguage: document.querySelector<HTMLSelectElement>("#translationTargetLanguage"),
+  deeplApiKey: document.querySelector<HTMLInputElement>("#deeplApiKey"),
+  translationPreview: document.querySelector<HTMLTextAreaElement>("#translationPreview"),
   sourceMode: document.querySelector<HTMLSelectElement>("#sourceMode"),
   outputMode: document.querySelector<HTMLSelectElement>("#outputMode"),
   srtInputField: document.querySelector<HTMLElement>("#srtInputField"),
@@ -357,6 +368,10 @@ let textEditorBlockIdCounter = 0;
 let textEditorSelectionStartSeconds = 0;
 let textEditorSelectionEndSeconds = 0;
 let textEditorSelectionMetadataIdentity: CaptionMetadataIdentity | null = null;
+let translationBlocks: TextEditorBlock[] = [];
+let translationSelectionSignature = "";
+let translationSameTrack = false;
+let translatedSubtitleTexts: string[] = [];
 const textEditorPendingCommitTimers = new Map<string, number>();
 
 const GENERATE_PROGRESS_MAX = 100;
@@ -1449,7 +1464,7 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
     setVerboseLogsEnabled(snapshot.verboseLogs, true);
   }
 
-  if (snapshot.activeMode === "visual" || snapshot.activeMode === "text") {
+  if (snapshot.activeMode === "visual" || snapshot.activeMode === "text" || snapshot.activeMode === "translate") {
     activeMode = snapshot.activeMode;
   } else {
     activeMode = "generate";
@@ -2105,6 +2120,11 @@ function setActiveMode(mode: PanelMode): void {
     elements.tabText.classList.toggle("is-active", isActive);
     elements.tabText.setAttribute("aria-selected", isActive ? "true" : "false");
   }
+  if (elements.tabTranslate) {
+    const isActive = mode === "translate";
+    elements.tabTranslate.classList.toggle("is-active", isActive);
+    elements.tabTranslate.setAttribute("aria-selected", isActive ? "true" : "false");
+  }
 
   if (elements.modeGenerate) {
     elements.modeGenerate.hidden = mode !== "generate";
@@ -2116,6 +2136,9 @@ function setActiveMode(mode: PanelMode): void {
 
   if (elements.modeText) {
     elements.modeText.hidden = mode !== "text";
+  }
+  if (elements.modeTranslate) {
+    elements.modeTranslate.hidden = mode !== "translate";
   }
 }
 
@@ -3039,6 +3062,118 @@ async function loadTextItemsFromSelection(emitHostLog = false, showLoadingState 
       setTextApplyProgressState(false);
     }
   }
+}
+
+function setTranslationSelectionSummary(message: string): void {
+  // // Keep the dedicated translation tab clear about which Premiere clips will be duplicated.
+  if (elements.translationSelectionSummary) {
+    elements.translationSelectionSummary.textContent = message;
+  }
+}
+
+function renderTranslationPreview(): void {
+  // // Render an immutable, timestamped preview so the user can inspect translated text before timeline changes.
+  if (!elements.translationPreview) {
+    return;
+  }
+  elements.translationPreview.value = translatedSubtitleTexts
+    .map((text, index) => `${index + 1}. ${translationBlocks[index]?.startSeconds.toFixed(2) ?? "0.00"} - ${text}`)
+    .join("\n");
+}
+
+async function loadTranslationSelection(): Promise<void> {
+  // // Read selected Sub Creator MOGRTs without altering the Text editor's active selection state.
+  const result = await readSelectedMogrtTextItems();
+  const selectedItems = result.items.filter((item) => !isTextEditorPathLikeValue(String(item.text || "").trim()));
+  const identity = resolveCaptionMetadataIdentityFromHostPayload(result);
+  const metadataWordsByItem = resolveCaptionMetadataForSelection(identity, selectedItems);
+  translationBlocks = selectedItems.map((item, index) => {
+    const timedWords = Array.isArray(metadataWordsByItem[index]) ? metadataWordsByItem[index] : undefined;
+    const text = buildTextEditorTextFromTimedWords(timedWords) || String(item.text || "").trim();
+    return {
+      sourceSelectionIndex: Number(item.selectionIndex || 0),
+      clipName: String(item.clipName || "").trim(),
+      startSeconds: Number(item.startSeconds || 0),
+      endSeconds: Number(item.endSeconds || 0),
+      text,
+      words: tokenizeSubtitleText(text),
+      timedWords
+    };
+  }).filter((block) => Boolean(block.text));
+  translationSelectionSignature = String(result.signature || "").trim();
+  translationSameTrack = result.sameTrack !== false;
+  translatedSubtitleTexts = [];
+  renderTranslationPreview();
+  if (elements.translationDuplicateButton) {
+    elements.translationDuplicateButton.disabled = true;
+  }
+  if (translationBlocks.length < 1) {
+    setTranslationSelectionSummary(translate("translation.selectionDefault"));
+    return;
+  }
+  if (!translationSameTrack) {
+    setTranslationSelectionSummary(translate("translation.selectionMixedTracks"));
+    return;
+  }
+  setTranslationSelectionSummary(translateTemplate("translation.selectionReady", { count: String(translationBlocks.length) }));
+}
+
+async function translateLoadedSelection(): Promise<void> {
+  // // Translate selected text through the user's temporary DeepL Free key while retaining the source cue boundaries locally.
+  if (!translationSelectionSignature || translationBlocks.length < 1) {
+    throw new Error(translate("error.translationSelectionMissing"));
+  }
+  if (!translationSameTrack) {
+    throw new Error(translate("error.translationMixedTracks"));
+  }
+  const authKey = String(elements.deeplApiKey?.value || "").trim();
+  if (!authKey) {
+    throw new Error(translate("error.deeplApiKeyMissing"));
+  }
+  const sourceLanguage = String(elements.translationSourceLanguage?.value || "AUTO").trim();
+  const targetLanguage = String(elements.translationTargetLanguage?.value || "FR").trim();
+  const context = translationBlocks.map((block) => block.text).join(" ");
+  setTranslationSelectionSummary(translate("translation.translating"));
+  translatedSubtitleTexts = await translateWithDeepL({
+    authKey,
+    texts: translationBlocks.map((block) => block.text),
+    sourceLanguage,
+    targetLanguage,
+    context
+  });
+  renderTranslationPreview();
+  if (elements.translationDuplicateButton) {
+    elements.translationDuplicateButton.disabled = false;
+  }
+  setTranslationSelectionSummary(translateTemplate("translation.translatedReady", { count: String(translatedSubtitleTexts.length) }));
+}
+
+async function duplicateTranslatedSelection(): Promise<void> {
+  // // Rebuild translated captions on a safe track above the source while preserving each original timing range.
+  if (!translationSelectionSignature || translatedSubtitleTexts.length !== translationBlocks.length) {
+    throw new Error(translate("error.translationRequired"));
+  }
+  const options = collectTextEditorBuildOptions();
+  const payload: TextEditorApplyPayload = {
+    selectionSignature: translationSelectionSignature,
+    replaceSelectionStartIndex: 0,
+    replaceSelectionEndIndex: translationBlocks.length - 1,
+    duplicateSelection: true,
+    items: translationBlocks.map((block, index) => ({
+      sourceSelectionIndex: block.sourceSelectionIndex,
+      startSeconds: block.startSeconds,
+      endSeconds: block.endSeconds,
+      text: translatedSubtitleTexts[index] || ""
+    })),
+    options
+  };
+  setTranslationSelectionSummary(translate("translation.duplicating"));
+  const result = await applySelectedMogrtTextItems(payload);
+  if (Number(result.failedCount || 0) !== 0 || Number(result.rebuiltCount || 0) !== translationBlocks.length) {
+    throw new Error(translate("error.translationDuplicateFailed"));
+  }
+  setStructuredLog(translate("log.hostResult"), result);
+  setTranslationSelectionSummary(translateTemplate("translation.duplicateDone", { count: String(result.rebuiltCount || 0) }));
 }
 
 async function applyTextEditorChanges(): Promise<void> {
@@ -5592,6 +5727,10 @@ async function initialize(): Promise<void> {
     setActiveMode("text");
     persistPanelState();
   });
+  elements.tabTranslate?.addEventListener("click", () => {
+    setActiveMode("translate");
+    persistPanelState();
+  });
 
   elements.sourceMode?.addEventListener("change", () => {
     toggleSourceFields();
@@ -5817,6 +5956,27 @@ async function initialize(): Promise<void> {
         return;
       }
       await applyTextEditorChanges();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+  elements.translationReadButton?.addEventListener("click", async () => {
+    try {
+      await loadTranslationSelection();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+  elements.translationTranslateButton?.addEventListener("click", async () => {
+    try {
+      await translateLoadedSelection();
+    } catch (error) {
+      setLog(String(error), true);
+    }
+  });
+  elements.translationDuplicateButton?.addEventListener("click", async () => {
+    try {
+      await duplicateTranslatedSelection();
     } catch (error) {
       setLog(String(error), true);
     }

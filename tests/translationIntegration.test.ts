@@ -32,4 +32,11 @@ describe("translation integration", () => {
     expect(panelSource).toContain("deeplApiKey: String(elements.deeplApiKey?.value || \"\")");
     expect(panelSource).toContain('elements.deeplApiKey?.addEventListener("input"');
   });
+
+  it("loads plan-specific DeepL source and target language lists with the user's key", () => {
+    expect(bridgeSource).toContain('path: `/v2/languages?type=${type}`');
+    expect(bridgeSource).toContain('Promise.all([readType("source"), readType("target")])');
+    expect(panelSource).toContain("refreshDeepLSupportedLanguages()");
+    expect(panelSource).toContain("replaceTranslationLanguageOptions(elements.translationSourceLanguage");
+  });
 });

@@ -39,6 +39,7 @@ import {
   deleteTemporaryWhisperAudio,
   exportActiveSequenceAudioForWhisper,
   getActiveSequenceRange,
+  getDeepLSupportedLanguages,
   getSelectedMogrtCount,
   getWhisperRuntimeStatus,
   openExternalUrl,
@@ -218,6 +219,7 @@ const elements = {
   translationSelectionSummary: document.querySelector<HTMLElement>("#translationSelectionSummary"),
   translationSourceLanguage: document.querySelector<HTMLSelectElement>("#translationSourceLanguage"),
   translationTargetLanguage: document.querySelector<HTMLSelectElement>("#translationTargetLanguage"),
+  translationLanguagesRefreshButton: document.querySelector<HTMLButtonElement>("#translationLanguagesRefreshButton"),
   translationInputMode: document.querySelector<HTMLSelectElement>("#translationInputMode"),
   translationSrtField: document.querySelector<HTMLElement>("#translationSrtField"),
   translationSrtPath: document.querySelector<HTMLInputElement>("#translationSrtPath"),
@@ -377,6 +379,7 @@ let translationBlocks: TextEditorBlock[] = [];
 let translationSelectionSignature = "";
 let translationSameTrack = false;
 let translatedSubtitleTexts: string[] = [];
+let translationLanguagesLoadInProgress = false;
 const textEditorPendingCommitTimers = new Map<string, number>();
 
 const GENERATE_PROGRESS_MAX = 100;
@@ -3126,6 +3129,62 @@ function toggleTranslationInputMode(): void {
   }
 }
 
+function replaceTranslationLanguageOptions(
+  select: HTMLSelectElement | null,
+  languages: Array<{ language: string; name: string }>,
+  includeAutoDetect: boolean,
+  fallbackValue: string
+): void {
+  // // Rebuild the select from DeepL's plan-specific response while retaining a valid previous choice when possible.
+  if (!select) {
+    return;
+  }
+  const selectedValue = String(select.value || "").trim().toUpperCase();
+  select.replaceChildren();
+  if (includeAutoDetect) {
+    const autoOption = document.createElement("option");
+    autoOption.value = "AUTO";
+    autoOption.textContent = translate("translation.languageAuto");
+    select.appendChild(autoOption);
+  }
+  languages.forEach((language) => {
+    const option = document.createElement("option");
+    option.value = language.language;
+    option.textContent = language.name;
+    select.appendChild(option);
+  });
+  const availableValues = Array.from(select.options).map((option) => option.value.toUpperCase());
+  const nextValue = availableValues.includes(selectedValue)
+    ? selectedValue
+    : availableValues.includes(fallbackValue.toUpperCase())
+      ? fallbackValue
+      : select.options[0]?.value || "";
+  select.value = nextValue;
+}
+
+async function refreshDeepLSupportedLanguages(): Promise<void> {
+  // // Fetch the exact DeepL source/target language lists for the stored personal API key.
+  const authKey = String(elements.deeplApiKey?.value || "").trim();
+  if (!authKey || translationLanguagesLoadInProgress) {
+    return;
+  }
+  translationLanguagesLoadInProgress = true;
+  if (elements.translationLanguagesRefreshButton) {
+    elements.translationLanguagesRefreshButton.disabled = true;
+  }
+  try {
+    const languages = await getDeepLSupportedLanguages(authKey);
+    replaceTranslationLanguageOptions(elements.translationSourceLanguage, languages.source, true, "AUTO");
+    replaceTranslationLanguageOptions(elements.translationTargetLanguage, languages.target, false, "FR");
+    setLog(translate("log.deeplLanguagesLoaded"));
+  } finally {
+    translationLanguagesLoadInProgress = false;
+    if (elements.translationLanguagesRefreshButton) {
+      elements.translationLanguagesRefreshButton.disabled = false;
+    }
+  }
+}
+
 async function loadTranslationSelection(): Promise<void> {
   // // Read selected Sub Creator MOGRTs without altering the Text editor's active selection state.
   if (getTranslationInputMode() === "srt") {
@@ -3193,7 +3252,7 @@ async function loadTranslationSelection(): Promise<void> {
 }
 
 async function translateLoadedSelection(): Promise<void> {
-  // // Translate selected text through the user's temporary DeepL Free key while retaining the source cue boundaries locally.
+  // // Translate selected text through the user's DeepL key while retaining the source cue boundaries locally.
   if (!translationSelectionSignature || translationBlocks.length < 1) {
     throw new Error(translate("error.translationSelectionMissing"));
   }
@@ -5951,6 +6010,12 @@ async function initialize(): Promise<void> {
     // // Persist the private key locally as it is typed so closing Premiere cannot lose it.
     persistPanelState();
   });
+  elements.deeplApiKey?.addEventListener("change", () => {
+    // // Refresh options after the key is complete, without sending it through Premiere's host bridge.
+    void refreshDeepLSupportedLanguages().catch((error) => {
+      setLog(String(error), true);
+    });
+  });
   window.addEventListener("beforeunload", () => {
     // // Flush the last keystrokes synchronously inside the bridge before CEP closes the panel.
     void writeWhisperGlossaryStore(
@@ -6066,6 +6131,11 @@ async function initialize(): Promise<void> {
       setLog(String(error), true);
     }
   });
+  elements.translationLanguagesRefreshButton?.addEventListener("click", () => {
+    void refreshDeepLSupportedLanguages().catch((error) => {
+      setLog(String(error), true);
+    });
+  });
   elements.translationInputMode?.addEventListener("change", () => {
     toggleTranslationInputMode();
     translationBlocks = [];
@@ -6138,6 +6208,10 @@ async function initialize(): Promise<void> {
 
   void checkForUpdates().catch(() => {
     // // Ignore release-check failures at startup so network latency never blocks panel readiness.
+  });
+  void refreshDeepLSupportedLanguages().catch((error) => {
+    // // Keep the built-in fallback list usable if the stored key is invalid or DeepL is offline.
+    setLog(String(error), true);
   });
 }
 

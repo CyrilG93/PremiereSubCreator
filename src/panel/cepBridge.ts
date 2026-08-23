@@ -262,9 +262,20 @@ export interface DeepLTranslationRequest {
   context?: string;
 }
 
+export interface DeepLSupportedLanguage {
+  language: string;
+  name: string;
+}
+
 interface DeepLTranslationResponse {
   translations?: Array<{ text?: unknown; detected_source_language?: unknown }>;
   message?: unknown;
+}
+
+interface DeepLSupportedLanguagesResponseItem {
+  language?: unknown;
+  name?: unknown;
+  supports_formality?: unknown;
 }
 
 export interface ApplySelectedMogrtTextResult {
@@ -4332,7 +4343,7 @@ export async function applySelectedMogrtTextItems(payload: TextEditorApplyPayloa
 }
 
 export async function translateWithDeepL(request: DeepLTranslationRequest): Promise<string[]> {
-  // // Send one local-user DeepL Free request without persisting the personal authentication key.
+  // // Send one local-user DeepL request while keeping the personal authentication key outside host calls and logs.
   const nodeRequire =
     (window.cep_node && typeof window.cep_node.require === "function" ? window.cep_node.require : null) ||
     (typeof window.require === "function" ? window.require : null);
@@ -4409,6 +4420,80 @@ export async function translateWithDeepL(request: DeepLTranslationRequest): Prom
     requestHandle.write(body);
     requestHandle.end();
   });
+}
+
+export async function getDeepLSupportedLanguages(authKey: string): Promise<{
+  source: DeepLSupportedLanguage[];
+  target: DeepLSupportedLanguage[];
+}> {
+  // // Ask DeepL which source and target languages the user's own API plan currently supports.
+  const nodeRequire =
+    (window.cep_node && typeof window.cep_node.require === "function" ? window.cep_node.require : null) ||
+    (typeof window.require === "function" ? window.require : null);
+  if (!nodeRequire) {
+    throw new Error("CEP Node runtime unavailable. Unable to read DeepL languages.");
+  }
+
+  const normalizedAuthKey = String(authKey || "").trim();
+  if (!normalizedAuthKey) {
+    throw new Error("A DeepL API key is required to read supported languages.");
+  }
+
+  const https = nodeRequire("https") as {
+    request: (
+      options: { hostname: string; path: string; method: string; headers: Record<string, string> },
+      callback: (response: { statusCode?: number; on: (event: string, listener: (chunk?: unknown) => void) => void }) => void
+    ) => { on: (event: string, listener: (error: Error) => void) => void; end: () => void };
+  };
+  const hostname = normalizedAuthKey.endsWith(":fx") ? "api-free.deepl.com" : "api.deepl.com";
+  const readType = (type: "source" | "target"): Promise<DeepLSupportedLanguage[]> =>
+    new Promise((resolve, reject) => {
+      const requestHandle = https.request(
+        {
+          hostname,
+          path: `/v2/languages?type=${type}`,
+          method: "GET",
+          headers: {
+            Authorization: `DeepL-Auth-Key ${normalizedAuthKey}`,
+            "User-Agent": "Sub-Creator"
+          }
+        },
+        (response) => {
+          let responseText = "";
+          response.on("data", (chunk) => {
+            responseText += String(chunk || "");
+          });
+          response.on("end", () => {
+            let parsed: DeepLSupportedLanguagesResponseItem[] = [];
+            try {
+              parsed = JSON.parse(responseText) as DeepLSupportedLanguagesResponseItem[];
+            } catch {
+              reject(new Error("DeepL returned an unreadable language list."));
+              return;
+            }
+            if (Number(response.statusCode || 0) < 200 || Number(response.statusCode || 0) >= 300) {
+              reject(new Error(`DeepL error: ${String(responseText || response.statusCode)}`));
+              return;
+            }
+            const languages = Array.isArray(parsed)
+              ? parsed
+                  .map((item) => ({ language: String(item?.language || "").trim(), name: String(item?.name || "").trim() }))
+                  .filter((item) => Boolean(item.language && item.name))
+              : [];
+            if (languages.length < 1) {
+              reject(new Error(`DeepL returned no ${type} languages.`));
+              return;
+            }
+            resolve(languages);
+          });
+        }
+      );
+      requestHandle.on("error", reject);
+      requestHandle.end();
+    });
+
+  const [source, target] = await Promise.all([readType("source"), readType("target")]);
+  return { source, target };
 }
 
 async function transcribeWithWhisperXViaCepNodeAsync(

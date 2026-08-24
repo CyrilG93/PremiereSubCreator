@@ -180,6 +180,7 @@ interface PanelStateSnapshot {
   logExpanded: boolean;
   verboseLogs: boolean;
   deeplApiKey?: string;
+  translationAutoLoadGeneratedNativeSrt?: boolean;
 }
 
 interface TextEditorBlockState extends TextEditorBlock {
@@ -193,6 +194,7 @@ interface ApplyCaptionPlanHostResult {
   insertedMogrt?: number;
   insertedNativeSubtitles?: number;
   nativeSubtitleTrackCreated?: boolean;
+  nativeSubtitleSrtPath?: string;
   videoTrackUsed?: number;
   projectDocumentId?: string;
   projectPath?: string;
@@ -224,6 +226,7 @@ const elements = {
   translationSrtField: document.querySelector<HTMLElement>("#translationSrtField"),
   translationSrtPath: document.querySelector<HTMLInputElement>("#translationSrtPath"),
   translationSrtBrowseButton: document.querySelector<HTMLButtonElement>("#translationSrtBrowseButton"),
+  translationAutoLoadGeneratedNativeSrt: document.querySelector<HTMLInputElement>("#translationAutoLoadGeneratedNativeSrt"),
   deeplApiKey: document.querySelector<HTMLInputElement>("#deeplApiKey"),
   deeplApiKeyLink: document.querySelector<HTMLAnchorElement>("#deeplApiKeyLink"),
   translationPreview: document.querySelector<HTMLElement>("#translationPreview"),
@@ -1435,7 +1438,9 @@ function persistPanelState(): void {
     logExpanded: logPanelExpanded,
     verboseLogs: verboseLogsEnabled,
     // // Keep the user's DeepL key in the local CEP profile so it survives a Premiere restart.
-    deeplApiKey: String(elements.deeplApiKey?.value || "")
+    deeplApiKey: String(elements.deeplApiKey?.value || ""),
+    // // Keep automatic native-SRT preparation opt-in and enabled by default for new profiles.
+    translationAutoLoadGeneratedNativeSrt: elements.translationAutoLoadGeneratedNativeSrt?.checked !== false
   };
 
   try {
@@ -1479,6 +1484,11 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
   if (elements.deeplApiKey && typeof snapshot.deeplApiKey === "string") {
     // // Restore the locally stored key without ever writing it to logs or host payloads.
     elements.deeplApiKey.value = snapshot.deeplApiKey;
+  }
+
+  if (elements.translationAutoLoadGeneratedNativeSrt) {
+    // // Preserve the default enabled state when an older stored profile has no preference yet.
+    elements.translationAutoLoadGeneratedNativeSrt.checked = snapshot.translationAutoLoadGeneratedNativeSrt !== false;
   }
 
   if (snapshot.activeMode === "visual" || snapshot.activeMode === "text" || snapshot.activeMode === "translate") {
@@ -3277,6 +3287,25 @@ async function loadTranslationSelection(): Promise<void> {
     return;
   }
   setTranslationSelectionSummary(translateTemplate("translation.selectionReady", { count: String(translationBlocks.length) }));
+}
+
+async function prepareGeneratedNativeSrtForTranslation(srtPath: string): Promise<void> {
+  // // Reuse the exact SRT written before Premiere imports the native track, avoiding unreliable caption-text reads from CEP.
+  if (!elements.translationAutoLoadGeneratedNativeSrt?.checked || !elements.translationInputMode || !elements.translationSrtPath) {
+    return;
+  }
+
+  const normalizedPath = String(srtPath || "").trim();
+  if (!normalizedPath) {
+    return;
+  }
+
+  elements.translationInputMode.value = "srt";
+  elements.translationSrtPath.value = normalizedPath;
+  toggleTranslationInputMode();
+  await loadTranslationSelection();
+  persistPanelState();
+  setLog(translate("log.translationGeneratedNativeSrtReady"));
 }
 
 async function translateLoadedSelection(): Promise<void> {
@@ -5749,7 +5778,13 @@ async function generate(): Promise<void> {
       await updateGenerateProgress(98, translate("progress.applyCaptions"), true);
       const hostResultRaw = await applyNativeSubtitlePlan(payload);
       setStructuredLogFromRaw(translate("log.hostResult"), hostResultRaw);
-      assertHostApplySucceeded(hostResultRaw);
+      const hostResult = assertHostApplySucceeded(hostResultRaw);
+      try {
+        // // Never turn a successful Premiere subtitle creation into a failure when optional DeepL preparation cannot read the file.
+        await prepareGeneratedNativeSrtForTranslation(String(hostResult.nativeSubtitleSrtPath || ""));
+      } catch (error) {
+        setLog(String(error), true);
+      }
       return;
     }
 
@@ -6182,6 +6217,10 @@ async function initialize(): Promise<void> {
     if (elements.translationDuplicateButton) {
       elements.translationDuplicateButton.disabled = true;
     }
+  });
+  elements.translationAutoLoadGeneratedNativeSrt?.addEventListener("change", () => {
+    // // Persist the user's choice without changing the currently loaded translation source.
+    persistPanelState();
   });
   elements.translationSrtBrowseButton?.addEventListener("click", async () => {
     try {

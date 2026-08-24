@@ -8,7 +8,7 @@ Compatible with Premiere Pro `2025+` on Windows and Apple Silicon macOS. Premier
 
 - Generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`.
 - Keep the original spoken-language timing when using a forced Whisper language, without an external translation API.
-- Translate selected Sub Creator MOGRT subtitles with a personal DeepL API Free key, then duplicate them on a new synchronized track.
+- Translate selected Sub Creator MOGRT subtitles or the SRT generated for native Premiere subtitles with a personal DeepL API Free key, then duplicate them on a new synchronized track.
 - Keep names, brands, and technical terms consistent with a global Whisper dictionary shared by all Premiere projects.
 - Create animated `MOGRT` clips or native Premiere subtitle tracks.
 - Align subtitle timing to sequence frames to avoid one-frame gaps.
@@ -118,7 +118,7 @@ Sub Creator keeps punctuation by default and remembers separate generation setti
 
 The `Translation` tab translates either selected Sub Creator MOGRT subtitle clips or a source SRT for native Premiere subtitles, without changing the original timing. Choose source and target languages, enter your personal DeepL API Free key, then review or correct each translated subtitle before creating the translated track.
 
-The key is saved locally in Sub Creator's CEP profile on your computer and is sent only to DeepL for translation. Once a key is entered, the source and target language lists are loaded from DeepL; use `Refresh DeepL languages` to update them on demand. The translated text is sent to DeepL; the subtitle timings and visual style stay local. For native Premiere subtitles, choose `SRT file / native Premiere subtitles`, select the source SRT, then Sub Creator creates a second native subtitle track with the translated text and the same timings. Premiere's CEP API does not reliably expose the text of an existing native caption track, so its original SRT file is required.
+The key is saved locally in Sub Creator's CEP profile on your computer and is sent only to DeepL for translation. Once a key is entered, the source and target language lists are loaded from DeepL; use `Refresh DeepL languages` to update them on demand. The translated text is sent to DeepL; the subtitle timings and visual style stay local. When Sub Creator creates `Premiere subtitles`, it automatically loads the exact generated SRT into `Translation`, ready for DeepL; this can be disabled with the checkbox in that tab. For an existing native Premiere caption track created outside Sub Creator, choose `SRT file / native Premiere subtitles` and select its original SRT, because Premiere's CEP API does not reliably expose native caption text or export the selected track.
 
 When native subtitles create an SRT source file, Sub Creator saves it in an `SRT` folder next to the current `.prproj` file.
 

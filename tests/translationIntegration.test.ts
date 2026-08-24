@@ -27,6 +27,13 @@ describe("translation integration", () => {
     expect(panelSource).toContain("applyNativeSubtitlePlan({");
   });
 
+  it("preloads the exact SRT generated for a new native Premiere subtitle track", () => {
+    expect(panelSource).toContain("prepareGeneratedNativeSrtForTranslation");
+    expect(panelSource).toContain("hostResult.nativeSubtitleSrtPath");
+    expect(panelSource).toContain('elements.translationInputMode.value = "srt"');
+    expect(panelSource).toContain("await loadTranslationSelection()");
+  });
+
   it("persists the DeepL key locally without adding it to the translation request payload", () => {
     expect(panelSource).toContain("deeplApiKey?: string;");
     expect(panelSource).toContain("deeplApiKey: String(elements.deeplApiKey?.value || \"\")");

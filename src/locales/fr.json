@@ -17,7 +17,6 @@
   "field.deeplApiKey": "Cle DeepL API Free",
   "field.translationPreview": "Apercu traduit",
   "field.translationInput": "Source de traduction",
-  "field.translationAutoLoadGeneratedNativeSrt": "Preparer automatiquement le SRT natif genere pour la traduction",
   "field.preserveMixedLanguages": "Utiliser le dictionnaire Whisper global",
   "field.mixedLanguagePrompt": "Noms, marques et orthographes exactes",
   "field.punctuation": "Ponctuation",

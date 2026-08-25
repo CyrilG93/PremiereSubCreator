@@ -177,7 +177,6 @@ interface PanelStateSnapshot {
   logExpanded: boolean;
   verboseLogs: boolean;
   deeplApiKey?: string;
-  translationAutoLoadGeneratedNativeSrt?: boolean;
 }
 
 interface TextEditorBlockState extends TextEditorBlock {
@@ -223,7 +222,6 @@ const elements = {
   translationSrtField: document.querySelector<HTMLElement>("#translationSrtField"),
   translationSrtPath: document.querySelector<HTMLInputElement>("#translationSrtPath"),
   translationSrtBrowseButton: document.querySelector<HTMLButtonElement>("#translationSrtBrowseButton"),
-  translationAutoLoadGeneratedNativeSrt: document.querySelector<HTMLInputElement>("#translationAutoLoadGeneratedNativeSrt"),
   deeplApiKey: document.querySelector<HTMLInputElement>("#deeplApiKey"),
   deeplApiKeyLink: document.querySelector<HTMLAnchorElement>("#deeplApiKeyLink"),
   translationPreview: document.querySelector<HTMLElement>("#translationPreview"),
@@ -1423,9 +1421,7 @@ function persistPanelState(): void {
     logExpanded: logPanelExpanded,
     verboseLogs: verboseLogsEnabled,
     // // Keep the user's DeepL key in the local CEP profile so it survives a Premiere restart.
-    deeplApiKey: String(elements.deeplApiKey?.value || ""),
-    // // Keep automatic native-SRT preparation opt-in and enabled by default for new profiles.
-    translationAutoLoadGeneratedNativeSrt: elements.translationAutoLoadGeneratedNativeSrt?.checked !== false
+    deeplApiKey: String(elements.deeplApiKey?.value || "")
   };
 
   try {
@@ -1469,11 +1465,6 @@ function applyPersistedPanelState(snapshot: Partial<PanelStateSnapshot>): void {
   if (elements.deeplApiKey && typeof snapshot.deeplApiKey === "string") {
     // // Restore the locally stored key without ever writing it to logs or host payloads.
     elements.deeplApiKey.value = snapshot.deeplApiKey;
-  }
-
-  if (elements.translationAutoLoadGeneratedNativeSrt) {
-    // // Preserve the default enabled state when an older stored profile has no preference yet.
-    elements.translationAutoLoadGeneratedNativeSrt.checked = snapshot.translationAutoLoadGeneratedNativeSrt !== false;
   }
 
   if (snapshot.activeMode === "visual" || snapshot.activeMode === "text" || snapshot.activeMode === "translate") {
@@ -3258,7 +3249,7 @@ async function loadTranslationSelection(): Promise<void> {
 
 async function prepareGeneratedNativeSrtForTranslation(srtPath: string): Promise<void> {
   // // Reuse the exact SRT written before Premiere imports the native track, avoiding unreliable caption-text reads from CEP.
-  if (!elements.translationAutoLoadGeneratedNativeSrt?.checked || !elements.translationInputMode || !elements.translationSrtPath) {
+  if (!elements.translationInputMode || !elements.translationSrtPath) {
     return;
   }
 
@@ -6136,10 +6127,6 @@ async function initialize(): Promise<void> {
     if (elements.translationDuplicateButton) {
       elements.translationDuplicateButton.disabled = true;
     }
-  });
-  elements.translationAutoLoadGeneratedNativeSrt?.addEventListener("change", () => {
-    // // Persist the user's choice without changing the currently loaded translation source.
-    persistPanelState();
   });
   elements.translationSrtBrowseButton?.addEventListener("click", async () => {
     try {

@@ -17,7 +17,6 @@
   "field.deeplApiKey": "DeepL API Free key",
   "field.translationPreview": "Translated preview",
   "field.translationInput": "Translation source",
-  "field.translationAutoLoadGeneratedNativeSrt": "Automatically prepare the generated native SRT for translation",
   "field.preserveMixedLanguages": "Use global Whisper dictionary",
   "field.mixedLanguagePrompt": "Names, brands, and exact spellings",
   "field.punctuation": "Punctuation",

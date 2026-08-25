@@ -7,7 +7,6 @@ Compatible with Premiere Pro `2025+` on Windows and Apple Silicon macOS. Premier
 ## Main features
 
 - Generate subtitles from `SRT`, `Whisper`, `WhisperX`, or `Whisper + SRT`.
-- Keep the original spoken-language timing when using a forced Whisper language, without an external translation API.
 - Translate selected Sub Creator MOGRT subtitles or the SRT generated for native Premiere subtitles with a personal DeepL API Free key, then duplicate them on a new synchronized track.
 - Keep names, brands, and technical terms consistent with a global Whisper dictionary shared by all Premiere projects.
 - Create animated `MOGRT` clips or native Premiere subtitle tracks.

@@ -47,7 +47,7 @@ The installer automatically enables the CEP debug mode required for unsigned ext
 
 The Full `.pkg` embeds the Apple Silicon private Python and LGPL FFmpeg runtime. Valid models already in the current user's Whisper cache are preselected. Selected Whisper models may need an internet connection the first time they are installed. Running a newer Full installer preserves compatible runtime files, downloaded Whisper models, and custom MOGRT files.
 
-The installer is intentionally unsigned. If macOS blocks it, Control-click the package, choose `Open`, then confirm the installation. Intel Macs are not supported.
+Signed macOS installers are signed and notarized by Apple, so they should open normally. If you use an older unsigned installer and macOS blocks it, Control-click the package, choose `Open`, then confirm the installation. Intel Macs are not supported.
 
 ## Whisper models
 

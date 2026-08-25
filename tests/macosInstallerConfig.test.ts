@@ -46,6 +46,17 @@ describe("macOS Full package architecture", () => {
     expect(workflow).toContain("SubCreator-v${{ steps.release.outputs.version }}-macOS-Installer-arm64");
     expect(workflow).not.toMatch(/Light|x86_64-Installer|Intel-Installer|Updater|\.zip/);
   });
+
+  it("signs all private runtime Mach-O files before building a notarized PKG", () => {
+    // // Apple rejects a signed outer package when embedded Python or FFmpeg code remains unsigned.
+    const packagingSource = readFileSync(packagingSourcePath, "utf8");
+
+    expect(packagingSource).toContain("async function signPrivateRuntime(runtimePath)");
+    expect(packagingSource).toContain('"--options",\n      "runtime",\n      "--timestamp"');
+    expect(packagingSource).toContain("await signPrivateRuntime(runtimeRoot)");
+    expect(packagingSource).toContain('"--sign", installerSigningIdentity');
+    expect(packagingSource).toContain("SUBCREATOR_MAC_APPLICATION_IDENTITY");
+  });
 });
 
 describe("macOS installer fonts", () => {

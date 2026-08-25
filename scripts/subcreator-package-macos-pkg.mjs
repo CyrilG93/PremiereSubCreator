@@ -23,6 +23,10 @@ const ffmpegSourceUrl =
 const macArch = "arm64";
 const rebuildRuntime = process.env.SUBCREATOR_REBUILD_RUNTIME === "1";
 const reuseStaging = process.env.SUBCREATOR_REUSE_STAGING === "1";
+const runtimeSigningIdentity = String(process.env.SUBCREATOR_MAC_APPLICATION_IDENTITY || "").trim();
+const installerSigningIdentity = String(process.env.SUBCREATOR_MAC_INSTALLER_IDENTITY || "").trim();
+const notaryProfile = String(process.env.SUBCREATOR_NOTARY_PROFILE || "").trim();
+const codeSigningJobs = Math.max(1, Number.parseInt(process.env.SUBCREATOR_CODESIGN_JOBS || "8", 10) || 8);
 const npmCommand = "npm";
 const whisperModels = [
   {
@@ -95,6 +99,36 @@ function runCommand(command, args, options = {}) {
   });
 }
 
+function runCommandWithOutput(command, args, options = {}) {
+  // Execute a short native inspection command and return stdout for packaging decisions.
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || projectRoot,
+      env: {
+        ...process.env,
+        ...(options.env || {})
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk || "");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk || "");
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(`${command} exited with code ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
 async function pathExists(targetPath) {
   // // Probe optional staging and release assets without turning a normal cache miss into an exception.
   try {
@@ -102,6 +136,85 @@ async function pathExists(targetPath) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function collectMachOFiles(targetDir) {
+  // Find every real Mach-O file in the private runtime so Apple validates all executable code after packaging.
+  const entries = await readdir(targetDir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const entryPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectMachOFiles(entryPath)));
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    const description = await runCommandWithOutput("/usr/bin/file", ["-b", entryPath]);
+    if (description.includes("Mach-O")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+async function processWithConcurrency(items, jobs, handler) {
+  // Limit parallel timestamp requests so large Python runtimes sign quickly without flooding Apple's service.
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, jobs), Math.max(1, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+        await handler(item);
+      }
+    })
+  );
+}
+
+async function signPrivateRuntime(runtimePath) {
+  // Sign every executable, dylib, and Python extension before archiving so notarization can inspect trusted code.
+  if (!runtimeSigningIdentity) {
+    return;
+  }
+  const machOFiles = await collectMachOFiles(runtimePath);
+  if (machOFiles.length < 1) {
+    throw new Error(`No Mach-O files were found to sign in private runtime: ${runtimePath}`);
+  }
+  process.stdout.write(`Signing ${machOFiles.length} private runtime Mach-O file(s) with Developer ID.\n`);
+  await processWithConcurrency(machOFiles, codeSigningJobs, async (targetPath) => {
+    await runCommand("/usr/bin/codesign", [
+      "--force",
+      "--sign",
+      runtimeSigningIdentity,
+      "--options",
+      "runtime",
+      "--timestamp",
+      targetPath
+    ]);
+  });
+  await processWithConcurrency(machOFiles, codeSigningJobs, async (targetPath) => {
+    await runCommand("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", targetPath]);
+  });
+}
+
+function validateSigningConfiguration() {
+  // Reject partial signing setups because a notarized package needs signed runtime code and a signed installer container.
+  if (notaryProfile && (!runtimeSigningIdentity || !installerSigningIdentity)) {
+    throw new Error(
+      "SUBCREATOR_NOTARY_PROFILE requires SUBCREATOR_MAC_APPLICATION_IDENTITY and SUBCREATOR_MAC_INSTALLER_IDENTITY."
+    );
+  }
+  if (Boolean(runtimeSigningIdentity) !== Boolean(installerSigningIdentity)) {
+    throw new Error(
+      "Set both SUBCREATOR_MAC_APPLICATION_IDENTITY and SUBCREATOR_MAC_INSTALLER_IDENTITY for a signed macOS package."
+    );
+  }
+  if (runtimeSigningIdentity && !rebuildRuntime) {
+    throw new Error("Signed macOS packaging requires SUBCREATOR_REBUILD_RUNTIME=1 to rebuild the signed runtime archive.");
   }
 }
 
@@ -380,6 +493,7 @@ async function prepareRuntimePayload(runtimeVersion) {
     await preparePrivateFfmpeg();
   }
   await writeFile(path.join(runtimeRoot, ".subcreator-runtime-version"), `${runtimeVersion}\n`, "ascii");
+  await signPrivateRuntime(runtimeRoot);
 }
 
 async function createRuntimeArchive(runtimeManifest) {
@@ -391,7 +505,7 @@ async function createRuntimeArchive(runtimeManifest) {
 
   const outputPath = path.join(releasesDir, asset.assetName);
   const expectedHash = String(asset.sha256 || "").trim().toLowerCase();
-  if (!rebuildRuntime && expectedHash && (await pathExists(outputPath))) {
+  if (!runtimeSigningIdentity && !rebuildRuntime && expectedHash && (await pathExists(outputPath))) {
     const localHash = await hashFile(outputPath);
     if (localHash !== expectedHash) {
       throw new Error(`Local runtime asset hash does not match ${runtimeManifestPath}.`);
@@ -399,7 +513,7 @@ async function createRuntimeArchive(runtimeManifest) {
     return runtimeManifest;
   }
 
-  if (!rebuildRuntime && expectedHash && !(await pathExists(outputPath))) {
+  if (!runtimeSigningIdentity && !rebuildRuntime && expectedHash && !(await pathExists(outputPath))) {
     const publishedUrl =
       process.env.SUBCREATOR_RUNTIME_DOWNLOAD_URL ||
       `https://github.com/CyrilG93/PremiereSubCreator/releases/download/${runtimeManifest.releaseTag}/${asset.assetName}`;
@@ -554,16 +668,21 @@ async function createComponentPackages(version) {
   await rm(packagesDir, { recursive: true, force: true });
   await mkdir(packagesDir, { recursive: true });
   const corePackagePath = path.join(packagesDir, "SubCreatorCore.pkg");
-  await runCommand("pkgbuild", [
+  const corePackageArgs = [
     "--nopayload",
     "--scripts",
     coreScriptsDir,
     "--identifier",
     "com.cyrilplugin.subcreator.installer.core",
     "--version",
-    version,
-    corePackagePath
-  ], {
+    version
+  ];
+  if (installerSigningIdentity) {
+    // Sign nested component packages as well as the outer product package for direct distribution.
+    corePackageArgs.push("--sign", installerSigningIdentity);
+  }
+  corePackageArgs.push(corePackagePath);
+  await runCommand("pkgbuild", corePackageArgs, {
     env: {
       COPYFILE_DISABLE: "1"
     }
@@ -577,16 +696,21 @@ async function createComponentPackages(version) {
     await writeFile(scriptPath, createModelInstallScript(model), "utf8");
     await runCommand("chmod", ["755", scriptPath]);
     await runCommand("xattr", ["-cr", scriptsDir]);
-    await runCommand("pkgbuild", [
+    const modelPackageArgs = [
       "--nopayload",
       "--scripts",
       scriptsDir,
       "--identifier",
       `com.cyrilplugin.subcreator.installer.model.${model.id}`,
       "--version",
-      version,
-      path.join(packagesDir, `SubCreatorModel-${model.id}.pkg`)
-    ], {
+      version
+    ];
+    if (installerSigningIdentity) {
+      // Keep optional model component packages trustworthy when Installer expands the outer archive.
+      modelPackageArgs.push("--sign", installerSigningIdentity);
+    }
+    modelPackageArgs.push(path.join(packagesDir, `SubCreatorModel-${model.id}.pkg`));
+    await runCommand("pkgbuild", modelPackageArgs, {
       env: {
         COPYFILE_DISABLE: "1"
       }
@@ -700,7 +824,6 @@ async function createFullPackage(version, runtimeManifest) {
   const distributionPath = await createDistribution(version);
   const outputPath = path.join(releasesDir, `SubCreator-v${version}-macOS-Installer-${macArch}.pkg`);
   const unsignedPath = path.join(stagingRoot, `SubCreator-v${version}-macOS-Installer-${macArch}-unsigned.pkg`);
-  const signingIdentity = process.env.SUBCREATOR_MAC_INSTALLER_IDENTITY || "";
   const productArgs = [
     "--distribution",
     distributionPath,
@@ -711,8 +834,8 @@ async function createFullPackage(version, runtimeManifest) {
   await mkdir(releasesDir, { recursive: true });
   await rm(outputPath, { force: true });
   await rm(unsignedPath, { force: true });
-  if (signingIdentity) {
-    productArgs.push("--sign", signingIdentity, outputPath);
+  if (installerSigningIdentity) {
+    productArgs.push("--sign", installerSigningIdentity, outputPath);
   } else {
     productArgs.push(outputPath);
   }
@@ -722,7 +845,6 @@ async function createFullPackage(version, runtimeManifest) {
     }
   });
 
-  const notaryProfile = process.env.SUBCREATOR_NOTARY_PROFILE || "";
   if (notaryProfile) {
     await runCommand("xcrun", [
       "notarytool",
@@ -735,7 +857,7 @@ async function createFullPackage(version, runtimeManifest) {
     await runCommand("xcrun", ["stapler", "staple", outputPath]);
   }
 
-  if (signingIdentity) {
+  if (installerSigningIdentity) {
     // // Verify the Developer ID signature when release signing was requested.
     await runCommand("pkgutil", ["--check-signature", outputPath]);
   } else {
@@ -756,6 +878,8 @@ async function main() {
   if (process.arch !== macArch) {
     throw new Error("macOS PKG packaging requires an Apple Silicon arm64 Mac.");
   }
+
+  validateSigningConfiguration();
 
   const version = await readPackageVersion();
   const runtimeManifest = await readRuntimeManifest();

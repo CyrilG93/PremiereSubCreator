@@ -147,9 +147,11 @@ If generation fails with an `EvalScript error`, open the debug log in Sub Creato
 
 ### 1.3.0 - 2026-09-04
 
-- New: Translation tab for translate mogrt or natie subtiles with DeepL (free API key required).
+- New: Translation tab for translate mogrt or native subtiles with DeepL ([free API key required](https://www.deepl.com/your-account/keys)).
+- New: Introduces a persistent Whisper dictionary shared across Premiere projects.
 - Added signed and Apple-notarized Apple Silicon macOS installer builds.
 - Applying visual editor settings no longer change the animation duration of the selected MOGRTs.
+- Better and faster reading for batch mogrt in visual editor.
 
 ### 1.2.0 - 2026-08-10
 

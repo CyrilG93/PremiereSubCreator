@@ -51,6 +51,7 @@ import {
   readInstalledMogrtCatalog,
   readPremiereTemplateTextPayloads,
   readSelectedMogrtVisualProperties,
+  readSystemFontCatalog,
   readTextFileFromHost,
   readWhisperGlossaryStore,
   registerVisualSelectionWatcher,
@@ -66,6 +67,7 @@ import { applyPremierePanelTheme, bindPremiereThemeListener } from "./cepTheme";
 import type {
   ApplySelectedMogrtTextResult,
   InstalledMogrtCatalog,
+  SystemFontCatalog,
   SelectedMogrtVisualComponentDebug,
   TextEditorApplyPayload,
   WhisperProgressUpdate
@@ -322,6 +324,15 @@ let outputSettingsByMode: Record<OutputMode, OutputModeGenerationSettings> = {
   premiere_subtitles: createDefaultOutputModeSettings("premiere_subtitles")
 };
 let loadedVisualProperties: HostVisualProperty[] = [];
+let systemFontCatalog: SystemFontCatalog = {
+  available: false,
+  source: "unavailable",
+  details: "",
+  families: [],
+  stylesByFamily: {},
+  fontTokensByFamilyStyle: {}
+};
+let systemFontCatalogLoadPromise: Promise<void> | null = null;
 let loadedVisualComponents: SelectedMogrtVisualComponentDebug[] = [];
 let loadedVisualSelectionCount = 0;
 let visualSelectionSummaryBase = "";
@@ -613,6 +624,35 @@ function sortFontStyleOptions(options: string[]): string[] {
       }
       return left.localeCompare(right, undefined, { sensitivity: "base" });
     });
+}
+
+async function ensureSystemFontCatalogLoaded(): Promise<void> {
+  // // Load verified local font metadata only when the Visual editor needs editable font controls.
+  if (systemFontCatalog.available || systemFontCatalogLoadPromise) {
+    await systemFontCatalogLoadPromise;
+    return;
+  }
+  systemFontCatalogLoadPromise = readSystemFontCatalog()
+    .then((catalog) => {
+      systemFontCatalog = {
+        available: Boolean(catalog?.available),
+        source: String(catalog?.source || "unavailable"),
+        details: String(catalog?.details || ""),
+        families: Array.isArray(catalog?.families) ? catalog.families.slice() : [],
+        stylesByFamily: catalog?.stylesByFamily && typeof catalog.stylesByFamily === "object" ? catalog.stylesByFamily : {},
+        fontTokensByFamilyStyle:
+          catalog?.fontTokensByFamilyStyle && typeof catalog.fontTokensByFamilyStyle === "object"
+            ? catalog.fontTokensByFamilyStyle
+            : {}
+      };
+    })
+    .catch(() => {
+      systemFontCatalog = { available: false, source: "error", details: "", families: [], stylesByFamily: {}, fontTokensByFamilyStyle: {} };
+    })
+    .finally(() => {
+      systemFontCatalogLoadPromise = null;
+    });
+  await systemFontCatalogLoadPromise;
 }
 
 function assertDomBindings(): void {
@@ -3536,9 +3576,50 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     return normalized;
   };
 
+  const mergeStyleMaps = (...maps: Array<Record<string, string[]>>): Record<string, string[]> => {
+    // // Merge host and verified-system styles so every selectable family has only known faces.
+    const merged: Record<string, string[]> = {};
+    for (const map of maps) {
+      for (const [family, styles] of Object.entries(map || {})) {
+        const key = listFontFamilyLookupKeys(family)[0] || family.toLowerCase();
+        if (!merged[key]) {
+          merged[key] = [];
+        }
+        for (const style of styles || []) {
+          if (!merged[key].some((entry) => entry.toLowerCase() === String(style).toLowerCase())) {
+            merged[key].push(String(style));
+          }
+        }
+      }
+    }
+    return merged;
+  };
+
+  const verifiedStyleMap = normalizeStyleMap(systemFontCatalog.stylesByFamily);
+  const verifiedFamilies = systemFontCatalog.available ? systemFontCatalog.families.slice() : [];
+  const resolveVerifiedFontToken = (family: string, style: string): string => {
+    // // Keep the PostScript token paired with its exact system face; never rebuild it from display labels.
+    for (const familyKey of listFontFamilyLookupKeys(family)) {
+      const actualFamily = Object.keys(systemFontCatalog.fontTokensByFamilyStyle).find(
+        (candidate) => listFontFamilyLookupKeys(candidate).includes(familyKey)
+      );
+      if (!actualFamily) {
+        continue;
+      }
+      const styleMap = systemFontCatalog.fontTokensByFamilyStyle[actualFamily] || {};
+      for (const styleKey of listFontStyleLookupKeys(style)) {
+        const actualStyle = Object.keys(styleMap).find((candidate) => listFontStyleLookupKeys(candidate).includes(styleKey));
+        if (actualStyle && styleMap[actualStyle]) {
+          return String(styleMap[actualStyle]);
+        }
+      }
+    }
+    return "";
+  };
+
   const resolveStyleOptionsForFamily = (family: string, styleMap?: Record<string, string[]>): string[] => {
-    // // Resolve host-exposed styles for one family without triggering any system-font scan.
-    const mergedMap = normalizeStyleMap(styleMap || {});
+    // // Resolve styles from host data plus the verified local catalog.
+    const mergedMap = mergeStyleMaps(normalizeStyleMap(styleMap || {}), verifiedStyleMap);
     for (const familyLookupKey of listFontFamilyLookupKeys(family)) {
       if (Array.isArray(mergedMap[familyLookupKey]) && mergedMap[familyLookupKey].length > 0) {
         return sortFontStyleOptions(mergedMap[familyLookupKey].slice());
@@ -3560,26 +3641,55 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
     }
 
     for (const property of sourceProperties) {
-      propertiesWithStyleControls.push(property);
-
       const textStylePath = parseTextStyleVirtualPath(property.path);
+      const isFontFamily = textStylePath?.styleKey === "fontFamily";
+      const isFontStyle = textStylePath?.styleKey === "fontStyle";
+      const currentFamily = isFontFamily ? String(property.value || "").trim() : "";
+      const currentStyle = isFontStyle ? String(property.value || "").trim() : "";
+      const relatedFamily = isFontStyle
+        ? String(sourceProperties.find((entry) => parseTextStyleVirtualPath(entry.path)?.basePath === textStylePath?.basePath && parseTextStyleVirtualPath(entry.path)?.styleKey === "fontFamily")?.value || "").trim()
+        : "";
+      if (systemFontCatalog.available && isFontFamily) {
+        propertiesWithStyleControls.push({
+          ...property,
+          controlKind: "select",
+          options: [currentFamily, ...verifiedFamilies]
+            .filter(Boolean)
+            .filter((value, index, values) => values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === index)
+            .map((value) => ({ value, label: value })),
+          styleOptionsByFamily: mergeStyleMaps(property.styleOptionsByFamily || {}, systemFontCatalog.stylesByFamily)
+        });
+      } else if (systemFontCatalog.available && isFontStyle) {
+        const styles = resolveStyleOptionsForFamily(relatedFamily, property.styleOptionsByFamily);
+        propertiesWithStyleControls.push({
+          ...property,
+          controlKind: "select",
+          options: [currentStyle, ...styles]
+            .filter(Boolean)
+            .filter((value, index, values) => values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === index)
+            .map((value) => ({ value, label: value })),
+          styleOptionsByFamily: mergeStyleMaps(property.styleOptionsByFamily || {}, systemFontCatalog.stylesByFamily)
+        });
+      } else {
+        propertiesWithStyleControls.push(property);
+      }
       if (!textStylePath || textStylePath.styleKey !== "fontFamily" || styleBasePaths.has(textStylePath.basePath)) {
         continue;
       }
 
-      const currentFamily = String(property.value || "").trim();
       const resolvedStyleOptions = resolveStyleOptionsForFamily(currentFamily, property.styleOptionsByFamily);
-      if (resolvedStyleOptions.length !== 1) {
+      if (resolvedStyleOptions.length < 1) {
         continue;
       }
-      const syntheticStyleValue = resolvedStyleOptions[0];
+      const syntheticStyleValue = resolvedStyleOptions[0] || "Regular";
 
       propertiesWithStyleControls.push({
         path: `${textStylePath.basePath}::textstyle.fontStyle`,
         displayName: "Font Style",
         groupPath: property.groupPath,
         valueType: "string",
-        controlKind: "string",
+        controlKind: systemFontCatalog.available ? "select" : "string",
+        options: systemFontCatalog.available ? resolvedStyleOptions.map((value) => ({ value, label: value })) : undefined,
         styleOptionsByFamily: currentFamily ? { [currentFamily]: resolvedStyleOptions.slice() } : {},
         value: syntheticStyleValue
       });
@@ -3590,6 +3700,37 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
   const renderProperties = ensureTextStyleControls(properties);
   loadedVisualProperties = renderProperties.slice();
+
+  const syncVerifiedFontToken = (basePath: string): void => {
+    // // Pair visible family/style selects with one exact PostScript token before the host receives a font change.
+    const familyControl = findRenderedVisualControl(`${basePath}::textstyle.fontFamily`);
+    const styleControl = findRenderedVisualControl(`${basePath}::textstyle.fontStyle`);
+    if (!(familyControl instanceof HTMLSelectElement)) {
+      return;
+    }
+    const family = String(familyControl.value || "").trim();
+    const styles = resolveStyleOptionsForFamily(family, systemFontCatalog.stylesByFamily);
+    if (styleControl instanceof HTMLSelectElement && styles.length > 0) {
+      const priorStyle = String(styleControl.value || "").trim();
+      styleControl.innerHTML = "";
+      for (const style of styles) {
+        const option = document.createElement("option");
+        option.value = style;
+        option.textContent = style;
+        option.selected = listFontStyleLookupKeys(style).some((key) => listFontStyleLookupKeys(priorStyle).includes(key));
+        styleControl.appendChild(option);
+      }
+      if (!styleControl.value && styleControl.options.length > 0) {
+        styleControl.selectedIndex = 0;
+      }
+    }
+    const style = String(styleControl instanceof HTMLSelectElement ? styleControl.value : "").trim();
+    const token = resolveVerifiedFontToken(family, style);
+    familyControl.dataset.visualFontToken = token;
+    if (styleControl instanceof HTMLSelectElement) {
+      styleControl.dataset.visualFontToken = token;
+    }
+  };
 
   const bindLiveUpdateEvent = (
     control: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -4193,8 +4334,9 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
 
         controlWrap.append(vectorWrap, hiddenInput);
       } else if (
-        parseTextStyleVirtualPath(property.path)?.styleKey === "fontFamily" ||
-        parseTextStyleVirtualPath(property.path)?.styleKey === "fontStyle"
+        property.controlKind !== "select" &&
+        (parseTextStyleVirtualPath(property.path)?.styleKey === "fontFamily" ||
+          parseTextStyleVirtualPath(property.path)?.styleKey === "fontStyle")
       ) {
         // // Keep detected font family/style visible for reference and clone payloads, but do not expose manual edits here.
         const textStylePath = parseTextStyleVirtualPath(property.path);
@@ -4248,6 +4390,13 @@ function renderVisualPropertyEditor(properties: HostVisualProperty[]): void {
         if (property.fontToken) {
           // // Pass through exact host tokens for any future editable text-style selects.
           select.dataset.visualFontToken = property.fontToken;
+        }
+        const textStylePath = parseTextStyleVirtualPath(property.path);
+        if (textStylePath?.styleKey === "fontFamily" || textStylePath?.styleKey === "fontStyle") {
+          select.addEventListener("change", () => {
+            syncVerifiedFontToken(textStylePath.basePath);
+          });
+          window.setTimeout(() => syncVerifiedFontToken(textStylePath.basePath), 0);
         }
         bindFloatingPanelSelect(select);
         bindLiveUpdateEvent(select, "change");
@@ -4649,6 +4798,10 @@ async function loadVisualPropertiesFromSelection(emitHostLog = false, showLoadin
     lastVisualSelectionSignature = String(result.signature || lastVisualSelectionSignature || "");
     loadedVisualSelectionCount = Number(result.selectedCount || 0);
     loadedVisualComponents = Array.isArray(result.debug?.components) ? result.debug.components.slice() : [];
+    if (result.properties.some((property) => parseTextStyleVirtualPath(property.path)?.styleKey === "fontFamily")) {
+      // // Avoid an OS scan for MOGRTs that expose no editable text-style family field.
+      await ensureSystemFontCatalogLoaded();
+    }
     renderVisualPropertyEditor(result.properties);
     if (emitHostLog) {
       setStructuredLog(translate("log.hostResult"), result);

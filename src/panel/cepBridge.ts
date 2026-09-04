@@ -1947,6 +1947,7 @@ function normalizeFontText(value: string): string {
     .trim();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function splitFontFamilyAndStyle(rawName: string): { family: string; style: string } {
   // // Infer family/style from common font filename conventions (`Family-BoldItalic`, `Family Bold`).
   const cleaned = normalizeFontText(rawName);
@@ -2176,8 +2177,95 @@ function detectMacSystemFontCatalogViaSystemProfiler(modules: CepNodeModules): S
 }
 
 function isFontFileName(entryName: string): boolean {
-  // // Filter files likely to be installable fonts.
-  return /\.(ttf|otf|ttc|dfont)$/i.test(String(entryName || ""));
+  // // Restrict catalog parsing to SFNT containers whose internal names can be verified.
+  return /\.(ttf|otf|ttc)$/i.test(String(entryName || ""));
+}
+
+function decodeSfntNameString(bytes: Uint8Array, platformId: number): string {
+  // // Decode OpenType name-table strings without trusting a font filename as a Premiere token.
+  if (platformId === 0 || platformId === 3) {
+    let output = "";
+    for (let index = 0; index + 1 < bytes.length; index += 2) {
+      output += String.fromCharCode((bytes[index] << 8) | bytes[index + 1]);
+    }
+    return normalizeFontText(output.split(String.fromCharCode(0)).join(""));
+  }
+  return normalizeFontText(Array.from(bytes, (value) => String.fromCharCode(value)).join(""));
+}
+
+function readSfntFontFaces(modules: CepNodeModules, fontPath: string): Array<{ family: string; style: string; token: string }> {
+  // // Read family, style, and PostScript name directly from SFNT name tables for exact Premiere font tokens.
+  let contents: Uint8Array;
+  try {
+    const raw = modules.fs.readFileSync(fontPath);
+    contents = raw instanceof Uint8Array ? raw : new Uint8Array(raw as unknown as ArrayBuffer);
+  } catch {
+    return [];
+  }
+  if (contents.byteLength < 12) {
+    return [];
+  }
+
+  const view = new DataView(contents.buffer, contents.byteOffset, contents.byteLength);
+  const readTag = (offset: number): number => (offset + 4 <= view.byteLength ? view.getUint32(offset, false) : 0);
+  const readUint16 = (offset: number): number => (offset + 2 <= view.byteLength ? view.getUint16(offset, false) : 0);
+  const offsets: number[] = [];
+  if (readTag(0) === 0x74746366 && view.byteLength >= 12) {
+    const count = view.getUint32(8, false);
+    for (let index = 0; index < count && 12 + index * 4 + 4 <= view.byteLength; index += 1) {
+      offsets.push(view.getUint32(12 + index * 4, false));
+    }
+  } else {
+    offsets.push(0);
+  }
+
+  const faces: Array<{ family: string; style: string; token: string }> = [];
+  for (const sfntOffset of offsets) {
+    if (sfntOffset + 12 > view.byteLength) {
+      continue;
+    }
+    const tableCount = readUint16(sfntOffset + 4);
+    let nameTableOffset = -1;
+    for (let index = 0; index < tableCount; index += 1) {
+      const entryOffset = sfntOffset + 12 + index * 16;
+      if (entryOffset + 16 > view.byteLength || readTag(entryOffset) !== 0x6e616d65) {
+        continue;
+      }
+      nameTableOffset = view.getUint32(entryOffset + 8, false);
+      break;
+    }
+    if (nameTableOffset < 0 || nameTableOffset + 6 > view.byteLength) {
+      continue;
+    }
+    const recordCount = readUint16(nameTableOffset + 2);
+    const storageOffset = readUint16(nameTableOffset + 4);
+    const names: Record<number, string> = {};
+    for (let index = 0; index < recordCount; index += 1) {
+      const recordOffset = nameTableOffset + 6 + index * 12;
+      if (recordOffset + 12 > view.byteLength) {
+        continue;
+      }
+      const platformId = readUint16(recordOffset);
+      const languageId = readUint16(recordOffset + 4);
+      const nameId = readUint16(recordOffset + 6);
+      const length = readUint16(recordOffset + 8);
+      const valueOffset = nameTableOffset + storageOffset + readUint16(recordOffset + 10);
+      if ((nameId !== 1 && nameId !== 2 && nameId !== 6) || valueOffset + length > view.byteLength) {
+        continue;
+      }
+      const value = decodeSfntNameString(contents.subarray(valueOffset, valueOffset + length), platformId);
+      const preferred = platformId === 3 && languageId === 0x0409;
+      if (value && (!names[nameId] || preferred)) {
+        names[nameId] = value;
+      }
+    }
+    const family = normalizeFontText(names[1] || "");
+    const token = normalizeFontText(names[6] || "");
+    if (family && token) {
+      faces.push({ family, style: normalizeFontText(names[2] || "") || "Regular", token });
+    }
+  }
+  return faces;
 }
 
 function listSystemFontDirectories(modules: CepNodeModules): string[] {
@@ -2274,11 +2362,10 @@ function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
 
       const fullPath = modules.path.join(normalizedPath, entryName);
       if (isFontFileName(entryName)) {
-        const baseName = String(entryName).replace(/\.[^.]+$/i, "");
-        const parsed = splitFontFamilyAndStyle(baseName);
-        if (parsed.family) {
-          mergeStyleMapEntry(stylesByFamily, parsed.family, parsed.style || "Regular");
-          mergeFontTokenEntry(fontTokensByFamilyStyle, parsed.family, parsed.style || "Regular", baseName);
+        const faces = readSfntFontFaces(modules, fullPath);
+        for (const face of faces) {
+          mergeStyleMapEntry(stylesByFamily, face.family, face.style);
+          mergeFontTokenEntry(fontTokensByFamilyStyle, face.family, face.style, face.token);
           fileCount += 1;
         }
         continue;
@@ -2307,8 +2394,8 @@ function detectSystemFontCatalogViaCepNode(): SystemFontCatalog | null {
 
   subcreatorSystemFontCatalogCache = {
     available: families.length > 0,
-    source: detectWindowsRuntime() ? "windows-font-dirs" : "mac-font-dirs",
-    details: `families=${families.length} scannedFiles=${fileCount} maxFiles=${maxFiles}`,
+    source: detectWindowsRuntime() ? "windows-sfnt-name-tables" : "mac-sfnt-name-tables",
+    details: `families=${families.length} verifiedFaces=${fileCount} maxFiles=${maxFiles}`,
     families,
     stylesByFamily,
     fontTokensByFamilyStyle

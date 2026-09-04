@@ -5156,6 +5156,11 @@ function subcreator_try_set_mogrt_text_style_property(property, styleKey, styleV
       }
     }
 
+    if (suppliedFontToken) {
+      // // A verified PostScript token must never fall through to guessed family/style variants after a mismatch.
+      return false;
+    }
+
     // // Prefer neutral defaults for a newly selected family before reusing the previous preset style.
     pushStyleOverride("Regular");
     pushStyleOverride("Plain");
